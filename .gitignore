@@ -1,5 +1,30 @@
+# Build directories and generated CMake files
 build/
+build-*/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+
+# Local build configuration
 compile_commands.json
+CMakeUserPresets.json
+
+# Compiled artifacts
 *.o
+*.obj
+*.a
+*.lib
 *.so
+*.dylib
+*.dll
+*.exe
+*.pdb
+*.ilk
+*.exp
+
+# Operating system files
 .DS_Store
+Thumbs.db

@@ -1,0 +1,181 @@
+#pragma once
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <stdexcept>
+
+namespace mtensor{
+    enum class Dtype : std::uint8_t{
+        kFloat32,
+        kFloat16,
+        kBFloat16,
+        kInt8,
+        kUInt8,
+        kInt16,
+        kInt32,
+        kInt64
+    };
+
+    constexpr std::size_t dtype_size(Dtype t){
+        switch(t) {
+            case Dtype::kFloat32: return 4;
+            case Dtype::kFloat16: return 2;
+            case Dtype::kBFloat16: return 2;
+            case Dtype::kInt8: return 1;
+            case Dtype::kUInt8: return 1;
+            case Dtype::kInt16: return 2;
+            case Dtype::kInt32: return 4;
+            case Dtype::kInt64: return 8;
+        }
+        return 0;
+    }
+
+    constexpr const char* dtype_name(Dtype t){
+        switch(t){
+            case Dtype::kFloat32: return "float32";
+            case Dtype::kFloat16: return "float16";
+            case Dtype::kBFloat16: return "bfloat16";
+            case Dtype::kInt8: return "int8";
+            case Dtype::kUInt8: return "uint8";
+            case Dtype::kInt16: return "int16";
+            case Dtype::kInt32: return "int32";
+            case Dtype::kInt64: return "int64";
+        }
+        return "unknown";
+    }
+
+    // 输入为 IEEE 754 的 32 位 float，输出是 BF16 的原始 16 位编码。
+    // 舍入规则：取最近的值；恰好在中间时，让保留部分的最低位为 0。
+    inline std::uint16_t EncodeBFloat16(float value) {
+        std::uint32_t bits;
+        std::memcpy(&bits, &value, sizeof(bits));
+
+        const std::uint32_t exponent = bits & 0x7f800000u;
+        const std::uint32_t fraction = bits & 0x007fffffu;
+        if (exponent == 0x7f800000u && fraction != 0) {
+            // 保留符号和高位 NaN 信息，并设置 quiet NaN 位，避免截断成无穷。
+            return static_cast<std::uint16_t>((bits >> 16) | 0x0040u);
+        }
+
+        // [ retained：高 16 位 ][ discarded：低 16 位 ]
+        std::uint32_t retained = bits >> 16;
+        const std::uint32_t discarded = bits & 0xffffu;
+        // 低 16 位大于一半时进位；恰好一半时，仅当保留部分为奇数才进位。
+        if (discarded > 0x8000u ||
+            (discarded == 0x8000u && (retained & 1u) != 0)) {
+            ++retained;
+        }
+        return static_cast<std::uint16_t>(retained);
+    }
+
+    // 输入为 IEEE 754 的 32 位 float，输出是 FP16 的原始 16 位编码。
+    // 同样采用最近值、恰好居中时取偶数的舍入规则。
+    inline std::uint16_t EncodeFloat16(float value) {
+        std::uint32_t bits;
+        std::memcpy(&bits, &value, sizeof(bits));
+
+        const std::uint32_t sign = (bits >> 16) & 0x8000u;  // fp16 的符号位
+        const int exponent = static_cast<int>((bits >> 23) & 0xffu);
+        const std::uint32_t fraction = bits & 0x007fffffu;
+
+        if (exponent == 0xff) {
+            // 指数全为 1：小数为 0 表示无穷，否则输出 quiet NaN。
+            return static_cast<std::uint16_t>(
+                sign | (fraction == 0 ? 0x7c00u : 0x7e00u));
+        }
+
+        // 普通数的指数偏置从 FP32 的 127 转换为 FP16 的 15。
+        int half_exponent = exponent - 127 + 15;
+        if (half_exponent >= 31) {
+            return static_cast<std::uint16_t>(sign | 0x7c00u);
+        }
+
+        if (half_exponent <= 0) {
+            if (half_exponent < -10) {
+                // 比最小 FP16 非正规数的一半还小，舍入到带符号的零。
+                return static_cast<std::uint16_t>(sign);
+            }
+
+            // FP16 非正规数不保存隐含的 1，因此把 FP32 的隐含位一起右移。
+            const std::uint32_t significand = 0x00800000u | fraction;
+            // 普通转换丢弃 13 位，再额外右移 1 - half_exponent 位。
+            const int shift = 14 - half_exponent;
+            std::uint32_t retained = significand >> shift;
+            const std::uint32_t discarded = significand & ((1u << shift) - 1u);
+            const std::uint32_t halfway = 1u << (shift - 1);
+            if (discarded > halfway ||
+                (discarded == halfway && (retained & 1u) != 0)) {
+                ++retained;
+            }
+            // 进位到 0x0400 时，恰好成为最小的正规 FP16 数。
+            return static_cast<std::uint16_t>(sign | retained);
+        }
+
+        // 普通数将小数从 23 位缩减到 10 位，丢弃低 13 位。
+        std::uint32_t retained = fraction >> 13;
+        const std::uint32_t discarded = fraction & 0x1fffu;
+        if (discarded > 0x1000u ||
+            (discarded == 0x1000u && (retained & 1u) != 0)) {
+            ++retained;
+        }
+        if (retained == 0x0400u) {
+            // 小数进位：1.111... 舍入为 10.000...，需要增加指数。
+            retained = 0;
+            ++half_exponent;
+        }
+        // half_exponent 进位到 31 时，小数已清零，拼出的编码就是无穷。
+        return static_cast<std::uint16_t>(
+            sign | (static_cast<std::uint32_t>(half_exponent) << 10) | retained);
+    }
+
+    enum class Device : std::uint8_t{
+        kCPU,
+        kCUDA
+    };
+}
+
+// 用法：MTENSOR_DISPATCH_DTYPE(dtype, Element, { 使用 Element 的代码 });
+// 宏在编译前展开成下面的 switch；每个分支为 Element 选择一个 C++ 类型。
+// __VA_ARGS__ 代表调用时传入的代码，反斜杠用于让宏延续到下一行。
+// FP16/BF16 尚未定义对应的 C++ 数值类型，因此暂不参与数值分发。
+#define MTENSOR_DISPATCH_DTYPE(dtype, Element, ...)                            \
+    do {                                                                       \
+        switch (dtype) {                                                       \
+            case ::mtensor::Dtype::kFloat32: {                                 \
+                using Element = float;                                         \
+                __VA_ARGS__;                                                   \
+                break;                                                         \
+            }                                                                  \
+            case ::mtensor::Dtype::kInt8: {                                    \
+                using Element = std::int8_t;                                   \
+                __VA_ARGS__;                                                   \
+                break;                                                         \
+            }                                                                  \
+            case ::mtensor::Dtype::kUInt8: {                                   \
+                using Element = std::uint8_t;                                  \
+                __VA_ARGS__;                                                   \
+                break;                                                         \
+            }                                                                  \
+            case ::mtensor::Dtype::kInt16: {                                   \
+                using Element = std::int16_t;                                  \
+                __VA_ARGS__;                                                   \
+                break;                                                         \
+            }                                                                  \
+            case ::mtensor::Dtype::kInt32: {                                   \
+                using Element = std::int32_t;                                  \
+                __VA_ARGS__;                                                   \
+                break;                                                         \
+            }                                                                  \
+            case ::mtensor::Dtype::kInt64: {                                   \
+                using Element = std::int64_t;                                  \
+                __VA_ARGS__;                                                   \
+                break;                                                         \
+            }                                                                  \
+            case ::mtensor::Dtype::kFloat16:                                   \
+            case ::mtensor::Dtype::kBFloat16:                                  \
+                throw std::invalid_argument(                                   \
+                    "Float16/BFloat16 numeric types are not implemented");     \
+            default:                                                           \
+                throw std::invalid_argument("Unknown dtype");                  \
+        }                                                                      \
+    } while (false)
