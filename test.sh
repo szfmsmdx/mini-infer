@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-cuda_arch="${CUDA_ARCH:-89}"
+cuda_arch="${CUDA_ARCH:-80}"
 
 case "$(uname -s)" in
     MINGW*|MSYS*)
@@ -16,17 +16,16 @@ case "$(uname -s)" in
     *) generator_args=() ;;
 esac
 
-for tool in cmake ctest nvcc; do
+for tool in cmake ctest; do
     if ! command -v "$tool" >/dev/null 2>&1; then
         printf 'Required command not found: %s\n' "$tool" >&2
         exit 1
     fi
 done
 
-build_dir="$repo_dir/build/cuda-tests"
+build_dir="$repo_dir/build/tests"
 cmake -S "$repo_dir" -B "$build_dir" \
     "${generator_args[@]}" \
-    -DMINI_INFER_ENABLE_CUDA=ON \
     -DBUILD_TESTING=ON \
     -DCMAKE_BUILD_TYPE=Release \
     "-DCMAKE_CUDA_ARCHITECTURES=$cuda_arch"

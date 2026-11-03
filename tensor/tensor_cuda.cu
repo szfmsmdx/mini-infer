@@ -45,11 +45,27 @@ void LaunchFillKernel(
         LaunchTypedFill<std::uint16_t>(
             device_ptr, count, host_value, blocks, threads);
     }else{
-        MTENSOR_DISPATCH_DTYPE(dtype, Element, {
+        DISPATCH_DTYPE(dtype, Element, {
             LaunchTypedFill<Element>(device_ptr, count, host_value, blocks, threads);
         });
     }
 
     CUDA_CHECK(cudaGetLastError());
+}
+
+void CopyHostToCUDA(void* destination, const void* source, std::size_t bytes) {
+    CUDA_CHECK(cudaMemcpy(destination, source, bytes, cudaMemcpyHostToDevice));
+}
+
+void CopyCUDA(void* destination, const void* source, std::size_t bytes) {
+    CUDA_CHECK(cudaMemcpy(destination, source, bytes, cudaMemcpyDeviceToDevice));
+}
+
+void CopyCUDAToHost(void* destination, const void* source, std::size_t bytes) {
+    CUDA_CHECK(cudaMemcpy(destination, source, bytes, cudaMemcpyDeviceToHost));
+}
+
+void ZeroCUDA(void* data, std::size_t bytes) {
+    CUDA_CHECK(cudaMemset(data, 0, bytes));
 }
 }

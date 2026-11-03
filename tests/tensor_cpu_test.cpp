@@ -71,7 +71,7 @@ void TestEmptyTensor() {
     Tensor tensor;
     Check(tensor.empty(), "Default Tensor must be empty");
     Check(tensor.data_ptr() == nullptr, "Default data pointer must be null");
-    Check(tensor.size().empty() && tensor.dim() == 0, "Default shape must be empty");
+    Check(tensor.shape().empty() && tensor.dim() == 0, "Default shape must be empty");
     Check(tensor.numel() == 0 && tensor.nbytes() == 0, "Empty Tensor has no elements");
     Check(tensor.dtype() == Dtype::kFloat32 && tensor.device() == Device::kCPU,
           "Unexpected default dtype or device");
@@ -88,7 +88,7 @@ void TestEmptyTensor() {
 void TestConstruction() {
     float input[] = {1, 2, 3, 4, 5, 6};
     Tensor tensor(input, {2, 3}, Dtype::kFloat32);
-    Check(tensor.size() == std::vector<int>({2, 3}), "Constructor lost shape");
+    Check(tensor.shape() == std::vector<int>({2, 3}), "Constructor lost shape");
     Check(tensor.dim() == 2 && tensor.size(0) == 2 && tensor.size(1) == 3,
           "Unexpected dimensions");
     Check(tensor.numel() == 6 && tensor.element_size() == sizeof(float) &&
@@ -110,7 +110,7 @@ void TestStorageAndIndex(Dtype dtype) {
           "dtype storage size mismatch");
     Check(tensor.nbytes() == sizeof(input), "dtype byte count mismatch");
     Tensor row = tensor[1];
-    Check(row.size() == std::vector<int>({2}), "Index must remove first dimension");
+    Check(row.shape() == std::vector<int>({2}), "Index must remove first dimension");
     Check(row.data_ptr() == static_cast<T*>(tensor.data_ptr()) + 2,
           "Index offset is incorrect for dtype");
     CheckValues<T>(row, {3, 4});
@@ -139,7 +139,7 @@ void TestAllDtypeStorage() {
 void TestScalar() {
     float input = 6;
     Tensor scalar(&input, {}, Dtype::kFloat32);
-    Check(scalar.dim() == 0 && scalar.size().empty(), "Scalar shape must be {}");
+    Check(scalar.dim() == 0 && scalar.shape().empty(), "Scalar shape must be {}");
     Check(!scalar.empty() && scalar.numel() == 1, "Scalar is not an empty Tensor");
     Check(scalar.nbytes() == sizeof(float), "Scalar must occupy one element");
     Check(Printed(scalar) == "tensor(6)\n", "Unexpected scalar print");
@@ -165,7 +165,7 @@ void TestSharedCopies() {
     Tensor assigned(old_input, {1}, Dtype::kInt8);
     Check(&(assigned = source) == &assigned, "Copy assignment must return target");
     Check(assigned.data_ptr() == source.data_ptr() &&
-          assigned.size() == source.size() && assigned.dtype() == source.dtype(),
+          assigned.shape() == source.shape() && assigned.dtype() == source.dtype(),
           "Copy assignment must replace metadata and share storage");
     Tensor& same_object = assigned;
     assigned = same_object;
@@ -185,7 +185,7 @@ void TestMove() {
     Tensor moved(std::move(source));
     Check(moved.data_ptr() == original_data, "Move constructor must transfer storage");
     CheckValues<float>(moved, {1, 2, 3, 4});
-    Check(source.empty() && source.size().empty() && source.numel() == 0,
+    Check(source.empty() && source.shape().empty() && source.numel() == 0,
           "Move constructor must clear source state");
 
     float old_input[] = {9};
@@ -194,7 +194,7 @@ void TestMove() {
           "Move assignment must return target");
     Check(assigned.data_ptr() == original_data && assigned.dim() == 2,
           "Move assignment must transfer data and shape");
-    Check(moved.empty() && moved.size().empty() && moved.numel() == 0,
+    Check(moved.empty() && moved.shape().empty() && moved.numel() == 0,
           "Move assignment must clear source state");
     Tensor& same_object = assigned;
     assigned = std::move(same_object);
@@ -238,7 +238,7 @@ void TestClone() {
     Tensor source(input, {2, 3}, Dtype::kFloat32);
     Tensor cloned = source.clone();
     Check(cloned.data_ptr() != source.data_ptr(), "Clone must have independent data");
-    Check(cloned.size() == source.size() && cloned.dtype() == source.dtype() &&
+    Check(cloned.shape() == source.shape() && cloned.dtype() == source.dtype() &&
           cloned.device() == source.device(), "Clone must preserve metadata");
     cloned.zero_();
     CheckValues<float>(source, {1, 2, 3, 4, 5, 6});
@@ -353,6 +353,60 @@ void TestErrors() {
     CheckValues<float>(tensor, {1, 2, 3, 4});
 }
 
+void TestToCPU() {
+    float input[] = {1, 2, 3, 4};
+    Tensor source(input, {2, 2}, Dtype::kFloat32);
+    const Tensor& read_only = source;
+    Tensor same = read_only.to(Device::kCPU);
+    Check(same.data_ptr() == source.data_ptr(), "Same-device to must share storage");
+    same[0].fill_(9);
+    CheckValues<float>(source, {9, 9, 3, 4});
+    source = source.to(Device::kCPU);
+    CheckValues<float>(source, {9, 9, 3, 4});
+
+    Tensor view = source[1].to(Device::kCPU);
+    source = Tensor();
+    same = Tensor();
+    Check(view.shape() == std::vector<int>({2}), "Same-device to lost view shape");
+    CheckValues<float>(view, {3, 4});
+    Check(Tensor().to(Device::kCPU).empty(), "Empty same-device to failed");
+
+    bool threw = false;
+    const void* view_data = view.data_ptr();
+    try {
+        view = view.to(static_cast<Device>(255));
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Check(threw, "to must reject unsupported devices");
+    Check(view.data_ptr() == view_data && view.device() == Device::kCPU &&
+          view.dtype() == Dtype::kFloat32 && view.shape() == std::vector<int>({2}),
+          "Failed to assignment must preserve source storage and metadata");
+    CheckValues<float>(view, {3, 4});
+#ifndef ENABLE_CUDA
+    threw = false;
+    try {
+        view = view.to(Device::kCUDA);
+    } catch (const std::logic_error&) {
+        threw = true;
+    }
+    Check(threw, "to must reject CUDA when CUDA support is disabled");
+    Check(view.data_ptr() == view_data && view.device() == Device::kCPU,
+          "Disabled CUDA to assignment must preserve source");
+    CheckValues<float>(view, {3, 4});
+
+    Tensor empty;
+    threw = false;
+    try {
+        empty = empty.to(Device::kCUDA);
+    } catch (const std::logic_error&) {
+        threw = true;
+    }
+    Check(threw && empty.empty() && empty.device() == Device::kCPU,
+          "Empty to CUDA must also reject disabled CUDA and preserve source");
+#endif
+}
+
 void CheckPrinted16(Dtype dtype, std::uint16_t bits, double expected) {
     Tensor scalar(&bits, {}, dtype);
     // 用 double 解析，避免 BF16 很小的数在 stof 中触发下溢错误。
@@ -423,6 +477,7 @@ int main() {
         TestCopyElements();
         TestFillAndZero();
         TestErrors();
+        TestToCPU();
         TestPrintAndDecode();
         std::cout << "Tensor CPU tests passed\n";
         return 0;

@@ -9,6 +9,7 @@ CTestTestfile.cmake
 Testing/
 
 # Local build configuration
+/cmake/
 compile_commands.json
 CMakeUserPresets.json
 

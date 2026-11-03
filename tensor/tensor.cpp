@@ -1,16 +1,8 @@
-#include <cmath>
 #include <cstddef>
-#include <cstdint>
 #include <cstdlib>
-#include <cstring>
-#include <exception>
 #include <functional>
-#include <iostream>
-#include <limits>
 #include <numeric>
-#include <ostream>
 #include <stdexcept>
-#include <string>
 #include <utility>
 #include <vector>
 
@@ -20,106 +12,14 @@
 
 namespace mtensor{
 
-namespace {
-
-float DecodeFloat16(const void* element) {
-    std::uint16_t bits;
-    std::memcpy(&bits, element, sizeof(bits));
-
-    const bool negative = (bits & 0x8000u) != 0;
-    const int exponent = (bits >> 10) & 0x1f;
-    const int fraction = bits & 0x03ff;
-
-    float value;
-    if (exponent == 0) {
-        value = std::ldexp(static_cast<float>(fraction), -24);
-    } else if (exponent == 0x1f) {
-        value = fraction == 0 ? std::numeric_limits<float>::infinity()
-                              : std::numeric_limits<float>::quiet_NaN();
-    } else {
-        // 普通 Float16: (1 + fraction / 1024) * 2^(exponent - 15)。
-        // 改写为 (1024 + fraction) * 2^(exponent - 25)，其中 25 = 10 + 15。
-        value = std::ldexp(static_cast<float>(0x400 + fraction), exponent - 25);
-    }
-    return negative ? -value : value;
-}
-
-float DecodeBFloat16(const void* element) {
-    static_assert(sizeof(float) == sizeof(std::uint32_t));
-    std::uint16_t bits;
-    std::memcpy(&bits, element, sizeof(bits));
-    const std::uint32_t float_bits = static_cast<std::uint32_t>(bits) << 16;
-    float value;
-    std::memcpy(&value, &float_bits, sizeof(value));    // 只取前 16bit
-    return value;
-}
-
-void PrintElement(std::ostream& out, Dtype dtype, const void* element) {
-    switch (dtype) {
-        case Dtype::kFloat32:
-            out << *static_cast<const float*>(element);
-            return;
-        case Dtype::kFloat16:
-            out << DecodeFloat16(element);
-            return;
-        case Dtype::kBFloat16:
-            out << DecodeBFloat16(element);
-            return;
-        case Dtype::kInt8:
-            out << static_cast<int>(*static_cast<const std::int8_t*>(element));
-            return;
-        case Dtype::kUInt8:
-            out << static_cast<unsigned int>(*static_cast<const std::uint8_t*>(element));
-            return;
-        case Dtype::kInt16:
-            out << *static_cast<const std::int16_t*>(element);
-            return;
-        case Dtype::kInt32:
-            out << *static_cast<const std::int32_t*>(element);
-            return;
-        case Dtype::kInt64:
-            out << *static_cast<const std::int64_t*>(element);
-            return;
-    }
-    throw std::invalid_argument("Tensor::print: unsupported dtype");
-}
-
-void PrintNested(std::ostream& out, Dtype dtype, const std::byte* data_bytes_ptr,
-                 const std::vector<int>& shape, std::size_t dimension,
-                 std::size_t element_bytes, std::size_t& flat_index) {
-    out << '[';
-    for (int index = 0; index < shape[dimension]; ++index) {
-        if (index > 0) {
-            out << ',';
-            if (dimension + 1 == shape.size()) {
-                out << ' ';
-            } else {
-                // Align the next slice under the opening '[' after "tensor(".
-                out << '\n' << std::string(8 + dimension, ' ');
-            }
-        }
-
-        if (dimension + 1 == shape.size()) {
-            PrintElement(out, dtype, data_bytes_ptr + flat_index * element_bytes);
-            ++flat_index;
-        } else {
-            PrintNested(out, dtype, data_bytes_ptr, shape, dimension + 1,
-                        element_bytes, flat_index);
-        }
-    }
-    out << ']';
-}
-
-}  // namespace
-
 Tensor::Tensor(const void* data_ptr, std::vector<int> shape, Dtype dtype, Device device)
-: shape(std::move(shape)), dtype_(dtype), device_(device) {
+: shape_(std::move(shape)), dtype_(dtype), device_(device) {
     /*
     使用示例：
         float values[] = {1.0f, 2.0f};
         Tensor a(values, {2}, Dtype::kFloat32);
     */
-    for (int dimension : this->shape) {
+    for (int dimension : this->shape_) {
         if (dimension < 0) {
             throw std::invalid_argument("Tensor dimensions must be non-negative");
         }
@@ -127,7 +27,7 @@ Tensor::Tensor(const void* data_ptr, std::vector<int> shape, Dtype dtype, Device
 
     // 传入数据且 shape 为 {} 时构造标量，占一个元素。
     // 此时成员数据指针尚未设置，不能靠 numel() 判断标量的大小。
-    const std::size_t bytes = this->shape.empty() ? element_size() : nbytes();
+    const std::size_t bytes = this->shape_.empty() ? element_size() : nbytes();
     if(bytes == 0 || data_ptr == nullptr){
         throw std::invalid_argument("Tensor constructor: null data or zero-sized shape");
     }
@@ -135,14 +35,12 @@ Tensor::Tensor(const void* data_ptr, std::vector<int> shape, Dtype dtype, Device
     if(device == Device::kCPU){
         storage_ = std::shared_ptr<void>(AllocateCPU(bytes), std::free);
         data_ptr_ = storage_.get();
-        std::memcpy(data_ptr_, data_ptr, bytes);
+        CopyCPU(data_ptr_, data_ptr, bytes);
     }else if(device == Device::kCUDA){
-#ifdef MINI_INFER_ENABLE_CUDA
+#ifdef ENABLE_CUDA
         storage_ = std::shared_ptr<void>(AllocateCUDA(bytes), FreeCUDA);
         data_ptr_ = storage_.get();
-        CUDA_CHECK(
-            cudaMemcpy(data_ptr_, data_ptr, bytes, cudaMemcpyHostToDevice)
-        );
+        CopyHostToCUDA(data_ptr_, data_ptr, bytes);
 #else
         throw std::logic_error("Tensor constructor: CUDA support is disabled");
 #endif
@@ -155,7 +53,7 @@ Tensor& Tensor::operator=(const Tensor& other) {
     if (this == &other) { // 处理 a = a 的情况;
         return *this;
     }
-    shape = other.shape;
+    shape_ = other.shape_;
     storage_ = other.storage_;
     data_ptr_ = other.data_ptr_;
     dtype_ = other.dtype_;
@@ -166,12 +64,12 @@ Tensor& Tensor::operator=(const Tensor& other) {
 Tensor::Tensor(Tensor&& other) noexcept
 :   data_ptr_(other.data_ptr_),
     storage_(std::move(other.storage_)),
-    shape(std::move(other.shape)),
+    shape_(std::move(other.shape_)),
     device_(other.device_),
     dtype_(other.dtype_)
 {
     other.data_ptr_ = nullptr;
-    other.shape.clear();
+    other.shape_.clear();
 }
 
 Tensor& Tensor::operator=(Tensor&& other) noexcept
@@ -181,28 +79,28 @@ Tensor& Tensor::operator=(Tensor&& other) noexcept
     }
     storage_ = std::move(other.storage_);
     data_ptr_ = other.data_ptr_;
-    shape = std::move(other.shape);
+    shape_ = std::move(other.shape_);
     dtype_ = other.dtype_;
     device_ = other.device_;
 
     other.data_ptr_ = nullptr;
-    other.shape.clear();
+    other.shape_.clear();
     return *this;
 }
 
-const std::vector<int>& Tensor::size() const {
-    return shape;
+const std::vector<int>& Tensor::shape() const {
+    return shape_;
 }
 
 int Tensor::size(std::size_t dim) const {
-    if(dim >= shape.size()){
+    if(dim >= shape_.size()){
         throw std::out_of_range("Tensor::size: dimension index out of range");
     }
-    return shape[dim];
+    return shape_[dim];
 }
 
 int Tensor::dim() const {
-    return shape.size();
+    return shape_.size();
 }
 
 bool Tensor::empty() const {
@@ -210,11 +108,11 @@ bool Tensor::empty() const {
 }
 
 std::size_t Tensor::numel() const {
-    if(shape.empty()){
+    if(shape_.empty()){
         return empty() ? 0 : 1;
     }
     return std::accumulate(
-        shape.begin(), shape.end(), static_cast<size_t>(1), std::multiplies<size_t>());
+        shape_.begin(), shape_.end(), static_cast<size_t>(1), std::multiplies<size_t>());
 }
 
 std::size_t Tensor::element_size() const {
@@ -234,7 +132,7 @@ Device Tensor::device() const {
 }
 
 Tensor Tensor::operator[](int index) const {
-    if(shape.empty() || index < 0 || index >= size(0)){
+    if(shape_.empty() || index < 0 || index >= size(0)){
         throw std::out_of_range("Tensor::operator[]: index out of range");
     }
     if (data_ptr_ == nullptr) {
@@ -245,11 +143,15 @@ Tensor Tensor::operator[](int index) const {
         static_cast<std::size_t>(index) * dim_size * element_size();
     Tensor result;
     result.device_ = device_, result.dtype_ = dtype_;
-    result.shape.assign(shape.begin() + 1, shape.end());
+    result.shape_.assign(shape_.begin() + 1, shape_.end());
     result.data_ptr_ = static_cast<std::byte*>(data_ptr_) + offset;
     result.storage_ = storage_;
 
     return result;
+}
+
+const void* Tensor::data_ptr() const {
+    return data_ptr_;
 }
 
 void* Tensor::data_ptr() {
@@ -267,46 +169,36 @@ void Tensor::print() const {
     }
 
     if (device_ == Device::kCPU) {
-        std::cout << "tensor(";
-        if (shape.empty()) {
-            if (empty()) {
-                std::cout << "[]";
-            } else {    // 标量 shape empty 但是 tensor 不 empty
-                PrintElement(std::cout, dtype_, data_ptr_);
-            }
-        } else {
-            const auto* data_bytes_ptr = static_cast<const std::byte*>(data_ptr_);
-            std::size_t flat_index = 0;
-            PrintNested(std::cout, dtype_, data_bytes_ptr, shape, 0, element_size(), flat_index);
-        }
-        std::cout << ")" << std::endl;
+        PrintCPU(data_ptr_, shape_, dtype_, empty());
     } else if (device_ == Device::kCUDA) {
-#ifdef MINI_INFER_ENABLE_CUDA
-        std::size_t bytes = nbytes();
+#ifdef ENABLE_CUDA
+        const std::size_t bytes = nbytes();
         std::vector<std::byte> host_buffer(bytes);
-
-        if(bytes > 0){
-            CUDA_CHECK(cudaMemcpy(host_buffer.data(), data_ptr_, bytes, cudaMemcpyDeviceToHost));
+        if (bytes > 0) {
+            CopyCUDAToHost(host_buffer.data(), data_ptr_, bytes);
         }
-
-        std::cout << "tensor(";
-        if(shape.empty()){
-            if(empty()) {
-                std::cout << "[]";
-            } else {
-                PrintElement(std::cout, dtype_, host_buffer.data());
-            }
-        } else {
-            std::size_t flat_index = 0;
-            PrintNested(std::cout, dtype_, host_buffer.data(), shape, 0, element_size(), flat_index);
-        }
-        std::cout << ")" << std::endl;
+        PrintCPU(host_buffer.data(), shape_, dtype_, empty());
 #else
         throw std::logic_error("Tensor::print: CUDA support is disabled");
 #endif
     } else {
         throw std::invalid_argument("Tensor::print: unsupported device");
     }
+}
+
+Tensor& Tensor::FillValue(const void* host_value) {
+    if (device_ == Device::kCPU) {
+        FillCPU(data_ptr_, numel(), dtype_, host_value);
+    } else if (device_ == Device::kCUDA) {
+#ifdef ENABLE_CUDA
+        LaunchFillKernel(data_ptr_, numel(), dtype_, host_value);
+#else
+        throw std::logic_error("Tensor::fill_: CUDA support is disabled");
+#endif
+    } else {
+        throw std::invalid_argument("Tensor::fill_: unsupported device");
+    }
+    return *this;
 }
 
 Tensor& Tensor::zero_() {
@@ -318,10 +210,10 @@ Tensor& Tensor::zero_() {
     // data_ptr_ 的 for 循环赋值此处不可用，因为 data_ptr_ 类型是 void，编译器不知道 for 步长是多少
     if(bytes > 0){
         if (device_ == Device::kCPU) {
-            std::memset(data_ptr_, 0, bytes);
+            ZeroCPU(data_ptr_, bytes);
         } else if (device_ == Device::kCUDA) {
-#ifdef MINI_INFER_ENABLE_CUDA
-            CUDA_CHECK(cudaMemset(data_ptr_, 0, bytes));
+#ifdef ENABLE_CUDA
+            ZeroCUDA(data_ptr_, bytes);
 #else
             throw std::logic_error("Tensor::zero_: CUDA support is disabled");
 #endif
@@ -338,7 +230,7 @@ Tensor& Tensor::copy_(const Tensor& src) {
         b.copy_(a);
     */
     // 检查 device、shape、dtype 是否一致
-    if(this->shape != src.shape){
+    if(this->shape_ != src.shape_){
         throw std::invalid_argument("Tensor::copy_: shapes must match");
     }else if(this->device_ != src.device_){
         throw std::invalid_argument("Tensor::copy_: devices must match");
@@ -358,10 +250,10 @@ Tensor& Tensor::copy_(const Tensor& src) {
     }
 
     if (device_ == Device::kCPU) {
-        std::memcpy(data_ptr_, src.data_ptr_, nbytes());
+        CopyCPU(data_ptr_, src.data_ptr_, nbytes());
     } else if (device_ == Device::kCUDA) {
-#ifdef MINI_INFER_ENABLE_CUDA
-        CUDA_CHECK(cudaMemcpy(data_ptr_, src.data_ptr_, nbytes(), cudaMemcpyDeviceToDevice));
+#ifdef ENABLE_CUDA
+        CopyCUDA(data_ptr_, src.data_ptr_, nbytes());
 #else
         throw std::logic_error("Tensor::copy_: CUDA support is disabled");
 #endif
@@ -371,13 +263,46 @@ Tensor& Tensor::copy_(const Tensor& src) {
     return *this;
 }
 
+Tensor Tensor::to(Device device) const {
+    if (device == device_) {
+        return *this;
+    }
+    if (device != Device::kCPU && device != Device::kCUDA) {
+        throw std::invalid_argument("Tensor::to: unsupported device");
+    }
+
+#ifdef ENABLE_CUDA
+    Tensor result;
+    result.shape_ = shape_;
+    result.dtype_ = dtype_;
+    result.device_ = device;
+
+    const std::size_t bytes = nbytes();
+    if (bytes == 0) {
+        return result;
+    }
+    if (device == Device::kCPU) {
+        result.storage_ = std::shared_ptr<void>(AllocateCPU(bytes), std::free);
+        result.data_ptr_ = result.storage_.get();
+        CopyCUDAToHost(result.data_ptr_, data_ptr_, bytes);
+    } else {
+        result.storage_ = std::shared_ptr<void>(AllocateCUDA(bytes), FreeCUDA);
+        result.data_ptr_ = result.storage_.get();
+        CopyHostToCUDA(result.data_ptr_, data_ptr_, bytes);
+    }
+    return result;
+#else
+    throw std::logic_error("Tensor::to: CUDA support is disabled");
+#endif
+}
+
 Tensor Tensor::clone() const {
     /*
     使用示例:
         Tensor b = a.clone();
     */
     Tensor result;
-    result.shape = shape;
+    result.shape_ = shape_;
     result.dtype_ = dtype_;
     result.device_ = device_;
 
@@ -386,12 +311,12 @@ Tensor Tensor::clone() const {
         if (device_ == Device::kCPU) {
             result.storage_ = std::shared_ptr<void>(AllocateCPU(bytes), std::free);
             result.data_ptr_ = result.storage_.get();
-            std::memcpy(result.data_ptr_, data_ptr_, bytes);
+            CopyCPU(result.data_ptr_, data_ptr_, bytes);
         } else if (device_ == Device::kCUDA) {
-#ifdef MINI_INFER_ENABLE_CUDA
+#ifdef ENABLE_CUDA
             result.storage_ = std::shared_ptr<void>(AllocateCUDA(bytes), FreeCUDA);
             result.data_ptr_ = result.storage_.get();
-            CUDA_CHECK(cudaMemcpy(result.data_ptr_, data_ptr_, bytes, cudaMemcpyDeviceToDevice));
+            CopyCUDA(result.data_ptr_, data_ptr_, bytes);
 #else
             throw std::logic_error("Tensor::clone: CUDA support is disabled");
 #endif

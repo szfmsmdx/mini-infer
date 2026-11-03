@@ -3,5 +3,6 @@
     "*.cu": "cuda-cpp",
     "*.cuh": "cuda-cpp"
   },
-  "clangd.enable": false
+  "cmake.buildDirectory": "${workspaceFolder}/build/vscode",
+  "cmake.configureOnOpen": true
 }

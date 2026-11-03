@@ -20,7 +20,7 @@ void* AllocateCPU(std::size_t bytes) {
     return host_ptr_;
 }
 
-#ifdef MINI_INFER_ENABLE_CUDA
+#ifdef ENABLE_CUDA
 void* AllocateCUDA(std::size_t bytes){
     if(bytes == 0)
         return nullptr;

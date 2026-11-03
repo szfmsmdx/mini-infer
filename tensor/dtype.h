@@ -1,8 +1,10 @@
 #pragma once
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 
 namespace mtensor{
@@ -129,17 +131,49 @@ namespace mtensor{
             sign | (static_cast<std::uint32_t>(half_exponent) << 10) | retained);
     }
 
+inline float DecodeFloat16(const void* element) {
+    std::uint16_t bits;
+    std::memcpy(&bits, element, sizeof(bits));
+
+    const bool negative = (bits & 0x8000u) != 0;
+    const int exponent = (bits >> 10) & 0x1f;
+    const int fraction = bits & 0x03ff;
+
+    float value;
+    if (exponent == 0) {
+        value = std::ldexp(static_cast<float>(fraction), -24);
+    } else if (exponent == 0x1f) {
+        value = fraction == 0 ? std::numeric_limits<float>::infinity()
+                              : std::numeric_limits<float>::quiet_NaN();
+    } else {
+        // 普通 Float16: (1 + fraction / 1024) * 2^(exponent - 15)。
+        // 改写为 (1024 + fraction) * 2^(exponent - 25)，其中 25 = 10 + 15。
+        value = std::ldexp(static_cast<float>(0x400 + fraction), exponent - 25);
+    }
+    return negative ? -value : value;
+}
+
+inline float DecodeBFloat16(const void* element) {
+    static_assert(sizeof(float) == sizeof(std::uint32_t));
+    std::uint16_t bits;
+    std::memcpy(&bits, element, sizeof(bits));
+    const std::uint32_t float_bits = static_cast<std::uint32_t>(bits) << 16;
+    float value;
+    std::memcpy(&value, &float_bits, sizeof(value));    // 只取前 16bit
+    return value;
+}
+
     enum class Device : std::uint8_t{
         kCPU,
         kCUDA
     };
 }
 
-// 用法：MTENSOR_DISPATCH_DTYPE(dtype, Element, { 使用 Element 的代码 });
+// 用法：DISPATCH_DTYPE(dtype, Element, { 使用 Element 的代码 });
 // 宏在编译前展开成下面的 switch；每个分支为 Element 选择一个 C++ 类型。
 // __VA_ARGS__ 代表调用时传入的代码，反斜杠用于让宏延续到下一行。
 // FP16/BF16 尚未定义对应的 C++ 数值类型，因此暂不参与数值分发。
-#define MTENSOR_DISPATCH_DTYPE(dtype, Element, ...)                            \
+#define DISPATCH_DTYPE(dtype, Element, ...)                                    \
     do {                                                                       \
         switch (dtype) {                                                       \
             case ::mtensor::Dtype::kFloat32: {                                 \

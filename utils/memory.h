@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <stdexcept>
 #include <string>
-#ifdef MINI_INFER_ENABLE_CUDA
+#ifdef ENABLE_CUDA
 #include <cuda_runtime.h>
 #endif
 

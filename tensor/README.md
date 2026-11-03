@@ -1,8 +1,26 @@
 # tensor 设计
 
-**Tensor 管理一块数据的形状、类型和访问位置。** 当前实现连续的 CPU 和 CUDA 存储；CUDA 路径尚待 GPU 实测。
+**Tensor 管理一块数据的形状、类型和访问位置。** 当前实现连续的 CPU 和 CUDA 存储；Colab L4 与本地 RTX 4060 均已通过测试。
 
-构造、clone、copy_、fill_、zero_ 和 print 按 device 分流；关闭 CUDA 构建选项时，CUDA 构造会抛出异常。
+构造、clone、copy_、to、fill_、zero_ 和 print 按 device 分流；未检测到可用 CUDA 编译环境时，CUDA 构造或迁移会抛出异常。
+
+## 文件结构与分发
+
+```text
+tensor/
+    tensor.h         # Tensor 接口、后端声明、fill_<T> 的值转换
+    tensor.cpp       # 元数据、所有权、视图、公共检查和设备分流
+    tensor_cpu.cpp   # CPU 复制、清零、填充循环和主机数据打印
+    tensor_cuda.cu   # CUDA 复制、清零、fill kernel 及其启动函数
+    dtype.h          # dtype/device、FP16/BF16 编解码和类型分发
+    README.md
+```
+
+构造、`clone()` 和 `copy_()` 的公共逻辑留在 `tensor.cpp`；实际数据复制交给 CPU/CUDA 后端。构造仍从 CPU 源数据复制，`copy_()` 仍要求两端 device 相同。分配与释放继续使用现有内存工具，`storage_` 和视图的所有权语义保持不变。
+
+`fill_<T>()` 的模板定义留在头文件，检查空状态并将输入值转换为目标 dtype。私有非模板成员 `FillValue()` 在 `tensor.cpp` 中选择设备，再调用 `FillCPU()` 或 `LaunchFillKernel()`。CPU 循环和 CUDA kernel 均在各自的实现文件中。
+
+`print()` 的设备分流留在 `tensor.cpp`。CPU 数据直接交给 `PrintCPU()`；CUDA 数据先复制到主机缓冲区，再交给同一个 `PrintCPU()`。括号、缩进和数值格式化统一放在 `tensor_cpu.cpp`。
 
 tensor 要解决的问题是：
 
@@ -16,9 +34,9 @@ tensor 要解决的问题是：
 | --- | --- | --- |
 | 数据在哪 / 谁释放 | `std::shared_ptr<void> storage_` | 持有原始分配地址，最后一个持有者销毁时调用 CPU 或 CUDA 释放函数 |
 | 从哪开始 | `void* data_ptr_` | 指向当前 Tensor 的数据起点；视图可以指向内存中间 |
-| 每一维多大 | `std::vector<int> shape` | 每个 Tensor 自己保存形状，元素按连续顺序排列 |
+| 每一维多大 | `std::vector<int> shape_` | 每个 Tensor 自己保存形状，元素按连续顺序排列，通过 `shape()` 查询 |
 | 每个元素占几字节 | `Dtype dtype_` | 通过 `dtype_size()` 查询 |
-| 数据在哪个设备 | `Device device_` | 区分 CPU 与 CUDA；CUDA 路径待 GPU 实测 |
+| 数据在哪个设备 | `Device device_` | 区分 CPU 与 CUDA；CUDA 路径已通过 GPU 测试 |
 
 ## 内存与索引
 
@@ -55,12 +73,13 @@ public：
 | `operator[](i)` | 沿第一维取子 Tensor | 返回共享视图，每次去掉一维；索引必须非负且不越界 |
 | `data_ptr()` | 获取当前数据起点 | 返回 `void*`；读写时由调用方按 dtype 转换类型 |
 | `clone()` | 复制出独立数据 | 从当前 `data_ptr_` 开始复制，视图也能单独 clone |
+| `to(device)` | 返回指定设备上的 Tensor | 同设备共享存储；跨设备分配并复制，保持 shape 和 dtype，源 Tensor 不变 |
 | `copy_(src)` | 把元素写入已有 Tensor | shape、dtype、device 和空状态要一致；相同数据地址直接返回 |
 | `fill_(value)` | 原地填充数值 | 按 dtype 转换输入；FP16/BF16 先编码一次，再填充 16 位编码 |
 | `zero_()` | 原地清零 | 将当前数据区域的所有字节设为 0 |
 | `print()` | 打印内容 | 根据 shape 递归输出括号，FP16/BF16 解码后打印 |
 
-`size()` 返回形状，`size(dim)` 返回指定维度长度，`dim()` 返回维数，`numel()` 返回元素总数，`nbytes()` 返回字节数。`element_size()`、`dtype()`、`device()` 提供对应的元数据。
+`shape()` 返回形状的只读引用，`size(dim)` 返回指定维度长度，`dim()` 返回维数，`numel()` 返回元素总数，`nbytes()` 返回字节数。`element_size()`、`dtype()`、`device()` 提供对应的元数据。原无参 `size()` 已改为 `shape()`；成员变量使用 `shape_`。
 
 ### 空对象与标量
 
@@ -90,11 +109,24 @@ a[1].copy_(a[0]);      // 把第一行的数据写入第二行。
 
 赋值运算符更新的是 Tensor 句柄，因此 `a[0] = b` 会给临时视图重新赋值。要修改原数据，使用视图的 `copy_()`、`fill_()` 或 `zero_()`。
 
+### 设备迁移与赋值
+
+```cpp
+Tensor gpu = a.to(Device::kCUDA);  // 新分配 GPU 存储并复制，a 仍在 CPU。
+Tensor host = gpu.to(Device::kCPU);
+Tensor alias = gpu.to(Device::kCUDA);  // 同设备，返回共享存储的句柄。
+a = a.to(Device::kCUDA);  // 完成复制后，通过移动赋值让 a 接管结果。
+```
+
+`.to()` 本身不改变源对象。赋值时，原 `storage_` 减少一个引用；如果还有其他 Tensor 或视图持有它，原存储继续有效，否则立即调用原设备的释放函数。迁移失败时不会执行赋值，源对象仍持有原数据。
+
+跨设备迁移从当前 `data_ptr_` 复制 `nbytes()`，因此也支持索引视图和零维标量。空对象迁移保持空状态与目标 device，不分配数据；未启用 CUDA 时，迁移到 CUDA 会报错。当前 `to()` 仅接收 device，不转换 dtype；`copy_()` 仍只支持同设备复制，`clone()` 始终在当前设备上深拷贝。
+
 ## dtype
 
 支持 `Float32`、`Float16`、`BFloat16`、`Int8`、`UInt8`、`Int16`、`Int32`、`Int64`。
 
-`dtype.h` 提供类型枚举、大小与名称查询、FP16/BF16 编码，以及普通 C++ 数值类型的分发宏。编码采用最近值、恰好居中时取偶数的舍入规则；16 位浮点通过 `uint16_t` 保存原始编码。解码位于 `tensor.cpp`，供打印使用。
+`dtype.h` 提供类型枚举、大小与名称查询、FP16/BF16 编解码，以及普通 C++ 数值类型的分发宏。编码采用最近值、恰好居中时取偶数的舍入规则；16 位浮点通过 `uint16_t` 保存原始编码。`DecodeFloat16()` 和 `DecodeBFloat16()` 为 inline 函数，可供打印和 CPU 算子复用。
 
 ## todo
 
@@ -104,6 +136,7 @@ a[1].copy_(a[0]);      // 把第一行的数据写入第二行。
 - [x] `dtype_size()` / `dtype_name()`
 - [x] 普通数值类型分发
 - [x] FP16 / BF16 编码与舍入
+- [x] FP16 / BF16 解码整理为公共 inline 工具
 
 ### tensor.h / tensor.cpp
 
@@ -112,9 +145,11 @@ a[1].copy_(a[0]);      // 把第一行的数据写入第二行。
 - [x] 元数据查询、默认空对象与标量
 - [x] 第一维整数索引与多级索引视图
 - [x] `clone()` / `copy_()` / `fill_()` / `zero_()`
+- [x] `to(device)`、同设备共享和 CPU/CUDA 双向迁移
 - [x] 嵌套打印与 FP16 / BF16 解码
 - [x] CUDA 内存分配、释放、数据复制和 fill kernel 已写入源码
-- [ ] 在 GPU 上编译并运行 CUDA 测试
+- [x] 在 Colab L4 与本地 RTX 4060 上编译并运行 CUDA 测试
+- [x] 拆分公共入口、CPU 后端和 CUDA 后端，保持已有接口语义
 
 ### 测试
 

@@ -1,14 +1,32 @@
-cmake_minimum_required(VERSION 3.17)
+cmake_minimum_required(VERSION 3.18)
+if(CMAKE_HOST_WIN32 AND NOT DEFINED CMAKE_TOOLCHAIN_FILE
+   AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cmake/windows-cuda.cmake")
+    set(CMAKE_TOOLCHAIN_FILE "${CMAKE_CURRENT_SOURCE_DIR}/cmake/windows-cuda.cmake")
+endif()
 project(mini_infer LANGUAGES CXX)
 
-option(MINI_INFER_ENABLE_CUDA "Enable CUDA support" OFF)
-if(MINI_INFER_ENABLE_CUDA)
-    find_package(CUDAToolkit 12.4 REQUIRED)
-    enable_language(CUDA)
+set(ENABLE_CUDA OFF)
+find_package(CUDAToolkit 12.4 QUIET)
+if(CUDAToolkit_FOUND)
+    include(CheckLanguage)
+    check_language(CUDA)
+    if(CMAKE_CUDA_COMPILER)
+        if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+            set(CMAKE_CUDA_ARCHITECTURES 80)
+        endif()
+        enable_language(CUDA)
+        set(ENABLE_CUDA ON)
+    endif()
+endif()
+if(ENABLE_CUDA)
+    message(STATUS "CUDA enabled: ${CUDAToolkit_VERSION}")
+else()
+    message(STATUS "CUDA unavailable (requires Toolkit >= 12.4 and a working CUDA compiler); building CPU only")
 endif()
 
 add_library(mini_infer STATIC
     tensor/tensor.cpp
+    tensor/tensor_cpu.cpp
     utils/logger.cpp
     utils/memory.cpp
 )
@@ -17,14 +35,20 @@ target_include_directories(mini_infer PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-if(MINI_INFER_ENABLE_CUDA)
+if(ENABLE_CUDA)
     target_sources(mini_infer PRIVATE tensor/tensor_cuda.cu)
     set_target_properties(mini_infer PROPERTIES CUDA_STANDARD 17 CUDA_STANDARD_REQUIRED ON)
     target_link_libraries(mini_infer PUBLIC CUDA::cudart)
-    target_compile_definitions(mini_infer PUBLIC MINI_INFER_ENABLE_CUDA=1)
+    target_compile_definitions(mini_infer PUBLIC ENABLE_CUDA=1)
 endif()
 
 target_compile_features(mini_infer PUBLIC cxx_std_17)
+if(MSVC)
+    target_compile_options(mini_infer PUBLIC
+        "$<$<COMPILE_LANGUAGE:CXX>:/utf-8>"
+        "$<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/utf-8>"
+    )
+endif()
 
 include(CTest)
 if(BUILD_TESTING)
@@ -40,9 +64,10 @@ if(BUILD_TESTING)
     target_link_libraries(tensor_cpu_test PRIVATE mini_infer)
     add_test(NAME tensor_cpu_test COMMAND tensor_cpu_test)
 
-    if(MINI_INFER_ENABLE_CUDA)
+    if(ENABLE_CUDA)
         add_executable(tensor_cuda_test tests/tensor_cuda_test.cpp)
         target_link_libraries(tensor_cuda_test PRIVATE mini_infer)
         add_test(NAME tensor_cuda_test COMMAND tensor_cuda_test)
+        set_tests_properties(tensor_cuda_test PROPERTIES SKIP_RETURN_CODE 77)
     endif()
 endif()
