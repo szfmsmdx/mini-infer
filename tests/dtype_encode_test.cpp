@@ -1,5 +1,3 @@
-#include "tensor/tensor.h"
-
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -7,6 +5,8 @@
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+
+#include "tensor/tensor.h"
 
 namespace {
 

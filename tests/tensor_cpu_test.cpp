@@ -1,5 +1,3 @@
-#include "tensor/tensor.h"
-
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -10,6 +8,8 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+#include "tensor/tensor.h"
 
 namespace {
 
@@ -353,22 +353,6 @@ void TestErrors() {
     CheckValues<float>(tensor, {1, 2, 3, 4});
 }
 
-void TestCudaPlaceholder() {
-    // 当前不依赖 GPU，只检查尚未实现的 CUDA 分支明确报错。
-    // TODO: 接入 CUDA 后，替换为设备构造与数据传输测试。
-    float input = 1;
-    const std::vector<std::vector<int>> shapes = {{1}, {}};
-    for (const std::vector<int>& shape : shapes) {
-        bool threw = false;
-        try {
-            Tensor tensor(&input, shape, Dtype::kFloat32, Device::kCUDA);
-        } catch (const std::logic_error&) {
-            threw = true;
-        }
-        Check(threw, "CUDA placeholder must reject construction explicitly");
-    }
-}
-
 void CheckPrinted16(Dtype dtype, std::uint16_t bits, double expected) {
     Tensor scalar(&bits, {}, dtype);
     // 用 double 解析，避免 BF16 很小的数在 stof 中触发下溢错误。
@@ -439,7 +423,6 @@ int main() {
         TestCopyElements();
         TestFillAndZero();
         TestErrors();
-        TestCudaPlaceholder();
         TestPrintAndDecode();
         std::cout << "Tensor CPU tests passed\n";
         return 0;

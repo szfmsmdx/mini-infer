@@ -8,7 +8,14 @@
 #include "tensor/dtype.h"
 
 namespace mtensor{
-class Tensor{
+
+void LaunchFillKernel(
+    void* device_ptr,
+    std::size_t count,
+    Dtype dtype,
+    const void* host_value);
+
+class Tensor {
 public:
     Tensor() = default;
     ~Tensor() = default;
@@ -52,6 +59,10 @@ private:
 
 template <typename T>
 Tensor& Tensor::fill_(T value) {
+    /*
+    使用示例（a 为已构造的 CPU Tensor）：
+        a.fill_(1.0f);
+    */
     const std::size_t count = numel();
     if (count == 0) {
         return *this;
@@ -64,11 +75,11 @@ Tensor& Tensor::fill_(T value) {
         if (dtype_ == Dtype::kFloat16 || dtype_ == Dtype::kBFloat16) {
             // 只编码一次，随后为每个元素写入相同的 16 位浮点编码。
             const float input = static_cast<float>(value);
-            const std::uint16_t encoded = dtype_ == Dtype::kFloat16
+            const std::uint16_t half_input = dtype_ == Dtype::kFloat16
                 ? EncodeFloat16(input) : EncodeBFloat16(input);
             std::uint16_t* ptr = static_cast<std::uint16_t*>(data_ptr_);
             for (std::size_t i = 0; i < count; ++i) {
-                ptr[i] = encoded;
+                ptr[i] = half_input;
             }
             return *this;
         }
@@ -81,9 +92,22 @@ Tensor& Tensor::fill_(T value) {
             }
         });
     } else if (device_ == Device::kCUDA) {
-        // TODO: 实现 CUDA 填充 kernel，按 dtype 转换数值并写入设备内存。
-        // TODO: FP16/BF16 写入对应的 16 位编码，不能直接复用 CPU 指针解引用。
-        throw std::logic_error("Tensor::fill_: CUDA is not implemented");
+#ifdef MINI_INFER_ENABLE_CUDA
+        if(dtype_ == Dtype::kBFloat16 || dtype_ == Dtype::kFloat16){
+            const float input = static_cast<float>(value);
+            const std::uint16_t half_input = dtype_ == Dtype::kBFloat16
+                ? EncodeBFloat16(input)
+                : EncodeFloat16(input);
+            LaunchFillKernel(data_ptr_, count, dtype_, &half_input);
+        } else {
+            MTENSOR_DISPATCH_DTYPE(dtype_, Element, {
+                const Element converted = static_cast<Element>(value);
+                LaunchFillKernel(data_ptr_, count, dtype_, &converted);
+            });
+        }
+#else
+        throw std::logic_error("Tensor::fill_: CUDA support is disabled");
+#endif
     } else {
         throw std::invalid_argument("Tensor::fill_: unsupported device");
     }

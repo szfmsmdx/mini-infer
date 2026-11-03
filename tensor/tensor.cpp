@@ -1,5 +1,3 @@
-#include "tensor/tensor.h"
-
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -16,8 +14,8 @@
 #include <utility>
 #include <vector>
 
+#include "tensor/tensor.h"
 #include "tensor/dtype.h"
-#include "utils/logger.h"
 #include "utils/memory.h"
 
 namespace mtensor{
@@ -86,7 +84,7 @@ void PrintElement(std::ostream& out, Dtype dtype, const void* element) {
     throw std::invalid_argument("Tensor::print: unsupported dtype");
 }
 
-void PrintNested(std::ostream& out, Dtype dtype, const std::byte* bytes,
+void PrintNested(std::ostream& out, Dtype dtype, const std::byte* data_bytes_ptr,
                  const std::vector<int>& shape, std::size_t dimension,
                  std::size_t element_bytes, std::size_t& flat_index) {
     out << '[';
@@ -102,10 +100,10 @@ void PrintNested(std::ostream& out, Dtype dtype, const std::byte* bytes,
         }
 
         if (dimension + 1 == shape.size()) {
-            PrintElement(out, dtype, bytes + flat_index * element_bytes);
+            PrintElement(out, dtype, data_bytes_ptr + flat_index * element_bytes);
             ++flat_index;
         } else {
-            PrintNested(out, dtype, bytes, shape, dimension + 1,
+            PrintNested(out, dtype, data_bytes_ptr, shape, dimension + 1,
                         element_bytes, flat_index);
         }
     }
@@ -116,9 +114,13 @@ void PrintNested(std::ostream& out, Dtype dtype, const std::byte* bytes,
 
 Tensor::Tensor(const void* data_ptr, std::vector<int> shape, Dtype dtype, Device device)
 : shape(std::move(shape)), dtype_(dtype), device_(device) {
+    /*
+    使用示例：
+        float values[] = {1.0f, 2.0f};
+        Tensor a(values, {2}, Dtype::kFloat32);
+    */
     for (int dimension : this->shape) {
         if (dimension < 0) {
-            Logger::error("Tensor shape contains a negative dimension");
             throw std::invalid_argument("Tensor dimensions must be non-negative");
         }
     }
@@ -127,8 +129,7 @@ Tensor::Tensor(const void* data_ptr, std::vector<int> shape, Dtype dtype, Device
     // 此时成员数据指针尚未设置，不能靠 numel() 判断标量的大小。
     const std::size_t bytes = this->shape.empty() ? element_size() : nbytes();
     if(bytes == 0 || data_ptr == nullptr){
-        Logger::error("Init Tensor With Bad Input");
-        throw std::invalid_argument("null score data!");
+        throw std::invalid_argument("Tensor constructor: null data or zero-sized shape");
     }
 
     if(device == Device::kCPU){
@@ -136,9 +137,15 @@ Tensor::Tensor(const void* data_ptr, std::vector<int> shape, Dtype dtype, Device
         data_ptr_ = storage_.get();
         std::memcpy(data_ptr_, data_ptr, bytes);
     }else if(device == Device::kCUDA){
-        // TODO: 使用 cudaMalloc 分配显存，storage_ 绑定 cudaFree 删除器。
-        // TODO: 设置 data_ptr_，将 CPU 源数据通过 cudaMemcpyHostToDevice 复制到显存。
-        throw std::logic_error("Tensor constructor: CUDA is not implemented");
+#ifdef MINI_INFER_ENABLE_CUDA
+        storage_ = std::shared_ptr<void>(AllocateCUDA(bytes), FreeCUDA);
+        data_ptr_ = storage_.get();
+        CUDA_CHECK(
+            cudaMemcpy(data_ptr_, data_ptr, bytes, cudaMemcpyHostToDevice)
+        );
+#else
+        throw std::logic_error("Tensor constructor: CUDA support is disabled");
+#endif
     }else{
         throw std::invalid_argument("Tensor constructor: unsupported device");
     }
@@ -189,8 +196,7 @@ const std::vector<int>& Tensor::size() const {
 
 int Tensor::size(std::size_t dim) const {
     if(dim >= shape.size()){
-        Logger::error("Bad dim to get size !!!");
-        throw std::out_of_range("dim index out of range!!!");
+        throw std::out_of_range("Tensor::size: dimension index out of range");
     }
     return shape[dim];
 }
@@ -229,8 +235,7 @@ Device Tensor::device() const {
 
 Tensor Tensor::operator[](int index) const {
     if(shape.empty() || index < 0 || index >= size(0)){
-        Logger::error("Bad dim to get index");
-        throw std::out_of_range("Tensor index out of range!!!");
+        throw std::out_of_range("Tensor::operator[]: index out of range");
     }
     if (data_ptr_ == nullptr) {
         throw std::logic_error("Tensor::operator[]: null data pointer");
@@ -252,6 +257,10 @@ void* Tensor::data_ptr() {
 }
 
 void Tensor::print() const {
+    /*
+    使用示例（a 为已构造的 CPU Tensor）：
+        a.print();
+    */
     const std::size_t count = numel();
     if (count > 0 && data_ptr_ == nullptr) {
         throw std::logic_error("Tensor::print: null data pointer");
@@ -266,28 +275,56 @@ void Tensor::print() const {
                 PrintElement(std::cout, dtype_, data_ptr_);
             }
         } else {
-            const auto* bytes = static_cast<const std::byte*>(data_ptr_);
+            const auto* data_bytes_ptr = static_cast<const std::byte*>(data_ptr_);
             std::size_t flat_index = 0;
-            PrintNested(std::cout, dtype_, bytes, shape, 0, element_size(), flat_index);
+            PrintNested(std::cout, dtype_, data_bytes_ptr, shape, 0, element_size(), flat_index);
         }
-        std::cout << ")\n";
+        std::cout << ")" << std::endl;
     } else if (device_ == Device::kCUDA) {
-        // TODO: 用 cudaMemcpyDeviceToHost 复制到 CPU Tensor，再复用 CPU 打印。
-        throw std::logic_error("Tensor::print: CUDA is not implemented");
+#ifdef MINI_INFER_ENABLE_CUDA
+        std::size_t bytes = nbytes();
+        std::vector<std::byte> host_buffer(bytes);
+
+        if(bytes > 0){
+            CUDA_CHECK(cudaMemcpy(host_buffer.data(), data_ptr_, bytes, cudaMemcpyDeviceToHost));
+        }
+
+        std::cout << "tensor(";
+        if(shape.empty()){
+            if(empty()) {
+                std::cout << "[]";
+            } else {
+                PrintElement(std::cout, dtype_, host_buffer.data());
+            }
+        } else {
+            std::size_t flat_index = 0;
+            PrintNested(std::cout, dtype_, host_buffer.data(), shape, 0, element_size(), flat_index);
+        }
+        std::cout << ")" << std::endl;
+#else
+        throw std::logic_error("Tensor::print: CUDA support is disabled");
+#endif
     } else {
         throw std::invalid_argument("Tensor::print: unsupported device");
     }
 }
 
 Tensor& Tensor::zero_() {
+    /*
+    使用示例（a 为已构造的 CPU Tensor）：
+        a.zero_();
+    */
     const std::size_t bytes = nbytes();
     // data_ptr_ 的 for 循环赋值此处不可用，因为 data_ptr_ 类型是 void，编译器不知道 for 步长是多少
     if(bytes > 0){
         if (device_ == Device::kCPU) {
             std::memset(data_ptr_, 0, bytes);
         } else if (device_ == Device::kCUDA) {
-            // TODO: 使用 cudaMemset(data_ptr_, 0, bytes) 清零设备内存。
-            throw std::logic_error("Tensor::zero_: CUDA is not implemented");
+#ifdef MINI_INFER_ENABLE_CUDA
+            CUDA_CHECK(cudaMemset(data_ptr_, 0, bytes));
+#else
+            throw std::logic_error("Tensor::zero_: CUDA support is disabled");
+#endif
         } else {
             throw std::invalid_argument("Tensor::zero_: unsupported device");
         }
@@ -296,19 +333,20 @@ Tensor& Tensor::zero_() {
 }
 
 Tensor& Tensor::copy_(const Tensor& src) {
+    /*
+    使用示例（a、b 是形状和类型相同的 CPU Tensor）：
+        b.copy_(a);
+    */
+    // 检查 device、shape、dtype 是否一致
     if(this->shape != src.shape){
-        Logger::error("Copy should get same shape!!!");
         throw std::invalid_argument("Tensor::copy_: shapes must match");
     }else if(this->device_ != src.device_){
-        Logger::error("Copy should get same device!!!");
         throw std::invalid_argument("Tensor::copy_: devices must match");
     }else if(this->dtype_ != src.dtype_){
-        Logger::error("Copy should get same dtype!!!");
         throw std::invalid_argument("Tensor::copy_: dtypes must match");
     }
 
     if (empty() != src.empty()) {
-        Logger::error("Cannot copy between an empty Tensor and a non-empty Tensor");
         throw std::invalid_argument("Tensor::copy_: empty states must match");
     }
     if (empty()) {  // empty = empty 的情况直接跳过
@@ -322,8 +360,11 @@ Tensor& Tensor::copy_(const Tensor& src) {
     if (device_ == Device::kCPU) {
         std::memcpy(data_ptr_, src.data_ptr_, nbytes());
     } else if (device_ == Device::kCUDA) {
-        // TODO: 使用 cudaMemcpyDeviceToDevice 复制；当前接口要求源、目标 device 相同。
-        throw std::logic_error("Tensor::copy_: CUDA is not implemented");
+#ifdef MINI_INFER_ENABLE_CUDA
+        CUDA_CHECK(cudaMemcpy(data_ptr_, src.data_ptr_, nbytes(), cudaMemcpyDeviceToDevice));
+#else
+        throw std::logic_error("Tensor::copy_: CUDA support is disabled");
+#endif
     } else {
         throw std::invalid_argument("Tensor::copy_: unsupported device");
     }
@@ -331,6 +372,10 @@ Tensor& Tensor::copy_(const Tensor& src) {
 }
 
 Tensor Tensor::clone() const {
+    /*
+    使用示例:
+        Tensor b = a.clone();
+    */
     Tensor result;
     result.shape = shape;
     result.dtype_ = dtype_;
@@ -343,9 +388,13 @@ Tensor Tensor::clone() const {
             result.data_ptr_ = result.storage_.get();
             std::memcpy(result.data_ptr_, data_ptr_, bytes);
         } else if (device_ == Device::kCUDA) {
-            // TODO: 分配独立显存并绑定 cudaFree 删除器，再执行 cudaMemcpyDeviceToDevice。
-            // TODO: 复制源使用当前 data_ptr_，保留对索引视图的 clone 支持。
-            throw std::logic_error("Tensor::clone: CUDA is not implemented");
+#ifdef MINI_INFER_ENABLE_CUDA
+            result.storage_ = std::shared_ptr<void>(AllocateCUDA(bytes), FreeCUDA);
+            result.data_ptr_ = result.storage_.get();
+            CUDA_CHECK(cudaMemcpy(result.data_ptr_, data_ptr_, bytes, cudaMemcpyDeviceToDevice));
+#else
+            throw std::logic_error("Tensor::clone: CUDA support is disabled");
+#endif
         } else {
             throw std::invalid_argument("Tensor::clone: unsupported device");
         }

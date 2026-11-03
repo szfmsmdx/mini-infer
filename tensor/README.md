@@ -1,8 +1,8 @@
 # tensor 设计
 
-**Tensor 管理一块数据的形状、类型和访问位置。** 当前实现连续的 CPU 存储，CUDA 仍是占位，整体保持 WIP。
+**Tensor 管理一块数据的形状、类型和访问位置。** 当前实现连续的 CPU 和 CUDA 存储；CUDA 路径尚待 GPU 实测。
 
-构造、clone、copy_、fill_、zero_ 和 print 已预留 device 分流及 CUDA TODO，未实现的 CUDA 数据操作会抛出异常。
+构造、clone、copy_、fill_、zero_ 和 print 按 device 分流；关闭 CUDA 构建选项时，CUDA 构造会抛出异常。
 
 tensor 要解决的问题是：
 
@@ -14,11 +14,11 @@ tensor 要解决的问题是：
 
 | 子问题 | 字段 | 当前做法 |
 | --- | --- | --- |
-| 数据在哪 / 谁释放 | `std::shared_ptr<void> storage_` | 持有原始分配地址，最后一个持有者销毁时调用 `std::free` |
+| 数据在哪 / 谁释放 | `std::shared_ptr<void> storage_` | 持有原始分配地址，最后一个持有者销毁时调用 CPU 或 CUDA 释放函数 |
 | 从哪开始 | `void* data_ptr_` | 指向当前 Tensor 的数据起点；视图可以指向内存中间 |
 | 每一维多大 | `std::vector<int> shape` | 每个 Tensor 自己保存形状，元素按连续顺序排列 |
 | 每个元素占几字节 | `Dtype dtype_` | 通过 `dtype_size()` 查询 |
-| 数据在哪个设备 | `Device device_` | 当前只实现 CPU，保留 CUDA 枚举 |
+| 数据在哪个设备 | `Device device_` | 区分 CPU 与 CUDA；CUDA 路径待 GPU 实测 |
 
 ## 内存与索引
 
@@ -113,7 +113,8 @@ a[1].copy_(a[0]);      // 把第一行的数据写入第二行。
 - [x] 第一维整数索引与多级索引视图
 - [x] `clone()` / `copy_()` / `fill_()` / `zero_()`
 - [x] 嵌套打印与 FP16 / BF16 解码
-- [ ] CUDA 内存分配、释放、数据复制与算子支持
+- [x] CUDA 内存分配、释放、数据复制和 fill kernel 已写入源码
+- [ ] 在 GPU 上编译并运行 CUDA 测试
 
 ### 测试
 

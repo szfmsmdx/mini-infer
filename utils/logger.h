@@ -1,17 +1,28 @@
 #pragma once
 
+#include <fstream>
+#include <mutex>
 #include <string>
 
 namespace mtensor {
 
 class Logger {
 public:
-    static void info(const std::string& message);
-    static void warn(const std::string& message);
-    static void error(const std::string& message);
+    Logger() = default;
+    explicit Logger(const std::string& file_path);
+
+    void info(const std::string& message);
+    void warn(const std::string& message);
+    void error(const std::string& message);
 
 private:
-    static void write(const char* level, const std::string& message);
+    void write(const char* level, const std::string& message);
+
+    std::string file_path_ = ".log";
+    std::ofstream file_;
+    std::mutex mutex_;
 };
 
-} // namespace mtensor
+inline Logger logger;
+
+}  // namespace mtensor

@@ -15,6 +15,12 @@ mini_infer/
 
 各模块的具体说明见各自目录下的 README.md。
 
+## CUDA 开发基线
+
+- GPU：Ampere 及更新架构（SM80 起）。
+- CUDA Toolkit：暂定 12.4；具体 GPU 仍需匹配工具链支持的编译目标。
+- Colab L4（CUDA Toolkit 13.0.88）已完成 CUDA 构建，`setup.ipynb` 保存的 4 项 CTest 均通过；Windows RTX 4060 尚待验证。
+
 ## Roadmap
 
 - [x] **CPU Tensor**：内存与共享视图、拷贝与移动、填充与复制、打印、FP16/BF16 编解码；两组测试通过。
