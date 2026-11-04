@@ -7,13 +7,7 @@ cuda_arch="${CUDA_ARCH:-80}"
 case "$(uname -s)" in
     MINGW*|MSYS*)
         repo_dir="$(cygpath -m "$repo_dir")"
-        generator="${CUDA_GENERATOR:-Visual Studio 17 2022}"
-        generator_args=(-G "$generator")
-        if [[ "$generator" == Visual\ Studio* ]]; then
-            generator_args+=(-A x64)
-        fi
         ;;
-    *) generator_args=() ;;
 esac
 
 for tool in cmake ctest; do
@@ -25,7 +19,6 @@ done
 
 build_dir="$repo_dir/build/tests"
 cmake -S "$repo_dir" -B "$build_dir" \
-    "${generator_args[@]}" \
     -DBUILD_TESTING=ON \
     -DCMAKE_BUILD_TYPE=Release \
     "-DCMAKE_CUDA_ARCHITECTURES=$cuda_arch"

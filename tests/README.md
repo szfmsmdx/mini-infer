@@ -47,7 +47,7 @@ CMake 自动检测 Toolkit >= 12.4 和可用 CUDA 编译器，满足条件时编
 bash ./test.sh
 ```
 
-Windows + RTX 4060 可在 VS Code 的 Git Bash 集成终端运行同一命令。脚本默认使用 CUDA 架构 `80` 并保留 PTX，适用于 Ampere 及更新 GPU；Windows 默认选择 Visual Studio 2022 生成器。需要安装 CUDA Toolkit 和受支持的 MSVC C++ 工具链；仅有 Git Bash 或 WinLibs GCC 不足以编译 Windows CUDA 代码。本机额外使用被忽略的 `cmake/windows-cuda.cmake` 从 `CUDA_PATH` 读取 VS 集成文件，补齐未注册的 CUDA toolset；该补丁存在时才加载，标准安装环境无需此文件。
+Windows + RTX 4060 可在 VS Code 的 Git Bash 集成终端运行同一命令。脚本默认使用 CUDA 架构 `80` 并保留 PTX，适用于 Ampere 及更新 GPU。CMake 从当前环境选择编译器和生成器；需要指定生成器时可设置 `CMAKE_GENERATOR`，不要将机器上的编译器路径写进仓库。CUDA 编译需要 Toolkit 和受支持的 MSVC C++ 工具链；找不到 CUDA 编译环境时，项目只构建 CPU。本机额外使用被忽略的 `cmake/windows-cuda.cmake` 从 `CUDA_PATH` 读取 VS 集成文件，补齐未注册的 CUDA toolset；该补丁存在时才加载，标准安装环境无需此文件。
 
 其他 GPU 可在运行前指定架构，例如 `CUDA_ARCH=80 bash ./test.sh`。也可以手动执行下面的 CMake/CTest 命令：
 

@@ -8,8 +8,6 @@
         "${workspaceFolder}",
         "${env:CUDA_PATH}/include"
       ],
-      "compilerPath": "cl.exe",
-      "intelliSenseMode": "windows-msvc-x64",
       "cppStandard": "c++17"
     }
   ],
