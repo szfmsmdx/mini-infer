@@ -1,4 +1,4 @@
-# Tensor 测试
+# 测试
 
 需要支持 C++17 的编译器和 CMake 3.18+。从仓库根目录运行：
 
@@ -14,8 +14,11 @@ ctest --test-dir build/tests -C Release --output-on-failure
 | --- | --- |
 | `logger_test` | Engine/Worker 独立文件、日志级别、追加写入及无效路径 |
 | `tensor_cpu_test` | 构造、shape 查询、空对象与标量、共享拷贝、移动、索引视图与生命周期、clone、copy_、同设备 to、禁用 CUDA 时的迁移异常、填充、清零、打印和解码 |
+| `elementwise_cpu_test` | `add()` / `sub()` / `mul()` / `div()` / `neg()` 的 Float32、整数回绕与除零边界、FP16/BF16、无穷与 NaN、零维标量与索引视图、输入不变、输出独立，以及空对象、shape、dtype 错误 |
 | `dtype_encode_test` | FP16/BF16 编码、舍入、特殊值、所有非 NaN 编码往返，以及 16 位 Tensor 填充 |
 | `tensor_cuda_test` | CUDA 内存、构造、索引视图、所有权、clone、copy_、8 种 dtype 双向 to 与原始编码保留、迁移赋值和共享生命周期、标量/空对象迁移、填充、清零、打印及异常 |
+
+`elementwise_cuda_test` 尚未接入 CTest；等 CUDA kernel 实现后再加入。
 
 ## `.to()` 覆盖范围
 
@@ -29,7 +32,7 @@ ctest --test-dir build/tests -C Release --output-on-failure
 
 尚未注入 CPU/CUDA 分配失败或 CUDA 复制运行时错误，因此这些失败路径的资源回收与异常安全未得到故障注入验证。最后一个共享持有者释放时是否存在泄漏，也尚未使用专门的内存检测工具验证。上述错误路径需要独立的故障注入或内存检测环境，不通过耗尽本机内存/显存来测试。
 
-测试使用 `Check()` 抛异常，Release 构建也会执行检查；CTest 的 3/4 项数量是测试程序数量，`.to()` 用例包含在两个 Tensor 测试程序内，不代表只有 3/4 个检查。
+测试使用 `Check()` 抛异常，Release 构建也会执行检查；CTest 的 4/5 项数量是测试程序数量，`.to()` 用例包含在两个 Tensor 测试程序内，不代表只有 4/5 个检查。
 
 只跑其中一组，例如 Tensor：
 

@@ -16,7 +16,7 @@ tensor/
     README.md
 ```
 
-构造、`clone()` 和 `copy_()` 的公共逻辑留在 `tensor.cpp`；实际数据复制交给 CPU/CUDA 后端。构造仍从 CPU 源数据复制，`copy_()` 仍要求两端 device 相同。分配与释放继续使用现有内存工具，`storage_` 和视图的所有权语义保持不变。
+构造、`clone()` 和 `copy_()` 的公共逻辑留在 `tensor.cpp`；实际数据复制交给 CPU/CUDA 后端。源数据构造从 CPU 源数据复制；按 shape 分配存储的构造函数只分配、不初始化。`copy_()` 仍要求两端 device 相同。分配与释放继续使用现有内存工具，`storage_` 和视图的所有权语义保持不变。
 
 `fill_<T>()` 的模板定义留在头文件，检查空状态并将输入值转换为目标 dtype。私有非模板成员 `FillValue()` 在 `tensor.cpp` 中选择设备，再调用 `FillCPU()` 或 `LaunchFillKernel()`。CPU 循环和 CUDA kernel 均在各自的实现文件中。
 
@@ -67,6 +67,7 @@ public：
 | --- | --- | --- |
 | `Tensor()` | 创建默认空对象 | 数据指针为空，`numel() == 0` |
 | `Tensor(data_ptr, shape, dtype, device)` | 从连续的 CPU 源数据构造 | 自己分配并复制；源数据按 dtype 编码，拒绝空指针、负数维度和元素数为 0 的 shape |
+| `Tensor(shape, dtype, device)` | 按元数据分配存储，供算子创建输出 | 只分配不初始化；`shape` 为 `{}` 时按标量分配一个元素；拒绝负数维度和元素数为 0 的 shape |
 | 拷贝构造 / 拷贝赋值 | 创建或更新共享数据的 Tensor | 共享 `storage_`，复制形状、dtype、device 和当前数据指针 |
 | 移动构造 / 移动赋值 | 接管已有资源 | 转移 `storage_`，源对象的指针置空、形状清空 |
 | 析构 | 释放当前对象持有的资源 | 使用默认析构，由智能指针决定何时释放数据 |
@@ -78,6 +79,7 @@ public：
 | `fill_(value)` | 原地填充数值 | 按 dtype 转换输入；FP16/BF16 先编码一次，再填充 16 位编码 |
 | `zero_()` | 原地清零 | 将当前数据区域的所有字节设为 0 |
 | `print()` | 打印内容 | 根据 shape 递归输出括号，FP16/BF16 解码后打印 |
+| `reshape` / `transpose` / `permute` / `contiguous` / `squeeze` / `unsqueeze` / `narrow` | 形状与布局操作 | 接口已声明，TODO；需要明确 stride、视图和拷贝语义 |
 
 `shape()` 返回形状的只读引用，`size(dim)` 返回指定维度长度，`dim()` 返回维数，`numel()` 返回元素总数，`nbytes()` 返回字节数。`element_size()`、`dtype()`、`device()` 提供对应的元数据。原无参 `size()` 已改为 `shape()`；成员变量使用 `shape_`。
 
@@ -145,6 +147,8 @@ a = a.to(Device::kCUDA);  // 完成复制后，通过移动赋值让 a 接管结
 - [x] 元数据查询、默认空对象与标量
 - [x] 第一维整数索引与多级索引视图
 - [x] `clone()` / `copy_()` / `fill_()` / `zero_()`
+- [x] 按 shape、dtype、device 只分配输出的构造函数
+- [ ] `reshape` / `transpose` / `permute` / `contiguous` / `squeeze` / `unsqueeze` / `narrow`
 - [x] `to(device)`、同设备共享和 CPU/CUDA 双向迁移
 - [x] 嵌套打印与 FP16 / BF16 解码
 - [x] CUDA 内存分配、释放、数据复制和 fill kernel 已写入源码

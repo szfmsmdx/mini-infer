@@ -25,6 +25,17 @@ else()
 endif()
 
 add_library(mini_infer STATIC
+    ops/activation.cpp
+    ops/attention.cpp
+    ops/conv1d.cpp
+    ops/elementwise.cpp
+    ops/elementwise_cpu.cpp
+    ops/gated_delta.cpp
+    ops/indexing.cpp
+    ops/matmul.cpp
+    ops/norm.cpp
+    ops/reduce.cpp
+    ops/rope.cpp
     tensor/tensor.cpp
     tensor/tensor_cpu.cpp
     utils/logger.cpp
@@ -36,7 +47,10 @@ target_include_directories(mini_infer PUBLIC
 )
 
 if(ENABLE_CUDA)
-    target_sources(mini_infer PRIVATE tensor/tensor_cuda.cu)
+    target_sources(mini_infer PRIVATE
+        ops/elementwise_cuda.cu
+        tensor/tensor_cuda.cu
+    )
     set_target_properties(mini_infer PROPERTIES CUDA_STANDARD 17 CUDA_STANDARD_REQUIRED ON)
     target_link_libraries(mini_infer PUBLIC CUDA::cudart)
     target_compile_definitions(mini_infer PUBLIC ENABLE_CUDA=1)
@@ -63,6 +77,10 @@ if(BUILD_TESTING)
     add_executable(tensor_cpu_test tests/tensor_cpu_test.cpp)
     target_link_libraries(tensor_cpu_test PRIVATE mini_infer)
     add_test(NAME tensor_cpu_test COMMAND tensor_cpu_test)
+
+    add_executable(elementwise_cpu_test tests/elementwise_cpu_test.cpp)
+    target_link_libraries(elementwise_cpu_test PRIVATE mini_infer)
+    add_test(NAME elementwise_cpu_test COMMAND elementwise_cpu_test)
 
     if(ENABLE_CUDA)
         add_executable(tensor_cuda_test tests/tensor_cuda_test.cpp)

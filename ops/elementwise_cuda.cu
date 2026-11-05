@@ -30,4 +30,9 @@ void LaunchDivKernel(
     throw std::logic_error("LaunchDivKernel: not implemented");
 }
 
+void LaunchNegKernel(const void* a, void* output, std::size_t count, Dtype dtype) {
+    // TODO：按 dtype 分发并启动对应 kernel。
+    throw std::logic_error("LaunchNegKernel: not implemented");
+}
+
 }  // namespace mtensor

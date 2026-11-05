@@ -8,6 +8,7 @@
 
 #include "tensor/tensor.h"
 #include "tensor/dtype.h"
+#include "ops/elementwise.h"
 #include "utils/memory.h"
 
 namespace mtensor{
@@ -45,6 +46,36 @@ Tensor::Tensor(const void* data_ptr, std::vector<int> shape, Dtype dtype, Device
         throw std::logic_error("Tensor constructor: CUDA support is disabled");
 #endif
     }else{
+        throw std::invalid_argument("Tensor constructor: unsupported device");
+    }
+}
+
+Tensor::Tensor(std::vector<int> shape, Dtype dtype, Device device)
+:shape_(shape), dtype_(dtype), device_(device) {
+    for (int dimension : shape_) {
+        if (dimension < 0) {
+            throw std::invalid_argument("Tensor dimensions must be non-negative");
+        }
+    }
+
+    // shape 为 {} 表示标量，占一个元素。
+    // 分配前 data_ptr_ 为空，不能直接用 numel() 判断。
+    const std::size_t bytes = shape_.empty() ? element_size() : nbytes();
+    if (bytes == 0) {
+        throw std::invalid_argument("Tensor constructor: zero-sized shape");
+    }
+
+    if (device == Device::kCPU) {
+        storage_ = std::shared_ptr<void>(AllocateCPU(bytes), std::free);
+        data_ptr_ = storage_.get();
+    } else if (device == Device::kCUDA) {
+#ifdef ENABLE_CUDA
+        storage_ = std::shared_ptr<void>(AllocateCUDA(bytes), FreeCUDA);
+        data_ptr_ = storage_.get();
+#else
+        throw std::logic_error("Tensor constructor: CUDA support is disabled");
+#endif
+    } else {
         throw std::invalid_argument("Tensor constructor: unsupported device");
     }
 }
@@ -326,5 +357,54 @@ Tensor Tensor::clone() const {
     }
 
     return result;
+}
+
+Tensor Tensor::reshape(std::vector<int> shape) const {
+    std::size_t count = 1;
+    for(auto dimension : shape){
+        if(dimension <= 0){
+            throw std::invalid_argument(
+                "Tensor::reshape: dimension must be positive");
+        }
+        count *= dimension;
+    }
+    if(count != this->numel()){
+        throw std::invalid_argument(
+            "Tensor::reshape: shape must match");
+    }
+    Tensor result = *this;
+    result.shape_ = std::move(shape);
+    return result;
+}
+
+Tensor Tensor::narrow(int dim, int start, int length) const{
+    if(dim >= this->shape().size()){
+        throw std::invalid_argument("");
+    }
+    int dimension = this->size(dim);
+    if(start >= dimension || start + length >= dimension){
+        throw std::invalid_argument("");
+    }
+    Tensor
+}
+
+Tensor Tensor::operator+(const Tensor& other) const {
+    return add(*this, other);
+}
+
+Tensor Tensor::operator-(const Tensor& other) const {
+    return sub(*this, other);
+}
+
+Tensor Tensor::operator*(const Tensor& other) const {
+    return mul(*this, other);
+}
+
+Tensor Tensor::operator/(const Tensor& other) const {
+    return div(*this, other);
+}
+
+Tensor Tensor::operator-() const {
+    return neg(*this);
 }
 }

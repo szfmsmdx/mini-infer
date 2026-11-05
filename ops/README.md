@@ -2,20 +2,31 @@
 
 `ops/` 负责 Tensor 的数值计算；`tensor/` 继续负责存储、形状、dtype、device、共享视图和数据复制。
 
-已拆分公共入口、CPU 后端和 CUDA 后端。`elementwise.cpp` 保留输入检查与设备分流；原加法循环已移入 `elementwise_cpu.cpp` 的内部模板。CPU dtype 分发及 CUDA 计算仍为 TODO，占位入口会抛出未实现异常；当前尚不能执行完整加法，算子也尚未接入 CMake。
+已拆分公共入口、CPU 后端和 CUDA 后端。`elementwise.cpp` 保留输入检查、输出分配与设备分流；CPU 的 dtype 分发和 FP16/BF16 路径已接入，`add()` / `sub()` / `mul()` / `div()` / `neg()` 的 CPU 路径可以运行，并分别通过 `Tensor::operator+` / `operator-` / `operator*` / `operator/` 和一元 `operator-` 复用。CUDA kernel 仍未实现，启动入口会抛出未实现异常。算子源码和 CPU 测试已接入 CMake。
+
+其余算子文件目前只包含公共接口和抛 `std::logic_error` 的占位实现，后续按需补 CPU/CUDA 后端。
 
 ## 文件结构
 
 ```text
 ops/
     README.md
-    elementwise.h        # 公共算子、CPU 入口和 CUDA 启动函数的声明
-    elementwise.cpp      # 参数检查、输出分配、按 device 分流
-    elementwise_cpu.cpp  # CPU 入口、dtype 分发、内部模板和 FP16/BF16 计算
-    elementwise_cuda.cu  # CUDA 启动入口、dtype 分发和 GPU kernel
+    elementwise.h        # 加减乘除、取负
+    elementwise.cpp
+    elementwise_cpu.cpp
+    elementwise_cuda.cu
+    matmul.h/.cpp        # matmul、linear
+    norm.h/.cpp          # RMSNorm、零中心 RMSNorm、gated RMSNorm、LayerNorm
+    activation.h/.cpp    # SiLU、sigmoid、softplus、exp
+    reduce.h/.cpp        # sum、mean、max、softmax、argmax、topk
+    indexing.h/.cpp      # embedding、index_select、gather、scatter_add
+    rope.h/.cpp          # RoPE；MRoPE 待补
+    attention.h/.cpp     # 因果注意力核心
+    conv1d.h/.cpp        # depthwise causal conv1d
+    gated_delta.h/.cpp   # Gated DeltaNet 循环更新
 ```
 
-先按运算类别组织文件，加减乘除放在一起。后续矩阵乘法可使用 `matmul.h/.cpp/.cu`；归约、Softmax 等做到时再划分，不预先创建空目录或抽象层。
+先按运算类别组织文件，同一类的公共接口、CPU 后端和 CUDA 后端放在一起。新增文件目前是接口和占位实现；真正实现时再按 `elementwise` 的方式拆出 `_cpu.cpp` 和 `_cuda.cu`。不预先为未实现的 kernel 创建空文件。
 
 ## 接口与结果所有权
 
@@ -27,9 +38,13 @@ Tensor operator+(const Tensor& other) const;
 
 // 普通函数，位于 namespace mtensor。
 Tensor add(const Tensor& a, const Tensor& b);
+
+// 一元负号及其普通函数形式。
+Tensor operator-() const;
+Tensor neg(const Tensor& a);
 ```
 
-`operator+` 只调用 `add(*this, other)`，参数检查和计算逻辑统一写在 `add()` 中。减、乘、除按相同方式组织。
+`operator+` 只调用 `add(*this, other)`，参数检查和计算逻辑统一写在 `add()` 中。减、乘、除和一元负号按相同方式组织。
 
 `add()` 返回拥有独立存储的新 Tensor，不修改输入，也不与输入共享输出存储。返回 Tensor 按现有的移动语义或返回值消除传递，不需要为返回值额外复制整块数据。
 
@@ -91,33 +106,48 @@ void AddTypedCPU(const T* a, const T* b, T* out, std::size_t count);
 - CUDA 路径在 `.cu` 的启动函数中选择元素类型，启动对应的模板 kernel。
 - `void*` 只描述地址；必须根据 dtype 转换成正确的元素指针，输入使用只读指针，输出使用可写指针。
 
-FP16/BF16 当前用 `uint16_t` 保存编码，不能用 `AddTypedCPU<uint16_t>()` 对编码做整数加法。这两种 dtype 在进入普通数值分发宏前单独处理：
+FP16/BF16 当前用 `uint16_t` 保存编码，不能用 `AddTypedCPU<uint16_t>()` 等方式对编码做数值运算。这两种 dtype 在进入普通数值分发宏前单独处理：
 
 - CPU：读取编码，解码成 `float`，进行 FP32 中间计算，再通过 `EncodeFloat16()` / `EncodeBFloat16()` 舍入并存回 16 位编码。`dtype.h` 已提供可复用的 `DecodeFloat16()` / `DecodeBFloat16()`。
 - CUDA：使用 `<cuda_fp16.h>` 的 `__half`、`<cuda_bf16.h>` 的 `__nv_bfloat16` 和对应算术函数，实现 kernel。
 
-整数除零、整数溢出、浮点除零及特殊值处理需要明确规则，并用对应测试验证。各 dtype 使用与其精度相符的误差范围。
+`add()` / `sub()` / `mul()` 的整数溢出采用固定位宽回绕：先用对应的无符号类型计算，再把位模式写回原类型；边界值已由 CPU 测试覆盖。整数 `div()` 向零截断，除零返回 0，最小值除以 -1 回绕为最小值。这些是项目自定义的规则，CPU 和后续 CUDA 实现必须保持一致。浮点四则运算遵循 IEEE 754，溢出得到无穷，NaN 继续传播。各 dtype 使用与其精度相符的误差范围。
 
 ## TODO
 
 按以下顺序推进，每一步先明确接口，再写实现和对应验证。
 
 - [x] 声明逐元素算子、CUDA 启动函数、Tensor 运算符、分配构造函数和只读数据访问接口。
-- [ ] 补齐只按 shape、dtype、device 分配存储的 Tensor 接口；明确是否初始化，避免为了分配输出先准备一份 CPU 源数组。
+- [x] 补齐只按 shape、dtype、device 分配存储的 Tensor 接口；只分配不初始化，避免为了分配输出先准备一份 CPU 源数组。
 - [x] 实现 `const void* data_ptr() const`，使算子能读取 `const Tensor&` 输入。
 - [ ] 完善公共输入检查：拒绝空对象，检查 shape、dtype、device，并拒绝尚未实现的类型或设备。
 - [x] 拆分公共入口、CPU 文件与 CUDA 文件，声明可跨文件调用的普通后端入口。
 - [x] 将加法循环移入 CPU 文件的 `AddTypedCPU<T>()`，直接遍历连续存储的全部元素。
-- [ ] 完成 `add()`：检查输入、一次分配独立输出、按 device/dtype 分发并调用计算函数。
-- [ ] 在 `elementwise_cpu.cpp` 的 CPU 入口内接入 `DISPATCH_DTYPE`，选择对应的内部模板实例。
+- [x] 完成 `add()` / `sub()` / `mul()` / `div()` 的 CPU 路径：检查输入、一次分配独立输出、按 device/dtype 分发并调用计算函数；CUDA 路径等待 kernel 实现。
+- [x] 在 `elementwise_cpu.cpp` 的 CPU 入口内接入 `DISPATCH_DTYPE`，选择对应的内部模板实例。
 - [x] 将 FP16/BF16 解码函数整理到 `dtype.h`，供算子复用。
-- [ ] 实现 CPU 的 FP16/BF16 解码、FP32 计算和编码路径。
-- [ ] 明确整数除零和溢出、浮点除零及特殊值处理规则。
-- [ ] 声明并实现 `Tensor::operator+`，复用 `add()`。
-- [ ] 将 `elementwise.cpp`、`elementwise_cpu.cpp` 和 CPU 测试接入 CMake，覆盖各 dtype、标量、多维输入、索引视图、输入不变、输出独立、特殊值和无效输入。
-- [ ] 实现 CUDA 的 `LaunchAddKernel()` 和按 dtype 分发的 kernel，普通数值类型使用模板，FP16/BF16 使用 CUDA 对应的浮点类型；处理线程越界并检查启动错误。
-- [ ] 按 `ENABLE_CUDA` 条件接入 CUDA 源码和测试；对照 CPU 结果，覆盖元素数不整除线程块大小的情况，读取结果时检查执行错误。
-- [ ] 按相同结构实现 `sub()`、`mul()`、`div()` 及对应运算符，补齐各 dtype 的 CPU/CUDA 测试。
+- [x] 实现 CPU 的 FP16/BF16 解码、FP32 计算和编码路径。
+- [x] `add()` / `sub()` / `mul()` 的整数溢出采用固定位宽回绕，并覆盖各整数类型的边界值。
+- [x] 整数 `div()` 向零截断，除零返回 0，最小值除以 -1 回绕为最小值，并覆盖边界测试。
+- [x] 浮点四则运算遵循 IEEE 754，覆盖无穷和 NaN 传播。
+- [x] 声明并实现 `Tensor::operator+` / `operator-` / `operator*` / `operator/` 以及一元 `operator-`。
+- [x] 完成 CPU 的 `neg()`：整数取负按固定位宽回绕，FP16/BF16 翻转符号位。
+- [x] 将 `elementwise.cpp`、`elementwise_cpu.cpp` 和 CPU 测试接入 CMake，覆盖各 dtype、标量、多维输入、索引视图、输入不变、输出独立和无效输入。
+- [ ] 实现 CUDA 的 `LaunchAddKernel()` / `LaunchSubKernel()` / `LaunchMulKernel()` / `LaunchDivKernel()` / `LaunchNegKernel()`，普通数值类型使用模板，FP16/BF16 使用 CUDA 对应的浮点类型；处理线程越界并检查启动错误。
+- [ ] 按 `ENABLE_CUDA` 条件接入 CUDA 测试；对照 CPU 结果，覆盖元素数不整除线程块大小的情况，读取结果时检查执行错误。
 - [ ] 后续独立设计广播、标量混合运算及 `add_()` / `operator+=` 等原地接口。
+
+### 扩展算子
+
+- [x] 建立 `matmul`、`norm`、`activation`、`reduce`、`indexing`、`rope`、`attention`、`conv1d`、`gated_delta` 的公共接口和占位实现。
+- [ ] 实现 `matmul()` / `linear()` 的 CPU 路径。
+- [ ] 实现 `rms_norm()` / `rms_norm_zero_centered()` / `rms_norm_gated()` / `layer_norm()`。
+- [ ] 实现 `silu()` / `sigmoid()` / `softplus()` / `exp()`。
+- [ ] 实现 `sum()` / `mean()` / `max()` / `softmax()` / `argmax()` / `topk()`。
+- [ ] 实现 `embedding()` / `index_select()` / `gather()` / `scatter_add()`。
+- [ ] 实现 `rope()`；确定 MRoPE 接口。
+- [ ] 实现 `causal_attention()`。
+- [ ] 实现 `depthwise_causal_conv1d()`。
+- [ ] 实现 `gated_delta_rule()`。
 
 测试与构建方式见 [tests/README.md](../tests/README.md)。
