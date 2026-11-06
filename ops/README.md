@@ -70,20 +70,15 @@ add(a, b)                                ops/elementwise.cpp
   │    ├─ 根据 dtype 分发
   │    ├─ 普通数值类型：AddTypedCPU<T>(...)，遍历全部 numel()
   │    └─ FP16/BF16：解码为 float → 计算 → 编码并写回
-  └─ CUDA：调用 LaunchAddKernel(...)
-                    ↓                    ops/elementwise_cuda.cu
-             选择类型、配置线程与线程块
-                    ↓
-             AddKernel<<<...>>>(...)
-                    ↓
-             检查 kernel 启动错误
+  └─ CUDA：调用 LaunchAddKernel(...)      ops/elementwise_cuda.cu
+             当前抛出未实现异常
 ```
 
 ### 按 device 分发
 
 `elementwise.cpp` 统一检查参数、分配输出，再根据 device 调用普通后端入口：CPU 为 `AddCPU()` / `SubCPU()` / `MulCPU()` / `DivCPU()`，CUDA 为对应的 `Launch...Kernel()`。该文件不包含元素循环或 dtype 分发。CUDA 调用放在 `#ifdef ENABLE_CUDA` 中；CPU 构建不能引用未链接的 CUDA 启动函数。
 
-CUDA 路径调用的是普通 CPU 函数 `LaunchAddKernel()`，由该函数在 `.cu` 内使用 `<<<...>>>` 启动 GPU kernel。启动函数通过头文件声明连接两边；不直接 include `.cu` 文件。
+CUDA 启动函数通过头文件声明，当前实现只抛出未实现异常；后续将在 `.cu` 内启动对应 kernel。
 
 `elementwise.h` 包含 `tensor/tensor.h`；`tensor.cpp` 包含 `ops/elementwise.h`。`tensor.h` 只声明运算符，不反过来包含算子头文件。
 
@@ -102,14 +97,14 @@ void AddTypedCPU(const T* a, const T* b, T* out, std::size_t count);
 
 `AddTypedCPU<T>()` 的定义放在 `elementwise_cpu.cpp` 的匿名命名空间内，由同文件的 `AddCPU()` 实例化调用。跨文件只调用普通入口，避免模板定义不可见导致链接错误。输入指针只读、输出指针可写，均不转移所有权；模板只负责遍历 `count` 个元素并计算，不负责分配、形状检查或设备选择。减、乘、除使用对应的内部模板函数。
 
-- CPU 路径在 `elementwise_cpu.cpp` 中用 `DISPATCH_DTYPE` 选择普通数值类型，再调用 `AddTypedCPU<float>()`、`AddTypedCPU<std::int32_t>()` 等实例。
-- CUDA 路径在 `.cu` 的启动函数中选择元素类型，启动对应的模板 kernel。
+- CPU 路径在 `elementwise_cpu.cpp` 中用 `switch` 选择普通数值类型，再调用 `AddTypedCPU<float>()`、`AddTypedCPU<std::int32_t>()` 等实例。
+- CUDA 启动入口尚未实现类型选择和计算。
 - `void*` 只描述地址；必须根据 dtype 转换成正确的元素指针，输入使用只读指针，输出使用可写指针。
 
-FP16/BF16 当前用 `uint16_t` 保存编码，不能用 `AddTypedCPU<uint16_t>()` 等方式对编码做数值运算。这两种 dtype 在进入普通数值分发宏前单独处理：
+FP16/BF16 使用 16 位编码，不能直接将编码作为整数参与浮点运算；它们在同一个 `switch` 中分发到专门的半精度计算路径：
 
-- CPU：读取编码，解码成 `float`，进行 FP32 中间计算，再通过 `EncodeFloat16()` / `EncodeBFloat16()` 舍入并存回 16 位编码。`dtype.h` 已提供可复用的 `DecodeFloat16()` / `DecodeBFloat16()`。
-- CUDA：使用 `<cuda_fp16.h>` 的 `__half`、`<cuda_bf16.h>` 的 `__nv_bfloat16` 和对应算术函数，实现 kernel。
+- CPU：四则运算通过 `HalfBinaryCPU` 共用遍历逻辑，将编码转换为 `float`、计算后重新编码；取负共用符号位处理。
+- CUDA：逐元素 kernel 尚未实现；后续需要确定半精度计算方式并验证数值行为。
 
 `add()` / `sub()` / `mul()` 的整数溢出采用固定位宽回绕：先用对应的无符号类型计算，再把位模式写回原类型；边界值已由 CPU 测试覆盖。整数 `div()` 向零截断，除零返回 0，最小值除以 -1 回绕为最小值。这些是项目自定义的规则，CPU 和后续 CUDA 实现必须保持一致。浮点四则运算遵循 IEEE 754，溢出得到无穷，NaN 继续传播。各 dtype 使用与其精度相符的误差范围。
 
@@ -124,7 +119,7 @@ FP16/BF16 当前用 `uint16_t` 保存编码，不能用 `AddTypedCPU<uint16_t>()
 - [x] 拆分公共入口、CPU 文件与 CUDA 文件，声明可跨文件调用的普通后端入口。
 - [x] 将加法循环移入 CPU 文件的 `AddTypedCPU<T>()`，直接遍历连续存储的全部元素。
 - [x] 完成 `add()` / `sub()` / `mul()` / `div()` 的 CPU 路径：检查输入、一次分配独立输出、按 device/dtype 分发并调用计算函数；CUDA 路径等待 kernel 实现。
-- [x] 在 `elementwise_cpu.cpp` 的 CPU 入口内接入 `DISPATCH_DTYPE`，选择对应的内部模板实例。
+- [x] 在 `elementwise_cpu.cpp` 的 CPU 入口内使用 `switch`，选择对应的内部模板实例。
 - [x] 将 FP16/BF16 解码函数整理到 `dtype.h`，供算子复用。
 - [x] 实现 CPU 的 FP16/BF16 解码、FP32 计算和编码路径。
 - [x] `add()` / `sub()` / `mul()` 的整数溢出采用固定位宽回绕，并覆盖各整数类型的边界值。

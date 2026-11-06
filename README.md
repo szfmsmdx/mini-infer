@@ -24,9 +24,9 @@ mini_infer/
 
 ## Roadmap
 
-- [x] **CPU Tensor**：内存与共享视图、拷贝与移动、填充与复制、打印、FP16/BF16 编解码；CPU 构建下三项 CTest 通过。
+- [x] **CPU Tensor**：内存与共享视图、拷贝与移动、填充与复制、打印、FP16/BF16 编解码；CPU 构建与测试通过。
 - [x] **CUDA Tensor**：GPU 内存分配与释放、从 CPU 源数据构造、同设备复制、填充、清零、打印和索引视图；`to(device)` 支持 CPU/CUDA 双向迁移，`copy_()` 仍要求同设备。
-- [ ] **基础算子**：已建立逐元素算子的公共入口与 CPU/CUDA 后端骨架，dtype 分发、计算和测试尚未完成；普通数值类型采用模板，FP16/BF16 单独处理。后续实现矩阵乘、归约和 Softmax，并对照验证 CPU/CUDA 结果。
+- [ ] **基础算子**：逐元素算子的 CPU 实现和测试已接入，CUDA 计算入口尚未实现；后续实现矩阵乘、归约和 Softmax，并对照验证 CPU/CUDA 结果。
 - [ ] **Module / Layer**：组织参数、子模块和 forward，实现 Linear、Embedding、Norm、激活等基础层。
 - [ ] **模型前向**：组合 Attention、位置编码和 FFN，接入模型配置与权重加载，跑通一个小型 Decoder-only 模型。
 - [ ] **单请求生成**：接入 tokenizer、采样和停止条件，区分 prefill / decode，加入基础 KV Cache，完成文本到文本的生成。

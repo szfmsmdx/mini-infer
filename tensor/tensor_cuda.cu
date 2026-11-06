@@ -41,13 +41,16 @@ void LaunchFillKernel(
 
     constexpr unsigned int threads = 256;
     const unsigned int blocks = static_cast<unsigned int>((count - 1) / threads + 1);
-    if(dtype == Dtype::kBFloat16 || dtype == Dtype::kFloat16){
-        LaunchTypedFill<std::uint16_t>(
-            device_ptr, count, host_value, blocks, threads);
-    }else{
-        DISPATCH_DTYPE(dtype, Element, {
-            LaunchTypedFill<Element>(device_ptr, count, host_value, blocks, threads);
-        });
+    switch (dtype) {
+        case Dtype::kFloat16:
+        case Dtype::kBFloat16: LaunchTypedFill<std::uint16_t>(device_ptr, count, host_value, blocks, threads); break;
+        case Dtype::kFloat32: LaunchTypedFill<float>(device_ptr, count, host_value, blocks, threads); break;
+        case Dtype::kInt8: LaunchTypedFill<std::int8_t>(device_ptr, count, host_value, blocks, threads); break;
+        case Dtype::kUInt8: LaunchTypedFill<std::uint8_t>(device_ptr, count, host_value, blocks, threads); break;
+        case Dtype::kInt16: LaunchTypedFill<std::int16_t>(device_ptr, count, host_value, blocks, threads); break;
+        case Dtype::kInt32: LaunchTypedFill<std::int32_t>(device_ptr, count, host_value, blocks, threads); break;
+        case Dtype::kInt64: LaunchTypedFill<std::int64_t>(device_ptr, count, host_value, blocks, threads); break;
+        default: throw std::invalid_argument("unsupported dtype");
     }
 
     CUDA_CHECK(cudaGetLastError());

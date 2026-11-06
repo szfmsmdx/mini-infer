@@ -1,6 +1,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <limits>
 #include <stdexcept>
 #include <type_traits>
@@ -82,92 +83,21 @@ T NegValue(T value) {
     }
 }
 
-// FP16/BF16 共用 16 位编码：逐元素解码为 float 计算，再编码写回。
-void AddHalfCPU(const void* a, const void* b, void* output, std::size_t count, Dtype dtype) {
-    auto* output_ptr = static_cast<std::uint16_t*>(output);
-    const auto* a_ptr = static_cast<const std::uint16_t*>(a);
-    const auto* b_ptr = static_cast<const std::uint16_t*>(b);
-
-    if (dtype == Dtype::kBFloat16) {
-        for (std::size_t i = 0; i < count; ++i) {
-            const float result =
-                DecodeBFloat16(a_ptr + i) + DecodeBFloat16(b_ptr + i);
-            output_ptr[i] = EncodeBFloat16(result);
-        }
-    } else if (dtype == Dtype::kFloat16) {
-        for (std::size_t i = 0; i < count; ++i) {
-            const float result =
-                DecodeFloat16(a_ptr + i) + DecodeFloat16(b_ptr + i);
-            output_ptr[i] = EncodeFloat16(result);
-        }
-    } else {
-        throw std::invalid_argument("AddHalfCPU: unsupported dtype");
-    }
-}
-
-void SubHalfCPU(const void* a, const void* b, void* output, std::size_t count, Dtype dtype) {
-    auto* output_ptr = static_cast<std::uint16_t*>(output);
-    const auto* a_ptr = static_cast<const std::uint16_t*>(a);
-    const auto* b_ptr = static_cast<const std::uint16_t*>(b);
-
-    if (dtype == Dtype::kBFloat16) {
-        for (std::size_t i = 0; i < count; ++i) {
-            const float result =
-                DecodeBFloat16(a_ptr + i) - DecodeBFloat16(b_ptr + i);
-            output_ptr[i] = EncodeBFloat16(result);
-        }
-    } else if (dtype == Dtype::kFloat16) {
-        for (std::size_t i = 0; i < count; ++i) {
-            const float result =
-                DecodeFloat16(a_ptr + i) - DecodeFloat16(b_ptr + i);
-            output_ptr[i] = EncodeFloat16(result);
-        }
-    } else {
-        throw std::invalid_argument("SubHalfCPU: unsupported dtype");
-    }
-}
-
-void MulHalfCPU(const void* a, const void* b, void* output, std::size_t count, Dtype dtype) {
-    auto* output_ptr = static_cast<std::uint16_t*>(output);
-    const auto* a_ptr = static_cast<const std::uint16_t*>(a);
-    const auto* b_ptr = static_cast<const std::uint16_t*>(b);
-
-    if (dtype == Dtype::kBFloat16) {
-        for (std::size_t i = 0; i < count; ++i) {
-            const float result =
-                DecodeBFloat16(a_ptr + i) * DecodeBFloat16(b_ptr + i);
-            output_ptr[i] = EncodeBFloat16(result);
-        }
-    } else if (dtype == Dtype::kFloat16) {
-        for (std::size_t i = 0; i < count; ++i) {
-            const float result =
-                DecodeFloat16(a_ptr + i) * DecodeFloat16(b_ptr + i);
-            output_ptr[i] = EncodeFloat16(result);
-        }
-    } else {
-        throw std::invalid_argument("MulHalfCPU: unsupported dtype");
-    }
-}
-
-void DivHalfCPU(const void* a, const void* b, void* output, std::size_t count, Dtype dtype) {
-    auto* output_ptr = static_cast<std::uint16_t*>(output);
-    const auto* a_ptr = static_cast<const std::uint16_t*>(a);
-    const auto* b_ptr = static_cast<const std::uint16_t*>(b);
-
-    if (dtype == Dtype::kBFloat16) {
-        for (std::size_t i = 0; i < count; ++i) {
-            const float result =
-                DecodeBFloat16(a_ptr + i) / DecodeBFloat16(b_ptr + i);
-            output_ptr[i] = EncodeBFloat16(result);
-        }
-    } else if (dtype == Dtype::kFloat16) {
-        for (std::size_t i = 0; i < count; ++i) {
-            const float result =
-                DecodeFloat16(a_ptr + i) / DecodeFloat16(b_ptr + i);
-            output_ptr[i] = EncodeFloat16(result);
-        }
-    } else {
-        throw std::invalid_argument("DivHalfCPU: unsupported dtype");
+// FP16/BF16 共用 16 位编码：解码为 float 计算，再编码写回。
+template <typename Half, typename Operation>
+void HalfBinaryCPU(const void* a, const void* b, void* output, std::size_t count) {
+    const auto* a_bytes = static_cast<const std::byte*>(a);
+    const auto* b_bytes = static_cast<const std::byte*>(b);
+    auto* output_bytes = static_cast<std::byte*>(output);
+    for (std::size_t i = 0; i < count; ++i) {
+        std::uint16_t a_bits, b_bits;
+        const std::size_t offset = i * sizeof(std::uint16_t);
+        std::memcpy(&a_bits, a_bytes + offset, sizeof(a_bits));
+        std::memcpy(&b_bits, b_bytes + offset, sizeof(b_bits));
+        const float a_value = static_cast<float>(Half::from_bits(a_bits));
+        const float b_value = static_cast<float>(Half::from_bits(b_bits));
+        const Half result(Operation{}(a_value, b_value));
+        std::memcpy(output_bytes + offset, &result.bits, sizeof(result.bits));
     }
 }
 
@@ -231,77 +161,73 @@ void NegTypedCPU(const T* a, T* output, std::size_t count) {
 }  // namespace
 
 void AddCPU(const void* a, const void* b, void* output, std::size_t count, Dtype dtype) {
-    if (dtype == Dtype::kBFloat16 || dtype == Dtype::kFloat16) {
-        AddHalfCPU(a, b, output, count, dtype);
-        return;
+    switch (dtype) {
+        case Dtype::kFloat16: HalfBinaryCPU<Float16, std::plus<float>>(a, b, output, count); break;
+        case Dtype::kBFloat16: HalfBinaryCPU<BFloat16, std::plus<float>>(a, b, output, count); break;
+        case Dtype::kFloat32: AddTypedCPU(static_cast<const float*>(a), static_cast<const float*>(b), static_cast<float*>(output), count); break;
+        case Dtype::kInt8: AddTypedCPU(static_cast<const std::int8_t*>(a), static_cast<const std::int8_t*>(b), static_cast<std::int8_t*>(output), count); break;
+        case Dtype::kUInt8: AddTypedCPU(static_cast<const std::uint8_t*>(a), static_cast<const std::uint8_t*>(b), static_cast<std::uint8_t*>(output), count); break;
+        case Dtype::kInt16: AddTypedCPU(static_cast<const std::int16_t*>(a), static_cast<const std::int16_t*>(b), static_cast<std::int16_t*>(output), count); break;
+        case Dtype::kInt32: AddTypedCPU(static_cast<const std::int32_t*>(a), static_cast<const std::int32_t*>(b), static_cast<std::int32_t*>(output), count); break;
+        case Dtype::kInt64: AddTypedCPU(static_cast<const std::int64_t*>(a), static_cast<const std::int64_t*>(b), static_cast<std::int64_t*>(output), count); break;
+        default: throw std::invalid_argument("unsupported dtype");
     }
-
-    DISPATCH_DTYPE(dtype, Element, {
-        AddTypedCPU(
-            static_cast<const Element*>(a),
-            static_cast<const Element*>(b),
-            static_cast<Element*>(output),
-            count);
-    });
 }
 
 void SubCPU(const void* a, const void* b, void* output, std::size_t count, Dtype dtype) {
-    if (dtype == Dtype::kBFloat16 || dtype == Dtype::kFloat16) {
-        SubHalfCPU(a, b, output, count, dtype);
-        return;
+    switch (dtype) {
+        case Dtype::kFloat16: HalfBinaryCPU<Float16, std::minus<float>>(a, b, output, count); break;
+        case Dtype::kBFloat16: HalfBinaryCPU<BFloat16, std::minus<float>>(a, b, output, count); break;
+        case Dtype::kFloat32: SubTypedCPU(static_cast<const float*>(a), static_cast<const float*>(b), static_cast<float*>(output), count); break;
+        case Dtype::kInt8: SubTypedCPU(static_cast<const std::int8_t*>(a), static_cast<const std::int8_t*>(b), static_cast<std::int8_t*>(output), count); break;
+        case Dtype::kUInt8: SubTypedCPU(static_cast<const std::uint8_t*>(a), static_cast<const std::uint8_t*>(b), static_cast<std::uint8_t*>(output), count); break;
+        case Dtype::kInt16: SubTypedCPU(static_cast<const std::int16_t*>(a), static_cast<const std::int16_t*>(b), static_cast<std::int16_t*>(output), count); break;
+        case Dtype::kInt32: SubTypedCPU(static_cast<const std::int32_t*>(a), static_cast<const std::int32_t*>(b), static_cast<std::int32_t*>(output), count); break;
+        case Dtype::kInt64: SubTypedCPU(static_cast<const std::int64_t*>(a), static_cast<const std::int64_t*>(b), static_cast<std::int64_t*>(output), count); break;
+        default: throw std::invalid_argument("unsupported dtype");
     }
-
-    DISPATCH_DTYPE(dtype, Element, {
-        SubTypedCPU(
-            static_cast<const Element*>(a),
-            static_cast<const Element*>(b),
-            static_cast<Element*>(output),
-            count);
-    });
 }
 
 void MulCPU(const void* a, const void* b, void* output, std::size_t count, Dtype dtype) {
-    if (dtype == Dtype::kBFloat16 || dtype == Dtype::kFloat16) {
-        MulHalfCPU(a, b, output, count, dtype);
-        return;
+    switch (dtype) {
+        case Dtype::kFloat16: HalfBinaryCPU<Float16, std::multiplies<float>>(a, b, output, count); break;
+        case Dtype::kBFloat16: HalfBinaryCPU<BFloat16, std::multiplies<float>>(a, b, output, count); break;
+        case Dtype::kFloat32: MulTypedCPU(static_cast<const float*>(a), static_cast<const float*>(b), static_cast<float*>(output), count); break;
+        case Dtype::kInt8: MulTypedCPU(static_cast<const std::int8_t*>(a), static_cast<const std::int8_t*>(b), static_cast<std::int8_t*>(output), count); break;
+        case Dtype::kUInt8: MulTypedCPU(static_cast<const std::uint8_t*>(a), static_cast<const std::uint8_t*>(b), static_cast<std::uint8_t*>(output), count); break;
+        case Dtype::kInt16: MulTypedCPU(static_cast<const std::int16_t*>(a), static_cast<const std::int16_t*>(b), static_cast<std::int16_t*>(output), count); break;
+        case Dtype::kInt32: MulTypedCPU(static_cast<const std::int32_t*>(a), static_cast<const std::int32_t*>(b), static_cast<std::int32_t*>(output), count); break;
+        case Dtype::kInt64: MulTypedCPU(static_cast<const std::int64_t*>(a), static_cast<const std::int64_t*>(b), static_cast<std::int64_t*>(output), count); break;
+        default: throw std::invalid_argument("unsupported dtype");
     }
-
-    DISPATCH_DTYPE(dtype, Element, {
-        MulTypedCPU(
-            static_cast<const Element*>(a),
-            static_cast<const Element*>(b),
-            static_cast<Element*>(output),
-            count);
-    });
 }
 
 void DivCPU(const void* a, const void* b, void* output, std::size_t count, Dtype dtype) {
-    if (dtype == Dtype::kBFloat16 || dtype == Dtype::kFloat16) {
-        DivHalfCPU(a, b, output, count, dtype);
-        return;
+    switch (dtype) {
+        case Dtype::kFloat16: HalfBinaryCPU<Float16, std::divides<float>>(a, b, output, count); break;
+        case Dtype::kBFloat16: HalfBinaryCPU<BFloat16, std::divides<float>>(a, b, output, count); break;
+        case Dtype::kFloat32: DivTypedCPU(static_cast<const float*>(a), static_cast<const float*>(b), static_cast<float*>(output), count); break;
+        case Dtype::kInt8: DivTypedCPU(static_cast<const std::int8_t*>(a), static_cast<const std::int8_t*>(b), static_cast<std::int8_t*>(output), count); break;
+        case Dtype::kUInt8: DivTypedCPU(static_cast<const std::uint8_t*>(a), static_cast<const std::uint8_t*>(b), static_cast<std::uint8_t*>(output), count); break;
+        case Dtype::kInt16: DivTypedCPU(static_cast<const std::int16_t*>(a), static_cast<const std::int16_t*>(b), static_cast<std::int16_t*>(output), count); break;
+        case Dtype::kInt32: DivTypedCPU(static_cast<const std::int32_t*>(a), static_cast<const std::int32_t*>(b), static_cast<std::int32_t*>(output), count); break;
+        case Dtype::kInt64: DivTypedCPU(static_cast<const std::int64_t*>(a), static_cast<const std::int64_t*>(b), static_cast<std::int64_t*>(output), count); break;
+        default: throw std::invalid_argument("unsupported dtype");
     }
-
-    DISPATCH_DTYPE(dtype, Element, {
-        DivTypedCPU(
-            static_cast<const Element*>(a),
-            static_cast<const Element*>(b),
-            static_cast<Element*>(output),
-            count);
-    });
 }
 
 void NegCPU(const void* a, void* output, std::size_t count, Dtype dtype) {
-    if (dtype == Dtype::kBFloat16 || dtype == Dtype::kFloat16) {
-        NegHalfCPU(a, output, count);
-        return;
+    switch (dtype) {
+        case Dtype::kFloat16:
+        case Dtype::kBFloat16: NegHalfCPU(a, output, count); break;
+        case Dtype::kFloat32: NegTypedCPU(static_cast<const float*>(a), static_cast<float*>(output), count); break;
+        case Dtype::kInt8: NegTypedCPU(static_cast<const std::int8_t*>(a), static_cast<std::int8_t*>(output), count); break;
+        case Dtype::kUInt8: NegTypedCPU(static_cast<const std::uint8_t*>(a), static_cast<std::uint8_t*>(output), count); break;
+        case Dtype::kInt16: NegTypedCPU(static_cast<const std::int16_t*>(a), static_cast<std::int16_t*>(output), count); break;
+        case Dtype::kInt32: NegTypedCPU(static_cast<const std::int32_t*>(a), static_cast<std::int32_t*>(output), count); break;
+        case Dtype::kInt64: NegTypedCPU(static_cast<const std::int64_t*>(a), static_cast<std::int64_t*>(output), count); break;
+        default: throw std::invalid_argument("unsupported dtype");
     }
-
-    DISPATCH_DTYPE(dtype, Element, {
-        NegTypedCPU(
-            static_cast<const Element*>(a),
-            static_cast<Element*>(output),
-            count);
-    });
 }
 
 }  // namespace mtensor

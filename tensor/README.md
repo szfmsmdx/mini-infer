@@ -12,7 +12,7 @@ tensor/
     tensor.cpp       # 元数据、所有权、视图、公共检查和设备分流
     tensor_cpu.cpp   # CPU 复制、清零、填充循环和主机数据打印
     tensor_cuda.cu   # CUDA 复制、清零、fill kernel 及其启动函数
-    dtype.h          # dtype/device、FP16/BF16 编解码和类型分发
+    dtype.h          # dtype/device、类型信息和 FP16/BF16 编解码
     README.md
 ```
 
@@ -128,16 +128,18 @@ a = a.to(Device::kCUDA);  // 完成复制后，通过移动赋值让 a 接管结
 
 支持 `Float32`、`Float16`、`BFloat16`、`Int8`、`UInt8`、`Int16`、`Int32`、`Int64`。
 
-`dtype.h` 提供类型枚举、大小与名称查询、FP16/BF16 编解码，以及普通 C++ 数值类型的分发宏。编码采用最近值、恰好居中时取偶数的舍入规则；16 位浮点通过 `uint16_t` 保存原始编码。`DecodeFloat16()` 和 `DecodeBFloat16()` 为 inline 函数，可供打印和 CPU 算子复用。
+`Dtype` 标识运行时类型；`dtype_info()` 返回 `DtypeInfo`，提供名称、单元素字节数和是否量化等信息。`dtype_size()` / `dtype_name()` 保留为便捷查询接口，当前各类型均不是量化格式。单元素字节数只适用于当前定长类型，未来分块量化格式需要扩展存储描述。
+
+`Float16` / `BFloat16` 保存 `uint16_t` 原始编码，支持从 `float` 编码、通过 `from_bits()` 保存已有编码，以及转换回 `float`。编码采用最近值、恰好居中时取偶数的舍入规则；打印仍可直接使用公共解码函数。运行时类型由各调用处的 `switch` 分发。
 
 ## todo
 
 ### dtype.h
 
 - [x] `Dtype` / `Device` 枚举
-- [x] `dtype_size()` / `dtype_name()`
+- [x] `DtypeInfo` 与 `dtype_size()` / `dtype_name()`
 - [x] 普通数值类型分发
-- [x] FP16 / BF16 编码与舍入
+- [x] `Float16` / `BFloat16` 存储类型、编码与舍入
 - [x] FP16 / BF16 解码整理为公共 inline 工具
 
 ### tensor.h / tensor.cpp

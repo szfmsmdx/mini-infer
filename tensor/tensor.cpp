@@ -377,15 +377,8 @@ Tensor Tensor::reshape(std::vector<int> shape) const {
     return result;
 }
 
-Tensor Tensor::narrow(int dim, int start, int length) const{
-    if(dim >= this->shape().size()){
-        throw std::invalid_argument("");
-    }
-    int dimension = this->size(dim);
-    if(start >= dimension || start + length >= dimension){
-        throw std::invalid_argument("");
-    }
-    Tensor
+Tensor Tensor::narrow(int, int, int) const {
+    throw std::logic_error("Tensor::narrow: not implemented");
 }
 
 Tensor Tensor::operator+(const Tensor& other) const {

@@ -19,33 +19,37 @@ namespace mtensor{
         kInt64
     };
 
-    constexpr std::size_t dtype_size(Dtype t){
-        switch(t) {
-            case Dtype::kFloat32: return 4;
-            case Dtype::kFloat16: return 2;
-            case Dtype::kBFloat16: return 2;
-            case Dtype::kInt8: return 1;
-            case Dtype::kUInt8: return 1;
-            case Dtype::kInt16: return 2;
-            case Dtype::kInt32: return 4;
-            case Dtype::kInt64: return 8;
+    class DtypeInfo {
+    public:
+        constexpr DtypeInfo(const char* name, std::size_t size, bool is_quantized)
+            : name_(name), size_(size), is_quantized_(is_quantized) {}
+
+        constexpr const char* name() const { return name_; }
+        constexpr std::size_t size() const { return size_; }
+        constexpr bool is_quantized() const { return is_quantized_; }
+
+    private:
+        const char* name_;
+        std::size_t size_;
+        bool is_quantized_;
+    };
+
+    constexpr DtypeInfo dtype_info(Dtype t) {
+        switch (t) {
+            case Dtype::kFloat32: return {"float32", 4, false};
+            case Dtype::kFloat16: return {"float16", 2, false};
+            case Dtype::kBFloat16: return {"bfloat16", 2, false};
+            case Dtype::kInt8: return {"int8", 1, false};
+            case Dtype::kUInt8: return {"uint8", 1, false};
+            case Dtype::kInt16: return {"int16", 2, false};
+            case Dtype::kInt32: return {"int32", 4, false};
+            case Dtype::kInt64: return {"int64", 8, false};
         }
-        return 0;
+        return {"unknown", 0, false};
     }
 
-    constexpr const char* dtype_name(Dtype t){
-        switch(t){
-            case Dtype::kFloat32: return "float32";
-            case Dtype::kFloat16: return "float16";
-            case Dtype::kBFloat16: return "bfloat16";
-            case Dtype::kInt8: return "int8";
-            case Dtype::kUInt8: return "uint8";
-            case Dtype::kInt16: return "int16";
-            case Dtype::kInt32: return "int32";
-            case Dtype::kInt64: return "int64";
-        }
-        return "unknown";
-    }
+    constexpr std::size_t dtype_size(Dtype t) { return dtype_info(t).size(); }
+    constexpr const char* dtype_name(Dtype t) { return dtype_info(t).name(); }
 
     // 输入为 IEEE 754 的 32 位 float，输出是 BF16 的原始 16 位编码。
     // 舍入规则：取最近的值；恰好在中间时，让保留部分的最低位为 0。
@@ -163,54 +167,35 @@ inline float DecodeBFloat16(const void* element) {
     return value;
 }
 
+struct Float16 {
+    std::uint16_t bits;
+
+    explicit Float16(float value) : bits(EncodeFloat16(value)) {}
+    static Float16 from_bits(std::uint16_t value) {
+        Float16 result(0.0f);
+        result.bits = value;
+        return result;
+    }
+    explicit operator float() const { return DecodeFloat16(&bits); }
+};
+
+struct BFloat16 {
+    std::uint16_t bits;
+
+    explicit BFloat16(float value) : bits(EncodeBFloat16(value)) {}
+    static BFloat16 from_bits(std::uint16_t value) {
+        BFloat16 result(0.0f);
+        result.bits = value;
+        return result;
+    }
+    explicit operator float() const { return DecodeBFloat16(&bits); }
+};
+
+static_assert(sizeof(Float16) == sizeof(std::uint16_t));
+static_assert(sizeof(BFloat16) == sizeof(std::uint16_t));
+
     enum class Device : std::uint8_t{
         kCPU,
         kCUDA
     };
 }
-
-// 用法：DISPATCH_DTYPE(dtype, Element, { 使用 Element 的代码 });
-// 宏在编译前展开成下面的 switch；每个分支为 Element 选择一个 C++ 类型。
-// __VA_ARGS__ 代表调用时传入的代码，反斜杠用于让宏延续到下一行。
-// FP16/BF16 尚未定义对应的 C++ 数值类型，因此暂不参与数值分发。
-#define DISPATCH_DTYPE(dtype, Element, ...)                                    \
-    do {                                                                       \
-        switch (dtype) {                                                       \
-            case ::mtensor::Dtype::kFloat32: {                                 \
-                using Element = float;                                         \
-                __VA_ARGS__;                                                   \
-                break;                                                         \
-            }                                                                  \
-            case ::mtensor::Dtype::kInt8: {                                    \
-                using Element = std::int8_t;                                   \
-                __VA_ARGS__;                                                   \
-                break;                                                         \
-            }                                                                  \
-            case ::mtensor::Dtype::kUInt8: {                                   \
-                using Element = std::uint8_t;                                  \
-                __VA_ARGS__;                                                   \
-                break;                                                         \
-            }                                                                  \
-            case ::mtensor::Dtype::kInt16: {                                   \
-                using Element = std::int16_t;                                  \
-                __VA_ARGS__;                                                   \
-                break;                                                         \
-            }                                                                  \
-            case ::mtensor::Dtype::kInt32: {                                   \
-                using Element = std::int32_t;                                  \
-                __VA_ARGS__;                                                   \
-                break;                                                         \
-            }                                                                  \
-            case ::mtensor::Dtype::kInt64: {                                   \
-                using Element = std::int64_t;                                  \
-                __VA_ARGS__;                                                   \
-                break;                                                         \
-            }                                                                  \
-            case ::mtensor::Dtype::kFloat16:                                   \
-            case ::mtensor::Dtype::kBFloat16:                                  \
-                throw std::invalid_argument(                                   \
-                    "Float16/BFloat16 numeric types are not implemented");     \
-            default:                                                           \
-                throw std::invalid_argument("Unknown dtype");                  \
-        }                                                                      \
-    } while (false)

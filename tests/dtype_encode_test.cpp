@@ -151,6 +151,15 @@ void TestTensorFill() {
 
 int main() {
     try {
+        const mtensor::Float16 fp16(1.5f);
+        const mtensor::BFloat16 bf16(1.5f);
+        Check(fp16.bits == 0x3e00u && static_cast<float>(fp16) == 1.5f,
+              "Float16 storage and conversion");
+        Check(bf16.bits == 0x3fc0u && static_cast<float>(bf16) == 1.5f,
+              "BFloat16 storage and conversion");
+        Check(mtensor::dtype_info(mtensor::Dtype::kInt8).size() == 1 &&
+              !mtensor::dtype_info(mtensor::Dtype::kInt8).is_quantized(),
+              "Int8 dtype metadata");
         TestBFloat16();
         TestFloat16();
         TestRepresentableValues();

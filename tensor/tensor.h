@@ -117,10 +117,6 @@ private:
 
 template <typename T>
 Tensor& Tensor::fill_(T value) {
-    /*
-    使用示例（a 为已构造的 CPU Tensor）：
-        a.fill_(1.0f);
-    */
     const std::size_t count = numel();
     if (count == 0) {
         return *this;
@@ -129,18 +125,40 @@ Tensor& Tensor::fill_(T value) {
         throw std::logic_error("Tensor::fill_: null data pointer");
     }
 
-    if (dtype_ == Dtype::kFloat16 || dtype_ == Dtype::kBFloat16) {
-        // 只编码一次，随后为每个元素写入相同的 16 位浮点编码。
-        const float input = static_cast<float>(value);
-        const std::uint16_t half_input = dtype_ == Dtype::kFloat16
-            ? EncodeFloat16(input) : EncodeBFloat16(input);
-        return FillValue(&half_input);
+    switch (dtype_) {
+        case Dtype::kFloat32: {
+            const float converted = static_cast<float>(value);
+            return FillValue(&converted);
+        }
+        case Dtype::kFloat16: {
+            const Float16 converted(static_cast<float>(value));
+            return FillValue(&converted.bits);
+        }
+        case Dtype::kBFloat16: {
+            const BFloat16 converted(static_cast<float>(value));
+            return FillValue(&converted.bits);
+        }
+        case Dtype::kInt8: {
+            const std::int8_t converted = static_cast<std::int8_t>(value);
+            return FillValue(&converted);
+        }
+        case Dtype::kUInt8: {
+            const std::uint8_t converted = static_cast<std::uint8_t>(value);
+            return FillValue(&converted);
+        }
+        case Dtype::kInt16: {
+            const std::int16_t converted = static_cast<std::int16_t>(value);
+            return FillValue(&converted);
+        }
+        case Dtype::kInt32: {
+            const std::int32_t converted = static_cast<std::int32_t>(value);
+            return FillValue(&converted);
+        }
+        case Dtype::kInt64: {
+            const std::int64_t converted = static_cast<std::int64_t>(value);
+            return FillValue(&converted);
+        }
+        default: throw std::invalid_argument("unsupported dtype");
     }
-
-    DISPATCH_DTYPE(dtype_, Element, {
-        const Element converted = static_cast<Element>(value);
-        FillValue(&converted);
-    });
-    return *this;
 }
 }

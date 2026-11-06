@@ -69,7 +69,7 @@ void PrintNested(std::ostream& out, Dtype dtype, const std::byte* data_bytes_ptr
     out << ']';
 }
 
-}  // namespace
+}  // namespace, 这里匿名包住只供本文件使用
 
 void CopyCPU(void* destination, const void* source, std::size_t bytes) {
     std::memcpy(destination, source, bytes);
@@ -79,26 +79,33 @@ void ZeroCPU(void* data, std::size_t bytes) {
     std::memset(data, 0, bytes);
 }
 
+template <typename T>
+void FillTypedCPU(void* data, std::size_t count, const void* host_value) {
+    const T value = *static_cast<const T*>(host_value);
+    T* ptr = static_cast<T*>(data);
+    for (std::size_t i = 0; i < count; ++i) {
+        ptr[i] = value;
+    }
+}
+
 void FillCPU(void* data, std::size_t count, Dtype dtype, const void* host_value) {
     if (count == 0) {
         return;
     }
-    if (dtype == Dtype::kFloat16 || dtype == Dtype::kBFloat16) {
-        const auto value = *static_cast<const std::uint16_t*>(host_value);
-        auto* ptr = static_cast<std::uint16_t*>(data);
-        for (std::size_t i = 0; i < count; ++i) {
-            ptr[i] = value;
-        }
-        return;
+    switch (dtype) {
+        case Dtype::kFloat16:
+        case Dtype::kBFloat16: FillTypedCPU<std::uint16_t>(data, count, host_value); break;
+        case Dtype::kFloat32: FillTypedCPU<float>(data, count, host_value); break;
+        case Dtype::kInt8: FillTypedCPU<std::int8_t>(data, count, host_value); break;
+        case Dtype::kUInt8: FillTypedCPU<std::uint8_t>(data, count, host_value); break;
+        case Dtype::kInt16: FillTypedCPU<std::int16_t>(data, count, host_value); break;
+        case Dtype::kInt32: FillTypedCPU<std::int32_t>(data, count, host_value); break;
+        case Dtype::kInt64: FillTypedCPU<std::int64_t>(data, count, host_value); break;
+        default: throw std::invalid_argument("unsupported dtype");
     }
-    DISPATCH_DTYPE(dtype, Element, {
-        const Element value = *static_cast<const Element*>(host_value);
-        Element* ptr = static_cast<Element*>(data);
-        for (std::size_t i = 0; i < count; ++i) {
-            ptr[i] = value;
-        }
-    });
 }
+
+
 
 void PrintCPU(const void* data, const std::vector<int>& shape, Dtype dtype, bool is_empty) {
     std::cout << "tensor(";
