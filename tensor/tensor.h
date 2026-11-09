@@ -10,21 +10,34 @@
 namespace mtensor{
 
 // CPU/CUDA 后端只借用数据指针，存储所有权仍由 Tensor 管理。
-void CopyCPU(void* destination, const void* source, std::size_t bytes);
-void ZeroCPU(void* data, std::size_t bytes);
-void FillCPU(void* data, std::size_t count, Dtype dtype, const void* host_value);
-void PrintCPU(const void* data, const std::vector<int>& shape, Dtype dtype, bool is_empty);
+void CopyCPU(void* dst_data_ptr, const void* src_data_ptr, const std::vector<int>& shape,
+             const std::vector<std::size_t>& dst_stride,
+             const std::vector<std::size_t>& src_stride, std::size_t element_size);
+void ZeroCPU(void* data_ptr, const std::vector<int>& shape,
+             const std::vector<std::size_t>& stride, std::size_t element_size);
+void FillCPU(void* data_ptr, const std::vector<int>& shape,
+             const std::vector<std::size_t>& stride, std::size_t element_size,
+             const void* host_value);
+void PrintCPU(const void* data_ptr, const std::vector<int>& shape,
+              const std::vector<std::size_t>& stride, Dtype dtype, bool is_empty);
 
 void CopyHostToCUDA(void* destination, const void* source, std::size_t bytes);
-void CopyCUDA(void* destination, const void* source, std::size_t bytes);
+void CopyCUDA(void* destination, const void* source, const int* shape,
+                     const std::size_t* dst_stride, const std::size_t* src_stride,
+                     int ndim, std::size_t numel, std::size_t element_size);
 void CopyCUDAToHost(void* destination, const void* source, std::size_t bytes);
-void ZeroCUDA(void* data, std::size_t bytes);
+void ZeroCUDA(void* data_ptr, const int* shape_cuda, const std::size_t* stride_cuda,
+              int ndim, std::size_t numel, std::size_t element_size);
 
-void LaunchFillKernel(
+void FillCUDA(
     void* device_ptr,
-    std::size_t count,
+    std::size_t numel,
     Dtype dtype,
-    const void* host_value);
+    const void* host_value,
+    const int* shape,
+    const std::size_t* stride,
+    int ndim
+);
 
 class Tensor {
 public:
@@ -44,54 +57,35 @@ public:
 
 public:
     const std::vector<int>& shape() const;
+    const std::vector<std::size_t>& stride() const;
     int size(std::size_t dim) const;
     int dim() const;
     std::size_t numel() const;
     bool empty() const;
+    bool is_contiguous() const;
     std::size_t element_size() const;
     std::size_t nbytes() const;
     Dtype dtype() const;
     Device device() const;
+    const int* shape_cuda() const { return shape_cuda_.get(); }
+    const std::size_t* stride_cuda() const { return stride_cuda_.get(); }
 
     Tensor operator[](int index) const;
     void* data_ptr();
     const void* data_ptr() const;
     void print() const;
 
-    // 形状与布局操作。TODO：当前只有接口，具体视图/拷贝语义和实现待补充。
-    //
-    // 根据新 shape 返回共享存储的视图，元素总数必须相同。
-    //     Tensor b = a.reshape({3, 2});        // a: {2,3} -> b: {3,2}
     Tensor reshape(std::vector<int> shape) const;
-
-    // 交换两个维度。
-    //     Tensor b = a.transpose(0, 1);        // {2,3} -> {3,2}
     Tensor transpose(int dim0, int dim1) const;
-
-    // 按 dims 重排所有维度。
-    //     Tensor b = a.permute({1, 0});        // {2,3} -> {3,2}
     Tensor permute(const std::vector<int>& dims) const;
-
-    // 返回连续布局的 Tensor；当前所有 Tensor 都连续，可共享存储。
-    //     Tensor b = a.contiguous();
     Tensor contiguous() const;
-
-    // 删除长度为 1 的维度。
-    //     Tensor one_row(data, {1, 3}, Dtype::kFloat32);
-    //     Tensor row = one_row.squeeze(0);      // {1,3} -> {3}
     Tensor squeeze(int dim) const;
-
-    // 在指定位置插入长度为 1 的维度。
-    //     Tensor b = a.unsqueeze(0);           // {2,3} -> {1,2,3}
     Tensor unsqueeze(int dim) const;
 
     // 在一个维度上取连续区间，等价于 Python 的 x[..., start:start+length, ...]。
-    //     Tensor rows = a.narrow(0, 1, 1);     // 取第 1 行，{2,3} -> {1,3}
-    //     Tensor cols = a.narrow(1, 1, 2);     // 每行第 1~2 列，{2,3} -> {2,2}
     // 返回共享 storage_ 的视图，不复制数据；修改结果会影响原 Tensor。
     Tensor narrow(int dim, int start, int length) const;
 
-    // 逐元素运算，分别调用 add / sub / mul / div，返回独立存储。
     Tensor operator+(const Tensor& other) const;
     Tensor operator-(const Tensor& other) const;
     Tensor operator*(const Tensor& other) const;
@@ -106,13 +100,20 @@ public:
     Tensor to(Device device) const;
 
 private:
+    friend struct TensorMetadataTestAccess;
     Tensor& FillValue(const void* host_value);
+    void InitCUDAMetadata();
 
     void* data_ptr_ = nullptr;
     std::shared_ptr<void> storage_;
     std::vector<int> shape_;
+    std::vector<std::size_t> stride_;
     Dtype dtype_ = Dtype::kFloat32;
     Device device_ = Device::kCPU;
+
+    // gpu metadata，通过指针管理地址
+    std::shared_ptr<int> shape_cuda_;
+    std::shared_ptr<std::size_t> stride_cuda_;
 };
 
 template <typename T>

@@ -25,17 +25,8 @@ else()
 endif()
 
 add_library(mini_infer STATIC
-    ops/activation.cpp
-    ops/attention.cpp
-    ops/conv1d.cpp
     ops/elementwise.cpp
     ops/elementwise_cpu.cpp
-    ops/gated_delta.cpp
-    ops/indexing.cpp
-    ops/matmul.cpp
-    ops/norm.cpp
-    ops/reduce.cpp
-    ops/rope.cpp
     tensor/tensor.cpp
     tensor/tensor_cpu.cpp
     utils/logger.cpp
@@ -83,9 +74,19 @@ if(BUILD_TESTING)
     add_test(NAME elementwise_cpu_test COMMAND elementwise_cpu_test)
 
     if(ENABLE_CUDA)
+        add_executable(tensor_cuda_metadata_test tests/tensor_cuda_metadata_test.cpp)
+        target_link_libraries(tensor_cuda_metadata_test PRIVATE mini_infer)
+        add_test(NAME tensor_cuda_metadata_test COMMAND tensor_cuda_metadata_test)
+        set_tests_properties(tensor_cuda_metadata_test PROPERTIES SKIP_RETURN_CODE 77)
+
         add_executable(tensor_cuda_test tests/tensor_cuda_test.cpp)
         target_link_libraries(tensor_cuda_test PRIVATE mini_infer)
         add_test(NAME tensor_cuda_test COMMAND tensor_cuda_test)
         set_tests_properties(tensor_cuda_test PROPERTIES SKIP_RETURN_CODE 77)
+
+        add_executable(elementwise_cuda_test tests/elementwise_cuda_test.cpp)
+        target_link_libraries(elementwise_cuda_test PRIVATE mini_infer)
+        add_test(NAME elementwise_cuda_test COMMAND elementwise_cuda_test)
+        set_tests_properties(elementwise_cuda_test PROPERTIES SKIP_RETURN_CODE 77)
     endif()
 endif()

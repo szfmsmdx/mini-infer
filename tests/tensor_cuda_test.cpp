@@ -218,6 +218,85 @@ void TestFillAndZero() {
     CheckValues<std::int32_t>(long_tensor, std::vector<std::int32_t>(1025, 42));
 }
 
+void TestStridedZero() {
+    std::int32_t input[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+    Tensor tensor(input, {3, 4}, Dtype::kInt32, Device::kCUDA);
+    Tensor columns = tensor.narrow(1, 1, 2);
+    Check(&columns.zero_() == &columns, "strided zero_ must return target");
+    CheckValues<std::int32_t>(tensor, {1, 0, 0, 4, 5, 0, 0, 8, 9, 0, 0, 12});
+
+    Tensor nested = tensor.narrow(0, 1, 2).narrow(1, 3, 1);
+    nested.zero_();
+    CheckValues<std::int32_t>(tensor, {1, 0, 0, 4, 5, 0, 0, 0, 9, 0, 0, 0});
+
+    std::uint16_t half_input[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+    Tensor half(half_input, {2, 2, 3}, Dtype::kFloat16, Device::kCUDA);
+    Tensor half_view = half.narrow(2, 1, 1);
+    half_view.zero_();
+    CheckValues<std::uint16_t>(half, {1, 0, 3, 4, 0, 6, 7, 0, 9, 10, 0, 12});
+
+    float scalar_input = 3.5f;
+    Tensor scalar(&scalar_input, {}, Dtype::kFloat32, Device::kCUDA);
+    scalar.zero_();
+    CheckValues<float>(scalar, {0.0f});
+
+    std::vector<std::int32_t> large_input(3 * 259, 7);
+    Tensor large(large_input.data(), {3, 259}, Dtype::kInt32, Device::kCUDA);
+    Tensor large_view = large.narrow(1, 1, 257);
+    large_view.zero_();
+    for (std::size_t row = 0; row < 3; ++row) {
+        for (std::size_t col = 1; col < 258; ++col) {
+            large_input[row * 259 + col] = 0;
+        }
+    }
+    CheckValues<std::int32_t>(large, large_input);
+}
+
+void TestStridedOperations() {
+    float values[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+    Tensor cpu(values, {3, 4}, Dtype::kFloat32);
+    Tensor gpu = cpu.to(Device::kCUDA);
+    Tensor src = gpu.narrow(1, 1, 2);
+    Tensor cpu_view = cpu.narrow(1, 1, 2);
+    Tensor cloned = src.clone();
+    CheckValues<float>(cloned, {2, 3, 6, 7, 10, 11});
+    Tensor host = src.to(Device::kCPU);
+    Check(std::memcmp(host.data_ptr(), std::vector<float>{2, 3, 6, 7, 10, 11}.data(), host.nbytes()) == 0,
+          "non-contiguous CUDA to CPU failed");
+    Tensor from_cpu = cpu_view.to(Device::kCUDA);
+    CheckValues<float>(from_cpu, {2, 3, 6, 7, 10, 11});
+    Check(Printed(src) == "tensor([[2, 3],\n        [6, 7],\n        [10, 11]])\n",
+          "non-contiguous CUDA print failed");
+
+    Tensor dst({3, 4}, Dtype::kFloat32, Device::kCUDA);
+    dst.fill_(9);
+    Tensor dst_view = dst.narrow(1, 0, 2);
+    dst_view.copy_(src);
+    CheckValues<float>(dst, {2, 3, 9, 9, 6, 7, 9, 9, 10, 11, 9, 9});
+    Tensor packed({3, 2}, Dtype::kFloat32, Device::kCUDA);
+    packed.copy_(src);
+    CheckValues<float>(packed, {2, 3, 6, 7, 10, 11});
+    Tensor other_columns = dst.narrow(1, 2, 2);
+    other_columns.copy_(packed);
+    CheckValues<float>(dst, {2, 3, 2, 3, 6, 7, 6, 7, 10, 11, 10, 11});
+    src.fill_(13);
+    CheckValues<float>(gpu, {1, 13, 13, 4, 5, 13, 13, 8, 9, 13, 13, 12});
+    CheckValues<float>(cloned, {2, 3, 6, 7, 10, 11});
+
+    std::uint16_t bits[] = {0x3c00, 0x4000, 0x4200, 0x4400, 0x4500, 0x4600};
+    Tensor half(bits, {2, 3}, Dtype::kFloat16, Device::kCUDA);
+    Tensor half_view = half.narrow(1, 1, 1);
+    Tensor half_copy = half_view.clone();
+    CheckValues<std::uint16_t>(half_copy, {0x4000, 0x4500});
+    half_view.fill_(1.0f);
+    CheckValues<std::uint16_t>(half, {0x3c00, 0x3c00, 0x4200, 0x4400, 0x3c00, 0x4600});
+
+    std::int64_t wide_bits[] = {1, 2, 3, 4, 5, 6};
+    Tensor wide(wide_bits, {2, 3}, Dtype::kInt64, Device::kCUDA);
+    Tensor wide_copy = wide.narrow(1, 1, 1).clone();
+    CheckValues<std::int64_t>(wide_copy, {2, 5});
+}
+
 void TestPrint() {
     float input[] = {1, 2, 3, 4};
     Tensor tensor(input, {2, 2}, Dtype::kFloat32, Device::kCUDA);
@@ -488,6 +567,8 @@ int main() {
         TestOwnership();
         TestCloneAndCopy();
         TestFillAndZero();
+        TestStridedZero();
+        TestStridedOperations();
         TestPrint();
         TestTo();
         TestToViewsAndLifetime();

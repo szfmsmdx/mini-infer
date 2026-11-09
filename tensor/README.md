@@ -1,6 +1,6 @@
 # tensor 设计
 
-**Tensor 管理一块数据的形状、类型和访问位置。** 当前实现连续的 CPU 和 CUDA 存储；Colab L4 与本地 RTX 4060 均已通过测试。
+**Tensor 管理数据的形状、类型和访问位置。** 当前支持共享存储的 stride 视图，CPU 和 CUDA 的填充、清零、复制、打印及迁移支持非连续视图。
 
 构造、clone、copy_、to、fill_、zero_ 和 print 按 device 分流；未检测到可用 CUDA 编译环境时，CUDA 构造或迁移会抛出异常。
 
@@ -18,7 +18,7 @@ tensor/
 
 构造、`clone()` 和 `copy_()` 的公共逻辑留在 `tensor.cpp`；实际数据复制交给 CPU/CUDA 后端。源数据构造从 CPU 源数据复制；按 shape 分配存储的构造函数只分配、不初始化。`copy_()` 仍要求两端 device 相同。分配与释放继续使用现有内存工具，`storage_` 和视图的所有权语义保持不变。
 
-`fill_<T>()` 的模板定义留在头文件，检查空状态并将输入值转换为目标 dtype。私有非模板成员 `FillValue()` 在 `tensor.cpp` 中选择设备，再调用 `FillCPU()` 或 `LaunchFillKernel()`。CPU 循环和 CUDA kernel 均在各自的实现文件中。
+`fill_<T>()` 的模板定义留在头文件，检查空状态并将输入值转换为目标 dtype。私有非模板成员 `FillValue()` 在 `tensor.cpp` 中选择设备，再调用 `FillCPU()` 或 `FillCUDA()`。CPU 循环和 CUDA kernel 均在各自的实现文件中。
 
 `print()` 的设备分流留在 `tensor.cpp`。CPU 数据直接交给 `PrintCPU()`；CUDA 数据先复制到主机缓冲区，再交给同一个 `PrintCPU()`。括号、缩进和数值格式化统一放在 `tensor_cpu.cpp`。
 
@@ -34,9 +34,10 @@ tensor 要解决的问题是：
 | --- | --- | --- |
 | 数据在哪 / 谁释放 | `std::shared_ptr<void> storage_` | 持有原始分配地址，最后一个持有者销毁时调用 CPU 或 CUDA 释放函数 |
 | 从哪开始 | `void* data_ptr_` | 指向当前 Tensor 的数据起点；视图可以指向内存中间 |
-| 每一维多大 | `std::vector<int> shape_` | 每个 Tensor 自己保存形状，元素按连续顺序排列，通过 `shape()` 查询 |
+| 每一维多大 | `std::vector<int> shape_` | 每个 Tensor 自己保存形状，通过 `shape()` 查询 |
+| 每一维的跨度 | `std::vector<std::size_t> stride_` | 单位是元素个数，通过 `stride()` 查询 |
 | 每个元素占几字节 | `Dtype dtype_` | 通过 `dtype_size()` 查询 |
-| 数据在哪个设备 | `Device device_` | 区分 CPU 与 CUDA；CUDA 路径已通过 GPU 测试 |
+| 数据在哪个设备 | `Device device_` | 区分 CPU 与 CUDA |
 
 ## 内存与索引
 
@@ -48,7 +49,7 @@ b = a    shape {2, 3}，data_ptr_ 指向开头 ──┼→ 共享同一块 stor
 a[1]     shape {3}，data_ptr_ 指向第二行 ───┘
 ```
 
-对连续 Tensor，第一维索引的地址计算是：
+第一维索引的地址计算是：
 
 ```text
 每块元素数 = numel() / size(0)
@@ -73,15 +74,16 @@ public：
 | 析构 | 释放当前对象持有的资源 | 使用默认析构，由智能指针决定何时释放数据 |
 | `operator[](i)` | 沿第一维取子 Tensor | 返回共享视图，每次去掉一维；索引必须非负且不越界 |
 | `data_ptr()` | 获取当前数据起点 | 返回 `void*`；读写时由调用方按 dtype 转换类型 |
-| `clone()` | 复制出独立数据 | 从当前 `data_ptr_` 开始复制，视图也能单独 clone |
+| `clone()` | 复制出独立数据 | 非连续视图复制为连续结果 |
 | `to(device)` | 返回指定设备上的 Tensor | 同设备共享存储；跨设备分配并复制，保持 shape 和 dtype，源 Tensor 不变 |
-| `copy_(src)` | 把元素写入已有 Tensor | shape、dtype、device 和空状态要一致；相同数据地址直接返回 |
+| `copy_(src)` | 把元素写入已有 Tensor | CPU 和 CUDA 支持不同 stride；共享存储的重叠或无法判定安全的非连续视图暂时拒绝 |
 | `fill_(value)` | 原地填充数值 | 按 dtype 转换输入；FP16/BF16 先编码一次，再填充 16 位编码 |
-| `zero_()` | 原地清零 | 将当前数据区域的所有字节设为 0 |
+| `zero_()` | 原地清零 | CPU 和 CUDA 按 stride 清零逻辑元素 |
 | `print()` | 打印内容 | 根据 shape 递归输出括号，FP16/BF16 解码后打印 |
-| `reshape` / `transpose` / `permute` / `contiguous` / `squeeze` / `unsqueeze` / `narrow` | 形状与布局操作 | 接口已声明，TODO；需要明确 stride、视图和拷贝语义 |
+| `narrow(dim, start, length)` | 沿指定维度取范围 | 返回共享存储的视图，保留 stride；当前要求 length 大于 0 |
+| `reshape` / `transpose` / `permute` / `contiguous` / `squeeze` / `unsqueeze` | 形状与布局操作 | reshape 暂只支持连续输入；其余接口待实现 |
 
-`shape()` 返回形状的只读引用，`size(dim)` 返回指定维度长度，`dim()` 返回维数，`numel()` 返回元素总数，`nbytes()` 返回字节数。`element_size()`、`dtype()`、`device()` 提供对应的元数据。原无参 `size()` 已改为 `shape()`；成员变量使用 `shape_`。
+`shape()` 和 `stride()` 返回形状与跨度的只读引用，`size(dim)` 返回指定维度长度，`dim()` 返回维数，`numel()` 返回元素总数，`nbytes()` 返回字节数。`element_size()`、`dtype()`、`device()` 提供对应的元数据。原无参 `size()` 已改为 `shape()`；成员变量使用 `shape_`。
 
 ### 空对象与标量
 
@@ -122,7 +124,7 @@ a = a.to(Device::kCUDA);  // 完成复制后，通过移动赋值让 a 接管结
 
 `.to()` 本身不改变源对象。赋值时，原 `storage_` 减少一个引用；如果还有其他 Tensor 或视图持有它，原存储继续有效，否则立即调用原设备的释放函数。迁移失败时不会执行赋值，源对象仍持有原数据。
 
-跨设备迁移从当前 `data_ptr_` 复制 `nbytes()`，因此也支持索引视图和零维标量。空对象迁移保持空状态与目标 device，不分配数据；未启用 CUDA 时，迁移到 CUDA 会报错。当前 `to()` 仅接收 device，不转换 dtype；`copy_()` 仍只支持同设备复制，`clone()` 始终在当前设备上深拷贝。
+跨设备迁移支持非连续视图，先在源设备上整理成连续副本，再迁移；空对象迁移保持空状态与目标 device，不分配数据。未启用 CUDA 时迁移到 CUDA 会报错。当前 `to()` 仅接收 device，不转换 dtype；`copy_()` 仍只支持同设备复制，`clone()` 在当前设备上深拷贝。
 
 ## dtype
 
@@ -150,11 +152,13 @@ a = a.to(Device::kCUDA);  // 完成复制后，通过移动赋值让 a 接管结
 - [x] 第一维整数索引与多级索引视图
 - [x] `clone()` / `copy_()` / `fill_()` / `zero_()`
 - [x] 按 shape、dtype、device 只分配输出的构造函数
-- [ ] `reshape` / `transpose` / `permute` / `contiguous` / `squeeze` / `unsqueeze` / `narrow`
+- [x] `narrow` 共享视图与 stride 索引
+- [ ] 完善非连续 `reshape`、`transpose` / `permute` / `contiguous` / `squeeze` / `unsqueeze`
 - [x] `to(device)`、同设备共享和 CPU/CUDA 双向迁移
 - [x] 嵌套打印与 FP16 / BF16 解码
 - [x] CUDA 内存分配、释放、数据复制和 fill kernel 已写入源码
-- [x] 在 Colab L4 与本地 RTX 4060 上编译并运行 CUDA 测试
+- [x] 历史版本在 Colab L4 与 Windows RTX 4060 上编译并运行 CUDA 测试
+- [ ] 验证最新 stride 改动的 CUDA 构建和 GPU 行为
 - [x] 拆分公共入口、CPU 后端和 CUDA 后端，保持已有接口语义
 
 ### 测试
@@ -164,3 +168,9 @@ a = a.to(Device::kCUDA);  // 完成复制后，通过移动赋值让 a 接管结
 - [x] CMake / CTest 接入，GCC 构建下两组测试通过
 
 构建与测试命令见 [tests/README.md](../tests/README.md)。
+
+## stride 工作进度
+
+CPU 和 CUDA 的 `zero_`、`fill_`、`print`、`copy_`、`clone`、跨设备迁移及逐元素算子支持非连续视图。共享存储下无法确定安全的非连续复制仍拒绝。
+
+CUDA Tensor 持有 shape 和 stride 的设备副本；视图创建独立的布局副本，拷贝可共享相同布局。连续快速路径和性能优化可按测量结果推进。

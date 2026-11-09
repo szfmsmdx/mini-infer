@@ -251,7 +251,7 @@ void TestIntegerAdd() {
         Dtype::kInt64,
         {std::int64_t{4000000000}, std::int64_t{-5000000000}},
         {std::int64_t{1000000000}, std::int64_t{2000000000}},
-        {std::int64_t{5000000000}, std::int64_t{-3000000000}});
+        {std::int64_t{5000000000}, std::int64_t{-3000000000LL}});
 }
 
 void TestIntegerWrap() {
@@ -694,6 +694,51 @@ void TestNeg() {
     Check(threw, "Unary minus on an empty Tensor must throw");
 }
 
+void TestStridedAdd() {
+    float left[] = {0, 1, 2, 3, 4, 5};
+    float right[] = {10, 20, 30, 40};
+    Tensor a(left, {2, 3}, Dtype::kFloat32);
+    Tensor b(right, {2, 2}, Dtype::kFloat32);
+    Tensor view = a.narrow(1, 1, 2);
+    Tensor result = mtensor::add(view, b);
+    CheckValues<float>(result, {11, 22, 34, 45});
+    CheckValues<float>(mtensor::add(b, view), {11, 22, 34, 45});
+    CheckValues<float>(mtensor::sub(b, view), {9, 18, 26, 35});
+    CheckValues<float>(mtensor::mul(view, b), {10, 40, 120, 200});
+    CheckValues<float>(mtensor::div(b, view), {10, 10, 7.5f, 8});
+    CheckValues<float>(mtensor::neg(view), {-1, -2, -4, -5});
+    Check(result.is_contiguous(), "add output must be contiguous");
+    CheckValues<float>(a, {0, 1, 2, 3, 4, 5});
+
+    std::int32_t int_left[] = {0, 1, 2, 3, 4, 5};
+    std::int32_t int_right[] = {10, 20, 30, 40};
+    Tensor int_a(int_left, {2, 3}, Dtype::kInt32);
+    Tensor int_b(int_right, {2, 2}, Dtype::kInt32);
+    CheckValues<std::int32_t>(mtensor::add(int_a.narrow(1, 1, 2), int_b), {11, 22, 34, 45});
+    CheckValues<std::int32_t>(mtensor::sub(int_b, int_a.narrow(1, 1, 2)), {9, 18, 26, 35});
+    CheckValues<std::int32_t>(mtensor::mul(int_a.narrow(1, 1, 2), int_b), {10, 40, 120, 200});
+    CheckValues<std::int32_t>(mtensor::div(int_b, int_a.narrow(1, 1, 2)), {10, 10, 7, 8});
+    CheckValues<std::int32_t>(mtensor::neg(int_a.narrow(1, 1, 2)), {-1, -2, -4, -5});
+
+    for (Dtype dtype : {Dtype::kFloat16, Dtype::kBFloat16}) {
+        auto encode = [dtype](float value) {
+            return dtype == Dtype::kFloat16 ? mtensor::EncodeFloat16(value)
+                                            : mtensor::EncodeBFloat16(value);
+        };
+        std::uint16_t input[] = {encode(0), encode(1), encode(2), encode(3), encode(4), encode(5)};
+        std::uint16_t rhs[] = {encode(10), encode(20), encode(30), encode(40)};
+        Tensor half_a(input, {2, 3}, dtype);
+        Tensor half_b(rhs, {2, 2}, dtype);
+        Tensor half_result = mtensor::add(half_a.narrow(1, 1, 2), half_b);
+        CheckValues<std::uint16_t>(half_result, {encode(11), encode(22), encode(34), encode(45)});
+        Tensor half_view = half_a.narrow(1, 1, 2);
+        CheckValues<std::uint16_t>(mtensor::sub(half_b, half_view), {encode(9), encode(18), encode(26), encode(35)});
+        CheckValues<std::uint16_t>(mtensor::mul(half_view, half_b), {encode(10), encode(40), encode(120), encode(200)});
+        CheckValues<std::uint16_t>(mtensor::div(half_b, half_view), {encode(10), encode(10), encode(7.5f), encode(8)});
+        CheckValues<std::uint16_t>(mtensor::neg(half_view), {encode(-1), encode(-2), encode(-4), encode(-5)});
+    }
+}
+
 void TestErrors() {
     float input[] = {1, 2};
     Tensor a(input, {2}, Dtype::kFloat32);
@@ -737,6 +782,7 @@ int main() {
         TestIntegerDivEdge();
         TestFloatSpecialValues();
         TestHalfAdd();
+        TestStridedAdd();
         TestHalfSub();
         TestHalfMul();
         TestHalfDiv();

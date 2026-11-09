@@ -24,10 +24,12 @@ Tensor add(const Tensor& a, const Tensor& b){
     CheckElementwiseInputs(a, b);
     Tensor out(a.shape(), a.dtype(), a.device());
     if (a.device() == Device::kCPU) {
-        AddCPU(a.data_ptr(), b.data_ptr(), out.data_ptr(), a.numel(), a.dtype());
+        AddCPU(a.data_ptr(), b.data_ptr(), out.data_ptr(), a.dtype(),
+               a.shape(), a.stride(), b.stride(), out.stride());
     } else if (a.device() == Device::kCUDA) {
 #ifdef ENABLE_CUDA
-        LaunchAddKernel(a.data_ptr(), b.data_ptr(), out.data_ptr(), a.numel(), a.dtype());
+        AddCUDA(a.data_ptr(), b.data_ptr(), out.data_ptr(), a.numel(), a.dtype(),
+                a.shape_cuda(), a.stride_cuda(), b.stride_cuda(), a.dim());
 #else
         throw std::logic_error("add: CUDA support is disabled");
 #endif
@@ -43,10 +45,12 @@ Tensor sub(const Tensor& a, const Tensor& b){
     CheckElementwiseInputs(a, b);
     Tensor out(a.shape(), a.dtype(), a.device());
     if (a.device() == Device::kCPU) {
-        SubCPU(a.data_ptr(), b.data_ptr(), out.data_ptr(), a.numel(), a.dtype());
+        SubCPU(a.data_ptr(), b.data_ptr(), out.data_ptr(), a.dtype(),
+               a.shape(), a.stride(), b.stride(), out.stride());
     } else if (a.device() == Device::kCUDA) {
 #ifdef ENABLE_CUDA
-        LaunchSubKernel(a.data_ptr(), b.data_ptr(), out.data_ptr(), a.numel(), a.dtype());
+        SubCUDA(a.data_ptr(), b.data_ptr(), out.data_ptr(), a.numel(), a.dtype(),
+                a.shape_cuda(), a.stride_cuda(), b.stride_cuda(), a.dim());
 #else
         throw std::logic_error("sub: CUDA support is disabled");
 #endif
@@ -62,10 +66,12 @@ Tensor mul(const Tensor& a, const Tensor& b){
     CheckElementwiseInputs(a, b);
     Tensor out(a.shape(), a.dtype(), a.device());
     if (a.device() == Device::kCPU) {
-        MulCPU(a.data_ptr(), b.data_ptr(), out.data_ptr(), a.numel(), a.dtype());
+        MulCPU(a.data_ptr(), b.data_ptr(), out.data_ptr(), a.dtype(),
+               a.shape(), a.stride(), b.stride(), out.stride());
     } else if (a.device() == Device::kCUDA) {
 #ifdef ENABLE_CUDA
-        LaunchMulKernel(a.data_ptr(), b.data_ptr(), out.data_ptr(), a.numel(), a.dtype());
+        MulCUDA(a.data_ptr(), b.data_ptr(), out.data_ptr(), a.numel(), a.dtype(),
+                a.shape_cuda(), a.stride_cuda(), b.stride_cuda(), a.dim());
 #else
         throw std::logic_error("mul: CUDA support is disabled");
 #endif
@@ -81,10 +87,12 @@ Tensor div(const Tensor& a, const Tensor& b){
     CheckElementwiseInputs(a, b);
     Tensor out(a.shape(), a.dtype(), a.device());
     if (a.device() == Device::kCPU) {
-        DivCPU(a.data_ptr(), b.data_ptr(), out.data_ptr(), a.numel(), a.dtype());
+        DivCPU(a.data_ptr(), b.data_ptr(), out.data_ptr(), a.dtype(),
+               a.shape(), a.stride(), b.stride(), out.stride());
     } else if (a.device() == Device::kCUDA) {
 #ifdef ENABLE_CUDA
-        LaunchDivKernel(a.data_ptr(), b.data_ptr(), out.data_ptr(), a.numel(), a.dtype());
+        DivCUDA(a.data_ptr(), b.data_ptr(), out.data_ptr(), a.numel(), a.dtype(),
+                a.shape_cuda(), a.stride_cuda(), b.stride_cuda(), a.dim());
 #else
         throw std::logic_error("div: CUDA support is disabled");
 #endif
@@ -99,10 +107,11 @@ Tensor neg(const Tensor& a){
     }
     Tensor out(a.shape(), a.dtype(), a.device());
     if (a.device() == Device::kCPU) {
-        NegCPU(a.data_ptr(), out.data_ptr(), a.numel(), a.dtype());
+        NegCPU(a.data_ptr(), out.data_ptr(), a.dtype(), a.shape(), a.stride(), out.stride());
     } else if (a.device() == Device::kCUDA) {
 #ifdef ENABLE_CUDA
-        LaunchNegKernel(a.data_ptr(), out.data_ptr(), a.numel(), a.dtype());
+        NegCUDA(a.data_ptr(), out.data_ptr(), a.numel(), a.dtype(),
+                a.shape_cuda(), a.stride_cuda(), a.dim());
 #else
         throw std::logic_error("neg: CUDA support is disabled");
 #endif

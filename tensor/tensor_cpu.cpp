@@ -13,39 +13,39 @@
 namespace mtensor {
 namespace {
 
-void PrintElement(std::ostream& out, Dtype dtype, const void* element) {
+void PrintElement(std::ostream& out, Dtype dtype, const void* element_ptr) {
     switch (dtype) {
         case Dtype::kFloat32:
-            out << *static_cast<const float*>(element);
+            out << *static_cast<const float*>(element_ptr);
             return;
         case Dtype::kFloat16:
-            out << DecodeFloat16(element);
+            out << DecodeFloat16(element_ptr);
             return;
         case Dtype::kBFloat16:
-            out << DecodeBFloat16(element);
+            out << DecodeBFloat16(element_ptr);
             return;
         case Dtype::kInt8:
-            out << static_cast<int>(*static_cast<const std::int8_t*>(element));
+            out << static_cast<int>(*static_cast<const std::int8_t*>(element_ptr));
             return;
         case Dtype::kUInt8:
-            out << static_cast<unsigned int>(*static_cast<const std::uint8_t*>(element));
+            out << static_cast<unsigned int>(*static_cast<const std::uint8_t*>(element_ptr));
             return;
         case Dtype::kInt16:
-            out << *static_cast<const std::int16_t*>(element);
+            out << *static_cast<const std::int16_t*>(element_ptr);
             return;
         case Dtype::kInt32:
-            out << *static_cast<const std::int32_t*>(element);
+            out << *static_cast<const std::int32_t*>(element_ptr);
             return;
         case Dtype::kInt64:
-            out << *static_cast<const std::int64_t*>(element);
+            out << *static_cast<const std::int64_t*>(element_ptr);
             return;
     }
     throw std::invalid_argument("Tensor::print: unsupported dtype");
 }
 
 void PrintNested(std::ostream& out, Dtype dtype, const std::byte* data_bytes_ptr,
-                 const std::vector<int>& shape, std::size_t dimension,
-                 std::size_t element_bytes, std::size_t& flat_index) {
+                 const std::vector<int>& shape, const std::vector<std::size_t>& stride,
+                 std::size_t dimension, std::size_t element_bytes, std::size_t offset) {
     out << '[';
     for (int index = 0; index < shape[dimension]; ++index) {
         if (index > 0) {
@@ -58,12 +58,13 @@ void PrintNested(std::ostream& out, Dtype dtype, const std::byte* data_bytes_ptr
             }
         }
 
+        const std::size_t next_offset = offset +
+            static_cast<std::size_t>(index) * stride[dimension] * element_bytes;
         if (dimension + 1 == shape.size()) {
-            PrintElement(out, dtype, data_bytes_ptr + flat_index * element_bytes);
-            ++flat_index;
+            PrintElement(out, dtype, data_bytes_ptr + next_offset);
         } else {
-            PrintNested(out, dtype, data_bytes_ptr, shape, dimension + 1,
-                        element_bytes, flat_index);
+            PrintNested(out, dtype, data_bytes_ptr, shape, stride, dimension + 1,
+                        element_bytes, next_offset);
         }
     }
     out << ']';
@@ -71,54 +72,103 @@ void PrintNested(std::ostream& out, Dtype dtype, const std::byte* data_bytes_ptr
 
 }  // namespace, 这里匿名包住只供本文件使用
 
-void CopyCPU(void* destination, const void* source, std::size_t bytes) {
-    std::memcpy(destination, source, bytes);
+void CopyCPU(
+    void* dst_data_ptr,
+    const void* src_data_ptr,
+    const std::vector<int>& shape,
+    const std::vector<std::size_t>& dst_stride,
+    const std::vector<std::size_t>& src_stride,
+    std::size_t element_size
+) {
+    auto* byte_dst_data_ptr = static_cast<std::byte*>(dst_data_ptr);
+    auto* byte_src_data_ptr = static_cast<const std::byte*>(src_data_ptr);
+
+    auto dfs = [&](
+        auto&& self, std::size_t dim, std::size_t dst_offset, std::size_t src_offset
+    ) -> void {
+        if (dim == shape.size()) {
+            std::memcpy(byte_dst_data_ptr + dst_offset, byte_src_data_ptr + src_offset, element_size);
+            return;
+        }
+
+        for (int d = 0; d < shape[dim]; ++d) {
+            const std::size_t next_dst_offset =
+                dst_offset + static_cast<std::size_t>(d) * dst_stride[dim] * element_size;
+            const std::size_t next_src_offset =
+                src_offset + static_cast<std::size_t>(d) * src_stride[dim] * element_size;
+
+            self(self, dim + 1, next_dst_offset, next_src_offset);
+        }
+    };
+
+    dfs(dfs, 0, 0, 0);
 }
 
-void ZeroCPU(void* data, std::size_t bytes) {
-    std::memset(data, 0, bytes);
+void ZeroCPU(
+    void* data_ptr,
+    const std::vector<int>& shape,
+    const std::vector<std::size_t>& stride,
+    std::size_t element_size
+) {
+    auto* byte_data_ptr = static_cast<std::byte*>(data_ptr);
+
+    // offset 的单位是字节。
+    auto dfs = [&](auto&& self, std::size_t dim, std::size_t offset) -> void {
+        if (dim == shape.size()) {
+            std::memset(byte_data_ptr + offset, 0, element_size);
+            return;
+        }
+
+        for (int d = 0; d < shape[dim]; ++d) {
+            const std::size_t next_offset =
+                offset + static_cast<std::size_t>(d) * stride[dim] * element_size;
+
+            // self 是当前 lambda；把它自身传入下一层，才能在 C++17 中递归调用。
+            self(self, dim + 1, next_offset);
+        }
+    };
+
+    // 第一个参数传入 dfs 自身；从第 0 维、字节偏移 0 开始遍历。
+    dfs(dfs, 0, 0);
 }
 
-template <typename T>
-void FillTypedCPU(void* data, std::size_t count, const void* host_value) {
-    const T value = *static_cast<const T*>(host_value);
-    T* ptr = static_cast<T*>(data);
-    for (std::size_t i = 0; i < count; ++i) {
-        ptr[i] = value;
-    }
-}
+void FillCPU(
+    void* data_ptr,
+    const std::vector<int>& shape,
+    const std::vector<std::size_t>& stride,
+    std::size_t element_size,
+    const void* host_value
+) {
+    auto* byte_data_ptr = static_cast<std::byte*>(data_ptr);
+    auto dfs = [&](auto&& self, std::size_t dim, std::size_t offset) -> void {
+        if (dim == shape.size()) {
+            std::memcpy(byte_data_ptr + offset, host_value, element_size);
+            return;
+        }
 
-void FillCPU(void* data, std::size_t count, Dtype dtype, const void* host_value) {
-    if (count == 0) {
-        return;
-    }
-    switch (dtype) {
-        case Dtype::kFloat16:
-        case Dtype::kBFloat16: FillTypedCPU<std::uint16_t>(data, count, host_value); break;
-        case Dtype::kFloat32: FillTypedCPU<float>(data, count, host_value); break;
-        case Dtype::kInt8: FillTypedCPU<std::int8_t>(data, count, host_value); break;
-        case Dtype::kUInt8: FillTypedCPU<std::uint8_t>(data, count, host_value); break;
-        case Dtype::kInt16: FillTypedCPU<std::int16_t>(data, count, host_value); break;
-        case Dtype::kInt32: FillTypedCPU<std::int32_t>(data, count, host_value); break;
-        case Dtype::kInt64: FillTypedCPU<std::int64_t>(data, count, host_value); break;
-        default: throw std::invalid_argument("unsupported dtype");
-    }
+        for (int d = 0; d < shape[dim]; ++d) {
+            const std::size_t next_offset =
+                offset + static_cast<std::size_t>(d) * stride[dim] * element_size;
+            self(self, dim + 1, next_offset);
+        }
+    };
+    dfs(dfs, 0, 0);
 }
 
 
 
-void PrintCPU(const void* data, const std::vector<int>& shape, Dtype dtype, bool is_empty) {
+void PrintCPU(const void* data_ptr, const std::vector<int>& shape,
+              const std::vector<std::size_t>& stride, Dtype dtype, bool is_empty) {
     std::cout << "tensor(";
     if (shape.empty()) {
         if (is_empty) {
             std::cout << "[]";
         } else {
-            PrintElement(std::cout, dtype, data);
+            PrintElement(std::cout, dtype, data_ptr);
         }
     } else {
-        const auto* data_bytes_ptr = static_cast<const std::byte*>(data);
-        std::size_t flat_index = 0;
-        PrintNested(std::cout, dtype, data_bytes_ptr, shape, 0, dtype_size(dtype), flat_index);
+        const auto* data_bytes_ptr = static_cast<const std::byte*>(data_ptr);
+        PrintNested(std::cout, dtype, data_bytes_ptr, shape, stride, 0, dtype_size(dtype), 0);
     }
     std::cout << ")" << std::endl;
 }

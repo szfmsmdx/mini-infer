@@ -277,6 +277,23 @@ void TestCopyElements() {
     CheckCopyThrows(empty, scalar0);
     CheckValues<float>(scalar0, {9});
     Check(empty.empty(), "Failed copy_ must not change empty target");
+
+    float source_values[] = {0, 1, 2, 3, 4, 5};
+    float destination_values[] = {9, 9, 9, 9, 9, 9};
+    Tensor source_matrix(source_values, {2, 3}, Dtype::kFloat32);
+    Tensor destination_matrix(destination_values, {2, 3}, Dtype::kFloat32);
+    Tensor source_columns = source_matrix.narrow(1, 1, 2);
+    Tensor destination_columns = destination_matrix.narrow(1, 0, 2);
+    destination_columns.copy_(source_columns);
+    CheckValues<float>(destination_matrix, {1, 2, 9, 4, 5, 9});
+    Tensor packed({2, 2}, Dtype::kFloat32);
+    packed.copy_(source_columns);
+    CheckValues<float>(packed, {1, 2, 4, 5});
+
+    Tensor overlap_source = source_matrix[0].narrow(0, 0, 2);
+    Tensor overlap_destination = source_matrix[0].narrow(0, 1, 2);
+    CheckCopyThrows(overlap_destination, overlap_source);
+    CheckValues<float>(source_matrix, {0, 1, 2, 3, 4, 5});
 }
 
 template <typename T>
@@ -432,6 +449,10 @@ void TestPrintAndDecode() {
           "Unexpected nested Tensor print");
     Check(Printed(tensor[1]) == "tensor([4, 5, 6])\n", "View print offset is wrong");
     Check(Printed(tensor[1][2]) == "tensor(6)\n", "Unexpected scalar view print");
+    Check(Printed(tensor.narrow(1, 1, 2)) == "tensor([[2, 3],\n        [5, 6]])\n",
+          "Non-contiguous view print must follow stride");
+    Check(Printed(tensor.narrow(1, 1, 2).narrow(0, 1, 1)) == "tensor([[5, 6]])\n",
+          "Nested narrow print offset is wrong");
 
     std::int8_t signed_input[] = {-3, 7};
     Tensor signed_tensor(signed_input, {2}, Dtype::kInt8);
@@ -462,6 +483,41 @@ void TestPrintAndDecode() {
     CheckPrinted16(Dtype::kBFloat16, 0x7fc0u, std::numeric_limits<double>::quiet_NaN());
 }
 
+void TestNarrow() {
+    std::int32_t values[] = {0, 1, 2, 3, 4, 5};
+    Tensor input(values, {2, 3}, Dtype::kInt32);
+    Tensor view = input.narrow(1, 1, 2);
+    Check(view.shape() == std::vector<int>({2, 2}), "Narrow shape");
+    Check(view.dtype() == Dtype::kInt32 && view.device() == input.device(), "Narrow metadata");
+    Check(!view.is_contiguous(), "Narrow columns should be non-contiguous");
+    Check(*static_cast<const std::int32_t*>(view[1][0].data_ptr()) == 4, "Narrow view indexing");
+    *static_cast<std::int32_t*>(view[0][0].data_ptr()) = 42;
+    Check(*static_cast<const std::int32_t*>(input[0][1].data_ptr()) == 42, "Narrow shares storage");
+    Check(*static_cast<const std::int32_t*>(view.narrow(0, 1, 1)[0][1].data_ptr()) == 5,
+          "Nested narrow offset");
+    view.zero_();
+    const auto* result = static_cast<const std::int32_t*>(input.data_ptr());
+    Check(result[0] == 0 && result[1] == 0 && result[2] == 0 &&
+          result[3] == 3 && result[4] == 0 && result[5] == 0,
+          "Zeroing a non-contiguous view must preserve elements outside the view");
+    view.fill_(7);
+    Check(result[0] == 0 && result[1] == 7 && result[2] == 7 &&
+          result[3] == 3 && result[4] == 7 && result[5] == 7,
+          "Filling a non-contiguous view must preserve elements outside the view");
+    auto expect_invalid = [&](int dim, int start, int length) {
+        bool threw = false;
+        try { input.narrow(dim, start, length); } catch (const std::exception&) { threw = true; }
+        Check(threw, "Invalid narrow must throw");
+    };
+    expect_invalid(-1, 0, 1);
+    expect_invalid(2, 0, 1);
+    expect_invalid(1, -1, 1);
+    expect_invalid(1, 3, 1);
+    expect_invalid(1, 1, 0);
+    expect_invalid(1, 1, -1);
+    expect_invalid(1, 1, std::numeric_limits<int>::max());
+}
+
 }  // namespace
 
 int main() {
@@ -479,6 +535,7 @@ int main() {
         TestErrors();
         TestToCPU();
         TestPrintAndDecode();
+        TestNarrow();
         std::cout << "Tensor CPU tests passed\n";
         return 0;
     } catch (const std::exception& error) {
