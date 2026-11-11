@@ -12,6 +12,7 @@ ctest --test-dir build/tests -C Release --output-on-failure
 
 | 测试程序 | 覆盖内容 |
 | --- | --- |
+| `autograd_cpu_test` | 梯度开关及嵌套守卫、异常恢复、梯度标记和保存状态的共享、移动与读取；反向传播尚未实现 |
 | `logger_test` | Engine/Worker 独立文件、日志级别、追加写入及无效路径 |
 | `tensor_cpu_test` | 构造、shape 查询、空对象与标量、共享拷贝、移动、索引视图与生命周期、clone、copy_、同设备 to、禁用 CUDA 时的迁移异常、填充、清零、打印和解码 |
 | `elementwise_cpu_test` | `add()` / `sub()` / `mul()` / `div()` / `neg()` 的 Float32、整数回绕与除零边界、FP16/BF16、无穷与 NaN、零维标量与索引视图、输入不变、输出独立，以及空对象、shape、dtype 错误 |
@@ -23,6 +24,15 @@ ctest --test-dir build/tests -C Release --output-on-failure
 CUDA 非连续 Tensor 的用例在 `tensor_cuda_test` 中，逐元素算子的 CPU/GPU 对照在 `elementwise_cuda_test` 中。
 
 测试覆盖不同 stride、嵌套视图、标量、dtype 和清零的线程块边界；CUDA 逐元素算子覆盖八种 dtype 及 CPU 对照。其他 GPU 环境和更多数值边界仍可继续补充。
+
+## Autograd 测试（WIP，助手负责）
+
+`autograd_cpu_test` 已注册，当前覆盖建图开关、守卫嵌套与异常恢复、`AutogradMetadata` 的共享/移动、`requires_grad`/`has_grad`/`grad`/`grad_node`、`accumulate_grad`/`detach`、`add/sub/mul/div/neg` 的直接反向公式，以及视图、`clone()`、跨设备 `to()` 的保护路径。待实现：
+
+1. **引擎**：`loss.backward()` 端到端，覆盖链式图中不保存的中间梯度仍能传递、菱形图（同一张量多次使用）、两次 `backward()` 的梯度累加、`detach()`、`NogradNode`、非标量输出、空对象和整数 dtype 报错。
+2. **数值对照**：关键算子与有限差分结果对照。
+
+测试由助手编写和运行；CUDA 反向测试在有 GPU 的环境补跑。
 
 ## `.to()` 覆盖范围
 
@@ -36,7 +46,7 @@ CUDA 非连续 Tensor 的用例在 `tensor_cuda_test` 中，逐元素算子的 C
 
 尚未注入 CPU/CUDA 分配失败或 CUDA 复制运行时错误，因此这些失败路径的资源回收与异常安全未得到故障注入验证。最后一个共享持有者释放时是否存在泄漏，也尚未使用专门的内存检测工具验证。上述错误路径需要独立的故障注入或内存检测环境，不通过耗尽本机内存/显存来测试。
 
-测试使用 `Check()` 抛异常，Release 构建也会执行检查；CTest 的 4/7 项数量是测试程序数量，`.to()` 用例包含在两个 Tensor 测试程序内，不代表只有 4/7 个检查。
+测试使用 `Check()` 抛异常，Release 构建也会执行检查；CTest 的 5/8 项数量是测试程序数量，`.to()` 用例包含在两个 Tensor 测试程序内，不代表只有 5/8 个检查。
 
 只跑其中一组，例如 Tensor：
 

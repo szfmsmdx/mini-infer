@@ -25,6 +25,7 @@ else()
 endif()
 
 add_library(mini_infer STATIC
+    autograd/autograd.cpp
     ops/elementwise.cpp
     ops/elementwise_cpu.cpp
     tensor/tensor.cpp
@@ -57,6 +58,10 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(autograd_cpu_test tests/autograd_cpu_test.cpp)
+    target_link_libraries(autograd_cpu_test PRIVATE mini_infer)
+    add_test(NAME autograd_cpu_test COMMAND autograd_cpu_test)
+
     add_executable(logger_test tests/logger_test.cpp)
     target_link_libraries(logger_test PRIVATE mini_infer)
     add_test(NAME logger_test COMMAND logger_test)

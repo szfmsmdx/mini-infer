@@ -126,6 +126,22 @@ a = a.to(Device::kCUDA);  // 完成复制后，通过移动赋值让 a 接管结
 
 跨设备迁移支持非连续视图，先在源设备上整理成连续副本，再迁移；空对象迁移保持空状态与目标 device，不分配数据。未启用 CUDA 时迁移到 CUDA 会报错。当前 `to()` 仅接收 device，不转换 dtype；`copy_()` 仍只支持同设备复制，`clone()` 在当前设备上深拷贝。
 
+## 自动微分（计划）
+
+Autograd 处于 WIP：已完成 `autograd_metadata_` 的初始化与共享、`requires_grad_()`、`has_grad()`、`grad()`、`grad_node()`、`set_grad_node()`、`accumulate_grad()`、`detach()` 和 `backward()` 入口；`backward()` 已写参数检查，`TopoSort` 和梯度传递待实现。设计与任务拆分见 [autograd/README.md](../autograd/README.md)。Tensor 计划增加：
+
+| 成员 / 方法 | 作用 | 要点 |
+| --- | --- | --- |
+| `autograd_metadata_` | 自动微分状态 | `std::shared_ptr<AutogradMetadata>`；拷贝共享，视图新建 |
+| `requires_grad()` / `requires_grad_(bool)` | 查询和设置 | 控制是否保存该 Tensor 的梯度；dtype 支持范围待反向实现时确定 |
+| `has_grad()` / `grad()` | 查询梯度 | `meta->grad` 是否有值；无梯度返回默认空 Tensor |
+| `backward()` | 标量反向入口 | 调用 `RunBackward`；第一阶段只支持 `numel() == 1` |
+| `detach()` | 断开图和梯度 | 共享 `storage_`，创建新的空 meta |
+| `grad_node()` / `set_grad_node()` | 图的连边 | 读写 `meta->grad_node`；Node 只保存输入，不保存输出 |
+| `accumulate_grad()` | 梯度累加 | 首次 `grad.emplace(g.clone())`，之后 `add()` |
+
+拷贝共享 `storage_` 和 `autograd_metadata_`；移动后由目标接管这些句柄。视图（`operator[]`、`narrow`）新建 meta，`reshape` 复制 `*this` 后重置 meta。当前在建图开启且 Tensor 参与 autograd（`requires_grad()` 或 `grad_node()` 非空）时，`operator[]`、`narrow`、`reshape`、`clone()` 和跨设备 `to()` 抛 `std::logic_error`；`detach()` 和同设备 `to()` 不受影响。后续实现 `ViewNode`、`CloneNode`、`CopyNode` 后移除保护，使这些操作可微分。
+
 ## dtype
 
 支持 `Float32`、`Float16`、`BFloat16`、`Int8`、`UInt8`、`Int16`、`Int32`、`Int64`。
@@ -160,12 +176,22 @@ a = a.to(Device::kCUDA);  // 完成复制后，通过移动赋值让 a 接管结
 - [x] 历史版本在 Colab L4 与 Windows RTX 4060 上编译并运行 CUDA 测试
 - [ ] 验证最新 stride 改动的 CUDA 构建和 GPU 行为
 - [x] 拆分公共入口、CPU 后端和 CUDA 后端，保持已有接口语义
+- [x] `requires_grad_` / `grad()` / `has_grad()` 接口
+- [x] `detach()` 接口
+- [x] `AutogradMetadata` 与 `autograd_metadata_` 的构造、拷贝/移动和 `reshape` 重置
+- [x] `grad_node()` / `set_grad_node()` / `accumulate_grad()`
+- [x] `backward()` 标量入口（参数检查已实现，梯度传递待实现）
+- [x] 视图、`clone()`、跨设备 `to()` 的临时保护
+- [ ] `CloneNode` / `CopyNode` / `ViewNode`，移除保护并支持对应反向
+- [ ] 视图反向、归约与矩阵乘的反向支持（后续）
 
 ### 测试
 
 - [x] CPU Tensor 接口、共享内存和视图生命周期
 - [x] FP16 / BF16 编码、舍入边界和打印解码
 - [x] CMake / CTest 接入，GCC 构建下两组测试通过
+- [x] `autograd_cpu_test`：建图开关、守卫嵌套与异常恢复、梯度状态共享和移动（助手负责）
+- [ ] `autograd_cpu_test`：反向规则、梯度累加、链式/菱形图和有限差分（助手负责）
 
 构建与测试命令见 [tests/README.md](../tests/README.md)。
 

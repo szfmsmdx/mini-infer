@@ -10,6 +10,7 @@
 #include "tensor/dtype.h"
 #include "ops/elementwise.h"
 #include "utils/memory.h"
+#include "autograd/autograd.h"
 
 namespace mtensor{
 
@@ -46,8 +47,13 @@ void Tensor::InitCUDAMetadata() {
 #endif
 }
 
+// std::shared_ptr<AutogradMeta> 默认构造出来是空指针，不会创建 AutogradMeta
+// 所以需要手动构造，而不能直接 = default
+Tensor::Tensor() : autograd_metadata_(std::make_shared<AutogradMetadata>()) {}
+
 Tensor::Tensor(const void* data_ptr, std::vector<int> shape, Dtype dtype, Device device)
-: shape_(std::move(shape)), dtype_(dtype), device_(device) {
+: shape_(std::move(shape)), dtype_(dtype), device_(device),
+    autograd_metadata_(std::make_shared<AutogradMetadata>()) {
     /*
     使用示例：
         float values[] = {1.0f, 2.0f};
@@ -93,7 +99,8 @@ Tensor::Tensor(const void* data_ptr, std::vector<int> shape, Dtype dtype, Device
 }
 
 Tensor::Tensor(std::vector<int> shape, Dtype dtype, Device device)
-:shape_(shape), dtype_(dtype), device_(device) {
+:shape_(shape), dtype_(dtype), device_(device), 
+    autograd_metadata_(std::make_shared<AutogradMetadata>()){
     for (int dimension : shape_) {
         if (dimension < 0) {
             throw std::invalid_argument("Tensor dimensions must be non-negative");
@@ -143,6 +150,7 @@ Tensor& Tensor::operator=(const Tensor& other) {
     data_ptr_ = other.data_ptr_;
     dtype_ = other.dtype_;
     device_ = other.device_;
+    autograd_metadata_ = other.autograd_metadata_;
     return *this;
 }
 
@@ -154,7 +162,8 @@ Tensor::Tensor(Tensor&& other) noexcept
     dtype_(other.dtype_),
     device_(other.device_),
     shape_cuda_(std::move(other.shape_cuda_)),
-    stride_cuda_(std::move(other.stride_cuda_))
+    stride_cuda_(std::move(other.stride_cuda_)),
+    autograd_metadata_(std::move(other.autograd_metadata_))
 {
     other.data_ptr_ = nullptr;
     other.shape_.clear();
@@ -174,11 +183,76 @@ Tensor& Tensor::operator=(Tensor&& other) noexcept
     stride_cuda_ = std::move(other.stride_cuda_);
     dtype_ = other.dtype_;
     device_ = other.device_;
+    autograd_metadata_ = std::move(other.autograd_metadata_);
 
     other.data_ptr_ = nullptr;
     other.shape_.clear();
     other.stride_.clear();
     return *this;
+}
+
+bool Tensor::requires_grad() const {
+    return autograd_metadata_ && autograd_metadata_->requires_grad;
+}
+
+Tensor& Tensor::requires_grad_(bool value) {
+    // TODO: 实现反向传播时确定各 dtype 的梯度支持范围及检查位置。
+    if (!autograd_metadata_) {
+        autograd_metadata_ = std::make_shared<AutogradMetadata>();
+    }
+    autograd_metadata_->requires_grad = value;
+    return *this;
+}
+
+bool Tensor::has_grad() const {
+    return autograd_metadata_ && autograd_metadata_->grad.has_value();
+}
+
+Tensor Tensor::grad() const {
+    return has_grad() ? *autograd_metadata_->grad : Tensor();
+}
+
+std::shared_ptr<AutogradNode> Tensor::grad_node() const {
+    return autograd_metadata_ ? autograd_metadata_->grad_node : nullptr;
+}
+
+void Tensor::set_grad_node(std::shared_ptr<AutogradNode> node) {
+    if(!autograd_metadata_){
+        autograd_metadata_ = std::make_shared<AutogradMetadata>();
+    }
+    autograd_metadata_->grad_node = node;
+}
+
+void Tensor::accumulate_grad(const Tensor& grad) {
+    // 从零开始累计梯度，如果没有的话就保存
+    if (!autograd_metadata_) {
+        autograd_metadata_ = std::make_shared<AutogradMetadata>();
+    }
+
+    if (!autograd_metadata_->grad.has_value()) {
+        autograd_metadata_->grad = grad.clone();
+    } else {
+        *autograd_metadata_->grad = add(*autograd_metadata_->grad, grad);
+    }
+}
+
+Tensor Tensor::detach() const {
+    Tensor result;
+    result.storage_ = storage_;
+    result.data_ptr_ = data_ptr_;
+    result.shape_ = shape_;
+    result.stride_ = stride_;
+    result.device_ = device_;
+    result.dtype_ = dtype_;
+    result.shape_cuda_ = shape_cuda_;
+    result.stride_cuda_ = stride_cuda_;
+    result.autograd_metadata_ = std::make_shared<AutogradMetadata>();
+
+    return result;
+}
+
+void Tensor::backward() {
+    RunBackward(*this);
 }
 
 const std::vector<int>& Tensor::shape() const {
@@ -248,6 +322,11 @@ Tensor Tensor::operator[](int index) const {
     }
     if (data_ptr_ == nullptr) {
         throw std::logic_error("Tensor::operator[]: null data pointer");
+    }
+
+    // TODO: 实现 ViewNode 后移除保护，使索引视图可微分。
+    if (EnableGrad() && (requires_grad() || grad_node())) {
+        throw std::logic_error("Tensor::operator[]: autograd through views is not implemented");
     }
 
     const std::size_t offset = static_cast<std::size_t>(index) * this->stride_[0] * element_size();
@@ -407,6 +486,12 @@ Tensor Tensor::to(Device device) const {
     if (device != Device::kCPU && device != Device::kCUDA) {
         throw std::invalid_argument("Tensor::to: unsupported device");
     }
+
+    // TODO: 实现 CopyNode 后移除保护，使跨设备 to() 可微分。
+    if (EnableGrad() && (requires_grad() || grad_node())) {
+        throw std::logic_error("Tensor::to: autograd through device transfer is not implemented");
+    }
+
     if (!is_contiguous()) {
         return clone().to(device);
     }
@@ -443,6 +528,12 @@ Tensor Tensor::clone() const {
     使用示例:
         Tensor b = a.clone();
     */
+
+    // TODO: 实现 CloneNode 后移除保护，使 clone() 可微分。
+    if (EnableGrad() && (requires_grad() || grad_node())) {
+        throw std::logic_error("Tensor::clone: autograd through clone is not implemented");
+    }
+
     Tensor result;
     result.shape_ = shape_;
     result.stride_ = ContiguousStride(shape_);
@@ -490,9 +581,16 @@ Tensor Tensor::reshape(std::vector<int> shape) const {
         throw std::invalid_argument(
             "Tensor::reshape: shape must match");
     }
+
+    // TODO: 实现 ViewNode 后移除保护，使 reshape 视图可微分。
+    if (EnableGrad() && (requires_grad() || grad_node())) {
+        throw std::logic_error("Tensor::reshape: autograd through views is not implemented");
+    }
+
     Tensor result = *this;
     result.shape_ = std::move(shape);
     result.stride_ = ContiguousStride(result.shape_);
+    result.autograd_metadata_ = std::make_shared<AutogradMetadata>();
     if (result.device_ == Device::kCUDA) {
         result.InitCUDAMetadata();
     }
@@ -512,6 +610,11 @@ Tensor Tensor::narrow(int dim, int start, int length) const{
     }
     if (data_ptr_ == nullptr) {
         throw std::logic_error("Tensor::narrow: null data pointer");
+    }
+
+    // TODO: 实现 ViewNode 后移除保护，使 narrow 视图可微分。
+    if (EnableGrad() && (requires_grad() || grad_node())) {
+        throw std::logic_error("Tensor::narrow: autograd through views is not implemented");
     }
 
     Tensor result;

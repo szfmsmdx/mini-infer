@@ -47,6 +47,20 @@ Tensor neg(const Tensor& a);
 
 CPU 和 CUDA 逐元素运算支持不同 stride 的非连续输入；CUDA 输出为连续存储。零维标量按单个元素计算，默认空对象单独拒绝。
 
+## 反向传播（WIP）
+
+前向计算完成后，如果建图开关开启且 dtype 支持反向，算子创建一个 Node 并挂到输出上，与输入的 `requires_grad` 无关。Node 类放在 `elementwise.cpp` 的匿名命名空间，公共接口不变；推理时用守卫关闭建图。当前已完成建图开关和 Tensor 的 `AutogradMetadata`，各算子的 Node 尚未接入。
+
+| 算子 | Node | 输入梯度 |
+| --- | --- | --- |
+| `add(a, b)` | `AddNode` | `dA = G`, `dB = G` |
+| `sub(a, b)` | `SubNode` | `dA = G`, `dB = -G` |
+| `mul(a, b)` | `MulNode` | `dA = G * b`, `dB = G * a` |
+| `div(a, b)` | `DivNode` | `dA = G / b`, `dB = -G * a / (b * b)` |
+| `neg(a)` | `NegNode` | `dA = -G` |
+
+`MulNode` 和 `DivNode` 保存前向输入；`AddNode`、`SubNode`、`NegNode` 不需要。反向公式复用现有 CPU/CUDA 算子，在 `NogradNode` 下执行，不会继续建图。当前没有广播，输入输出 shape 相同，反向不需要归约。`G` 是上游梯度，由 autograd 引擎传入。
+
 ## 分发流程
 
 ```text
@@ -126,10 +140,14 @@ FP16/BF16 使用 16 位编码，不能直接将编码作为整数参与浮点运
 - [x] 实现支持输入 stride 的 `AddCUDA()` / `SubCUDA()` / `MulCUDA()` / `DivCUDA()` / `NegCUDA()`；处理 dtype、线程越界和启动错误。
 - [x] 按 `ENABLE_CUDA` 条件接入 CUDA 测试；对照 CPU 结果，覆盖元素数不整除线程块大小的情况，读取结果时检查执行错误。
 - [ ] 后续独立设计广播、标量混合运算及 `add_()` / `operator+=` 等原地接口。
+- [ ] `AddNode` / `SubNode` / `NegNode` 反向规则。
+- [ ] `MulNode` / `DivNode` 保存前向输入，并在 `NogradNode` 下复用现有算子计算梯度。
+- [ ] 按建图开关和支持反向的 dtype 建图；设计见 [autograd/README.md](../autograd/README.md)。
 
 ### 扩展算子
 
 - [ ] 按需建立扩展算子的接口和实现。
+- [ ] 新算子实现时同步补 Node 和反向公式。
 - [ ] 实现 `matmul()` / `linear()` 的 CPU 路径。
 - [ ] 实现 `rms_norm()` / `rms_norm_zero_centered()` / `rms_norm_gated()` / `layer_norm()`。
 - [ ] 实现 `silu()` / `sigmoid()` / `softplus()` / `exp()`。
