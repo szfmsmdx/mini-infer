@@ -39,9 +39,13 @@ void FillCUDA(
     int ndim
 );
 
+// 防止循环引用提前声明;
+class AutogradNode;
+struct AutogradMetadata;
+
 class Tensor {
 public:
-    Tensor() = default;
+    Tensor();
     ~Tensor() = default;
     Tensor(const Tensor&) = default;
 
@@ -56,6 +60,7 @@ public:
     Tensor& operator=(Tensor&&) noexcept;
 
 public:
+    // 基础 tensor 方法
     const std::vector<int>& shape() const;
     const std::vector<std::size_t>& stride() const;
     int size(std::size_t dim) const;
@@ -67,6 +72,18 @@ public:
     std::size_t nbytes() const;
     Dtype dtype() const;
     Device device() const;
+    bool requires_grad() const;
+    Tensor& requires_grad_(bool value);
+    bool has_grad() const;
+    Tensor grad() const;
+
+    // Autograd 内部接口；requires_grad 只控制是否保存梯度，不控制建图。
+    std::shared_ptr<AutogradNode> grad_node() const;
+    void set_grad_node(std::shared_ptr<AutogradNode> node);
+    void accumulate_grad(const Tensor& grad);
+    Tensor detach() const;   // 共享 storage，使用新的空 meta
+    void backward();         // 标量反向入口
+
     const int* shape_cuda() const { return shape_cuda_.get(); }
     const std::size_t* stride_cuda() const { return stride_cuda_.get(); }
 
@@ -114,6 +131,8 @@ private:
     // gpu metadata，通过指针管理地址
     std::shared_ptr<int> shape_cuda_;
     std::shared_ptr<std::size_t> stride_cuda_;
+
+    std::shared_ptr<AutogradMetadata> autograd_metadata_;
 };
 
 template <typename T>
