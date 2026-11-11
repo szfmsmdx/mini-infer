@@ -7,24 +7,13 @@
 #include <cuda_bf16.h>
 #include <cuda_runtime.h>
 
-#include "ops/elementwise.h"
+#include "ops/backend.h"
+#include "ops/cuda/index.cuh"
 #include "utils/memory.h"
 
 namespace mtensor {
 namespace {
 enum class Op { Add, Sub, Mul, Div, Neg };
-
-__device__ std::size_t GetNumelIndex(
-    std::size_t idx, const int* shape, const std::size_t* stride, int ndim
-){
-    std::size_t offset = 0;
-    for(int d = ndim - 1; d >= 0; d--){
-        std::size_t cur_offset = idx % shape[d];
-        idx /= shape[d];
-        offset += cur_offset * stride[d];
-    }
-    return offset;
-}
 
 template <typename T, Op op>
 __device__ T Calculate(T a, T b) {

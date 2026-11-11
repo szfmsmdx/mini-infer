@@ -12,17 +12,26 @@ ctest --test-dir build/tests -C Release --output-on-failure
 
 | 测试程序 | 覆盖内容 |
 | --- | --- |
+| `reduction_cpu_test` | sum 的 8 种 dtype、整数提升与回绕、非连续视图和端到端反向 |
+| `reduction_cuda_test` | sum 的 8 种 dtype、线程数边界、跨步循环、非连续视图和端到端反向 |
+| `layout_cpu_test` | `permute` 的维度排列、共享存储、非法输入、反向梯度位置和端到端传播 |
+| `scalar_test` | 标量转换与构造、零维判断、标量 Tensor 填充、full、共享存储及 SumNode 直接反向 |
+| `autograd_cpu_test` | 梯度开关、元数据共享、直接反向公式、保护路径；端到端反向、共享分支、重复累加、三种浮点 dtype 与有限差分 |
 | `logger_test` | Engine/Worker 独立文件、日志级别、追加写入及无效路径 |
 | `tensor_cpu_test` | 构造、shape 查询、空对象与标量、共享拷贝、移动、索引视图与生命周期、clone、copy_、同设备 to、禁用 CUDA 时的迁移异常、填充、清零、打印和解码 |
 | `elementwise_cpu_test` | `add()` / `sub()` / `mul()` / `div()` / `neg()` 的 Float32、整数回绕与除零边界、FP16/BF16、无穷与 NaN、零维标量与索引视图、输入不变、输出独立，以及空对象、shape、dtype 错误 |
 | `dtype_encode_test` | FP16/BF16 编码、舍入、特殊值、所有非 NaN 编码往返，以及 16 位 Tensor 填充 |
+| `autograd_cuda_test` | 跨设备双向及链式反向、建图开关、整数 dtype、非连续输入的节点连接 |
 | `tensor_cuda_metadata_test` | CUDA 构造、迁移、clone、索引、narrow 和 reshape 的 shape/stride 设备副本；CPU、空对象与标量；拷贝、移动及共享生命周期 |
 | `tensor_cuda_test` | CUDA 内存、构造、索引视图、所有权、clone、copy_、8 种 dtype 双向 to 与原始编码保留、迁移赋值和共享生命周期、标量/空对象迁移、填充、清零、打印及异常 |
 | `elementwise_cuda_test` | 8 种 dtype 的 add/sub/mul/div/neg 与 CPU 结果逐字节对照；覆盖 stride 视图、标量、线程块边界、整数回绕与除零、FP16/BF16 特殊值及错误输入 |
 
-CUDA 非连续 Tensor 的用例在 `tensor_cuda_test` 中，逐元素算子的 CPU/GPU 对照在 `elementwise_cuda_test` 中。
+## 测试进度
 
-测试覆盖不同 stride、嵌套视图、标量、dtype 和清零的线程块边界；CUDA 逐元素算子覆盖八种 dtype 及 CPU 对照。其他 GPU 环境和更多数值边界仍可继续补充。
+- [x] CPU Tensor、逐元素算子、归约及 Autograd 测试。
+- [x] CUDA Tensor、逐元素算子、设备迁移和归约的测试代码。
+- [ ] 在目标 GPU 运行当前版本的 CUDA 测试。
+- [ ] 补充设备分配和复制失败的故障注入、内存泄漏检查。
 
 ## `.to()` 覆盖范围
 
@@ -34,9 +43,7 @@ CUDA 非连续 Tensor 的用例在 `tensor_cuda_test` 中，逐元素算子的 C
 - FP16/BF16 原始编码、Float32 负零/无穷/NaN payload，以及超出浮点精确表示范围的 Int64 值按字节保留。
 - 非法目标设备和未启用 CUDA 时的报错；禁用 CUDA 后空对象也不能迁移到 CUDA。
 
-尚未注入 CPU/CUDA 分配失败或 CUDA 复制运行时错误，因此这些失败路径的资源回收与异常安全未得到故障注入验证。最后一个共享持有者释放时是否存在泄漏，也尚未使用专门的内存检测工具验证。上述错误路径需要独立的故障注入或内存检测环境，不通过耗尽本机内存/显存来测试。
-
-测试使用 `Check()` 抛异常，Release 构建也会执行检查；CTest 的 4/7 项数量是测试程序数量，`.to()` 用例包含在两个 Tensor 测试程序内，不代表只有 4/7 个检查。
+测试使用 `Check()` 抛异常，Release 构建也会执行检查。
 
 只跑其中一组，例如 Tensor：
 
@@ -64,6 +71,6 @@ cmake --build build/tests --config Release --parallel 2
 ctest --test-dir build/tests -C Release --output-on-failure
 ```
 
-上面的 `89` 对应 Colab L4 和 RTX 4060；其他 GPU 应改成其对应架构。`setup.ipynb` 保存的 Colab L4 运行结果显示 4/4 项测试通过。
+上面的 `89` 对应 Colab L4 和 RTX 4060；其他 GPU 应改成其对应架构。
 
-VS Code 安装 C/C++ 与 CMake Tools 后运行 `CMake: Configure`，由 CMake Tools 提供实际编译器、include 和宏定义；`.vscode/` 不保存机器绝对路径，不再依赖临时 CUDA 头文件。首次配置如需选择 Kit，Windows CUDA 开发选择 Visual Studio x64。
+VS Code 安装 C/C++ 与 CMake Tools 后运行 `CMake: Configure`，由 CMake Tools 提供实际编译器、include 和宏定义；`.vscode/` 不保存机器绝对路径。未安装完整 Toolkit 时，可选的 `build/cuda-headers-12.4/include` 仅供本地补全，不参与 CUDA 构建。首次配置如需选择 Kit，Windows CUDA 开发选择 Visual Studio x64。

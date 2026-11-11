@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "autograd/autograd.h"
 #include "tensor/tensor.h"
 #include "utils/memory.h"
 
@@ -562,11 +563,27 @@ int main() {
             return 77;
         }
         CheckCuda(status);
+        mtensor::NogradNode guard;
         TestMemory();
         TestConstructionAndViews();
         TestOwnership();
         TestCloneAndCopy();
         TestFillAndZero();
+        {
+            float host_value = 2.5f;
+            Tensor value(&host_value, {}, Dtype::kFloat32, Device::kCUDA);
+            Tensor filled = mtensor::full({2, 3}, value, Dtype::kFloat32, Device::kCUDA);
+            CheckValues<float>(filled, {2.5f, 2.5f, 2.5f, 2.5f, 2.5f, 2.5f});
+            float initial[] = {1, 2, 3, 4, 5, 6};
+            Tensor target(initial, {2, 3}, Dtype::kFloat32, Device::kCUDA);
+            Tensor aliased_value = target[0][1];
+            Tensor view = target.narrow(1, 1, 1);
+            view.fill_(aliased_value);
+            CheckValues<float>(target, {1, 2, 3, 4, 2, 6});
+            bool threw = false;
+            try { target.fill_(Tensor(1.0f)); } catch (const std::invalid_argument&) { threw = true; }
+            Check(threw, "tensor fill must reject device mismatch");
+        }
         TestStridedZero();
         TestStridedOperations();
         TestPrint();

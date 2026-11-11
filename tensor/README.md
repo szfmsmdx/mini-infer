@@ -8,20 +8,22 @@
 
 ```text
 tensor/
-    tensor.h         # Tensor 接口、后端声明、fill_<T> 的值转换
-    tensor.cpp       # 元数据、所有权、视图、公共检查和设备分流
-    tensor_cpu.cpp   # CPU 复制、清零、填充循环和主机数据打印
-    tensor_cuda.cu   # CUDA 复制、清零、fill kernel 及其启动函数
+    tensor.h         # Tensor 公共接口和状态
+    tensor.cpp       # 构造、所有权、基础查询和梯度状态
+    scalar.h         # 标量的有符号、无符号与浮点表示及转换
     dtype.h          # dtype/device、类型信息和 FP16/BF16 编解码
     README.md
 ```
 
-构造、`clone()` 和 `copy_()` 的公共逻辑留在 `tensor.cpp`；实际数据复制交给 CPU/CUDA 后端。源数据构造从 CPU 源数据复制；按 shape 分配存储的构造函数只分配、不初始化。`copy_()` 仍要求两端 device 相同。分配与释放继续使用现有内存工具，`storage_` 和视图的所有权语义保持不变。
+Tensor 操作的成员函数定义在 `ops/tensor_ops.cpp`，包括索引、视图、clone、copy、to、fill、zero、print 和运算符转发；这些成员仍可以访问私有存储和视图元数据。CPU 和 CUDA 的复制、填充实现分别位于 `ops/cpu/data_ops.cpp` 和 `ops/cuda/data_ops.cu`，打印格式化位于 CPU 文件，后端内部声明统一放在 `ops/backend.h`。构造函数仍在 `tensor.cpp`，并调用后端复制函数；分配与释放仍使用 `utils/memory.*`。
 
-`fill_<T>()` 的模板定义留在头文件，检查空状态并将输入值转换为目标 dtype。私有非模板成员 `FillValue()` 在 `tensor.cpp` 中选择设备，再调用 `FillCPU()` 或 `FillCUDA()`。CPU 循环和 CUDA kernel 均在各自的实现文件中。
+`fill_(const Scalar&)` 在 `ops/tensor_ops.cpp` 中按目标 dtype 转换，再由私有的 `FillValue()` 按设备分流。`Scalar` 分别保存有符号整数、无符号整数和浮点数，避免 int64 先经过浮点数而丢失精度。整数转换遵循 C++ `static_cast`；浮点数转整数先向零截断，若结果超出目标范围或输入为 NaN/Inf 则抛 `std::out_of_range`，填充前不会修改 Tensor。支持不宽于 64 位的整数和不宽于 double 的浮点输入；不隐式支持更宽的扩展类型。`print()` 在 `ops/tensor_ops.cpp` 中按设备分流，CUDA 数据复制到主机后由 CPU 格式化。
 
-`print()` 的设备分流留在 `tensor.cpp`。CPU 数据直接交给 `PrintCPU()`；CUDA 数据先复制到主机缓冲区，再交给同一个 `PrintCPU()`。括号、缩进和数值格式化统一放在 `tensor_cpu.cpp`。
+CUDA shape/stride 副本仍由 Tensor 的共享指针持有，视图创建时重新初始化；后续设备资源层需继续保持这些生命周期语义。
 
+`Tensor(1.5f)` 和 `Tensor(42)` 可直接创建 CPU 零维标量，浮点数默认 Float32，整数默认 Int64。超出 Int64 范围的无符号数会抛出 `std::out_of_range`；无参 `Tensor()` 仍创建空对象。
+
+`is_scalar()` 只对有数据的零维 Tensor 返回 true；shape 为 `{1}` 的 Tensor 和默认空对象都不是标量。`fill_(const Tensor&)` 接收零维标量 Tensor，要求填充值与目标的 dtype 和 device 相同；当两者共享存储时，会先保存填充值。它与现有 `fill_(Scalar)` 一样不建图。`full()` 在 `tensor/tensor.h` 中声明、`ops/tensor_ops.cpp` 中实现，支持用普通数值或零维 Tensor 创建并填充新 Tensor。
 tensor 要解决的问题是：
 
 1. 我多大？
@@ -52,8 +54,7 @@ a[1]     shape {3}，data_ptr_ 指向第二行 ───┘
 第一维索引的地址计算是：
 
 ```text
-每块元素数 = numel() / size(0)
-字节偏移 = index × 每块元素数 × element_size()
+字节偏移 = index × stride[0] × element_size()
 视图地址 = 当前 data_ptr_ 按字节加上偏移
 视图形状 = 去掉 shape 的第一维
 ```
@@ -81,7 +82,8 @@ public：
 | `zero_()` | 原地清零 | CPU 和 CUDA 按 stride 清零逻辑元素 |
 | `print()` | 打印内容 | 根据 shape 递归输出括号，FP16/BF16 解码后打印 |
 | `narrow(dim, start, length)` | 沿指定维度取范围 | 返回共享存储的视图，保留 stride；当前要求 length 大于 0 |
-| `reshape` / `transpose` / `permute` / `contiguous` / `squeeze` / `unsqueeze` | 形状与布局操作 | reshape 暂只支持连续输入；其余接口待实现 |
+| `reshape` / `transpose` / `permute` | 形状与布局操作 | reshape 暂只支持连续输入；transpose、permute 返回共享存储的视图 |
+| `contiguous` / `squeeze` / `unsqueeze` | 形状与布局操作 | 接口待实现 |
 
 `shape()` 和 `stride()` 返回形状与跨度的只读引用，`size(dim)` 返回指定维度长度，`dim()` 返回维数，`numel()` 返回元素总数，`nbytes()` 返回字节数。`element_size()`、`dtype()`、`device()` 提供对应的元数据。原无参 `size()` 已改为 `shape()`；成员变量使用 `shape_`。
 
@@ -126,6 +128,22 @@ a = a.to(Device::kCUDA);  // 完成复制后，通过移动赋值让 a 接管结
 
 跨设备迁移支持非连续视图，先在源设备上整理成连续副本，再迁移；空对象迁移保持空状态与目标 device，不分配数据。未启用 CUDA 时迁移到 CUDA 会报错。当前 `to()` 仅接收 device，不转换 dtype；`copy_()` 仍只支持同设备复制，`clone()` 在当前设备上深拷贝。
 
+## 自动微分
+
+Autograd 的数据结构、反向节点和引擎见 [autograd/README.md](../autograd/README.md)。Tensor 提供以下接口：
+
+| 成员 / 方法 | 作用 | 要点 |
+| --- | --- | --- |
+| `autograd_metadata_` | 自动微分状态 | `std::shared_ptr<AutogradMetadata>`；拷贝共享，视图新建 |
+| `requires_grad()` / `requires_grad_(bool)` | 查询和设置 | 控制是否保存梯度；RunBackward 仅接受 Float32/Float16/BFloat16 |
+| `has_grad()` / `grad()` | 查询梯度 | `meta->grad` 是否有值；无梯度返回默认空 Tensor |
+| `backward()` | 标量反向入口 | 调用 `RunBackward`；第一阶段只支持 `numel() == 1` |
+| `detach()` | 断开图和梯度 | 共享 `storage_`，创建新的空 meta |
+| `grad_node()` / `set_grad_node()` | 图的连边 | 读写 `meta->grad_node`；Node 只保存输入，不保存输出 |
+| `accumulate_grad()` | 梯度累加 | 首次 `grad.emplace(g.clone())`，之后 `add()` |
+
+拷贝共享 `storage_` 和 `autograd_metadata_`；移动后由目标接管这些句柄。视图（`operator[]`、`narrow`）新建 meta，`reshape` 复制 `*this` 后重置 meta。当前 `clone()` 和跨设备 `to()` 已接入反向节点；建图开启且 Tensor 参与 autograd 时，`operator[]`、`narrow`、`reshape` 仍抛 `std::logic_error`，等待视图反向实现。`detach()` 和同设备 `to()` 保持原有语义。
+
 ## dtype
 
 支持 `Float32`、`Float16`、`BFloat16`、`Int8`、`UInt8`、`Int16`、`Int32`、`Int64`。
@@ -153,19 +171,29 @@ a = a.to(Device::kCUDA);  // 完成复制后，通过移动赋值让 a 接管结
 - [x] `clone()` / `copy_()` / `fill_()` / `zero_()`
 - [x] 按 shape、dtype、device 只分配输出的构造函数
 - [x] `narrow` 共享视图与 stride 索引
-- [ ] 完善非连续 `reshape`、`transpose` / `permute` / `contiguous` / `squeeze` / `unsqueeze`
+- [x] `transpose` / `permute` 的视图和反向规则
+- [ ] 完善非连续 `reshape`、`contiguous` / `squeeze` / `unsqueeze`
 - [x] `to(device)`、同设备共享和 CPU/CUDA 双向迁移
 - [x] 嵌套打印与 FP16 / BF16 解码
 - [x] CUDA 内存分配、释放、数据复制和 fill kernel 已写入源码
-- [x] 历史版本在 Colab L4 与 Windows RTX 4060 上编译并运行 CUDA 测试
-- [ ] 验证最新 stride 改动的 CUDA 构建和 GPU 行为
+- [ ] 在 GPU 环境验证当前 CUDA 构建和行为
 - [x] 拆分公共入口、CPU 后端和 CUDA 后端，保持已有接口语义
+- [x] `requires_grad_` / `grad()` / `has_grad()` 接口
+- [x] `detach()` 接口
+- [x] `AutogradMetadata` 与 `autograd_metadata_` 的构造、拷贝/移动和 `reshape` 重置
+- [x] `grad_node()` / `set_grad_node()` / `accumulate_grad()`
+- [x] `backward()` 单元素入口（参数检查、拓扑排序及梯度传递已实现）
+- [x] 视图的临时保护
+- [x] `CloneNode`、`ToDeviceNode` 和全元素 `sum` 的反向节点
+- [ ] `operator[]`、`narrow`、`reshape` 的视图反向，以及矩阵乘反向
 
 ### 测试
 
 - [x] CPU Tensor 接口、共享内存和视图生命周期
 - [x] FP16 / BF16 编码、舍入边界和打印解码
-- [x] CMake / CTest 接入，GCC 构建下两组测试通过
+- [x] CMake / CTest 接入
+- [x] `autograd_cpu_test`：建图开关、守卫嵌套与异常恢复、梯度状态共享和移动（助手负责）
+- [x] `autograd_cpu_test`：反向规则、梯度累加、链式/菱形图和有限差分（助手负责）
 
 构建与测试命令见 [tests/README.md](../tests/README.md)。
 

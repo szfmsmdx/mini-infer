@@ -1,16 +1,16 @@
 #include <cstddef>
-#include <cstdint>
 #include <cstring>
+#include <cstdint>
 #include <iostream>
 #include <ostream>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
-#include "tensor/tensor.h"
-#include "tensor/dtype.h"
+#include "ops/backend.h"
 
 namespace mtensor {
+
 namespace {
 
 void PrintElement(std::ostream& out, Dtype dtype, const void* element_ptr) {
@@ -70,7 +70,7 @@ void PrintNested(std::ostream& out, Dtype dtype, const std::byte* data_bytes_ptr
     out << ']';
 }
 
-}  // namespace, 这里匿名包住只供本文件使用
+}  // namespace
 
 void CopyCPU(
     void* dst_data_ptr,
@@ -154,8 +154,6 @@ void FillCPU(
     };
     dfs(dfs, 0, 0);
 }
-
-
 
 void PrintCPU(const void* data_ptr, const std::vector<int>& shape,
               const std::vector<std::size_t>& stride, Dtype dtype, bool is_empty) {

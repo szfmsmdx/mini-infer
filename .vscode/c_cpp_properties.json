@@ -6,7 +6,8 @@
       "mergeConfigurations": true,
       "includePath": [
         "${workspaceFolder}",
-        "${env:CUDA_PATH}/include"
+        "${env:CUDA_PATH}/include",
+        "${workspaceFolder}/build/cuda-headers-12.4/include"
       ],
       "cppStandard": "c++17"
     }

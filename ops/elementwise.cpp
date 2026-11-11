@@ -1,6 +1,11 @@
+#include <memory>
 #include <stdexcept>
+#include <utility>
 
 #include "ops/elementwise.h"
+#include "ops/backend.h"
+#include "autograd/autograd.h"
+#include "autograd/backward_nodes/elementwise.h"
 
 namespace mtensor {
 namespace {
@@ -36,8 +41,17 @@ Tensor add(const Tensor& a, const Tensor& b){
     } else {
         throw std::invalid_argument("add: unsupported device");
     }
+
+    // 反向传播建图
+    if(EnableGrad() && CheckGradDtype(a.dtype())) {
+        auto node = std::make_shared<AddNode>();
+        node->inputs = { a, b };
+        out.set_grad_node(std::move(node));
+    }
+
     return out;
 }
+
 Tensor sub(const Tensor& a, const Tensor& b){
     if(a.empty() || b.empty()){
         throw std::invalid_argument("Get Empty Tensor");
@@ -57,8 +71,16 @@ Tensor sub(const Tensor& a, const Tensor& b){
     } else {
         throw std::invalid_argument("sub: unsupported device");
     }
+
+    if (EnableGrad() && CheckGradDtype(a.dtype())) {
+        auto node = std::make_shared<SubNode>();
+        node->inputs = { a, b };
+        out.set_grad_node(std::move(node));
+    }
+
     return out;
 }
+
 Tensor mul(const Tensor& a, const Tensor& b){
     if(a.empty() || b.empty()){
         throw std::invalid_argument("Get Empty Tensor");
@@ -78,8 +100,16 @@ Tensor mul(const Tensor& a, const Tensor& b){
     } else {
         throw std::invalid_argument("mul: unsupported device");
     }
+
+    if (EnableGrad() && CheckGradDtype(a.dtype())) {
+        auto node = std::make_shared<MulNode>();
+        node->inputs = { a, b };
+        out.set_grad_node(std::move(node));
+    }
+
     return out;
 }
+
 Tensor div(const Tensor& a, const Tensor& b){
     if(a.empty() || b.empty()){
         throw std::invalid_argument("Get Empty Tensor");
@@ -99,8 +129,16 @@ Tensor div(const Tensor& a, const Tensor& b){
     } else {
         throw std::invalid_argument("div: unsupported device");
     }
+
+    if (EnableGrad() && CheckGradDtype(a.dtype())) {
+        auto node = std::make_shared<DivNode>();
+        node->inputs = { a, b };
+        out.set_grad_node(std::move(node));
+    }
+
     return out;
 }
+
 Tensor neg(const Tensor& a){
     if(a.empty()){
         throw std::invalid_argument("Get Empty Tensor");
@@ -118,6 +156,13 @@ Tensor neg(const Tensor& a){
     } else {
         throw std::invalid_argument("neg: unsupported device");
     }
+
+    if (EnableGrad() && CheckGradDtype(a.dtype())) {
+        auto node = std::make_shared<NegNode>();
+        node->inputs = { a };
+        out.set_grad_node(std::move(node));
+    }
+
     return out;
 }
 
