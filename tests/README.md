@@ -30,7 +30,7 @@ ctest --test-dir build/tests -C Release --output-on-failure
 
 - [x] CPU Tensor、逐元素算子、归约及 Autograd 测试。
 - [x] CUDA Tensor、逐元素算子、设备迁移和归约的测试代码。
-- [ ] 在目标 GPU 运行当前版本的 CUDA 测试。
+- [x] 在 Colab A100 运行 CPU/CUDA 测试，CTest 13/13 通过。
 - [ ] 补充设备分配和复制失败的故障注入、内存泄漏检查。
 
 ## `.to()` 覆盖范围

@@ -154,7 +154,7 @@ RunBackward(root)
 - [x] 反向拓扑排序、临时梯度汇总和持久梯度累加。
 - [x] 逐元素算子、`clone`、`transpose`、`permute` 和全元素 `sum` 的反向规则。
 - [x] 跨设备 `to()` 的反向节点与 CUDA 测试代码。
-- [ ] 在目标 GPU 验证跨设备迁移、视图和 `sum` 的前向与反向。
+- [x] 在 Colab A100 验证跨设备迁移、转置视图和 `sum` 的相关前向与反向测试。
 - [ ] 支持 `operator[]`、`narrow`、`reshape` 的视图反向。
 - [ ] 支持指定维度归约、广播及矩阵乘的反向。
 - [ ] 支持非标量输出的 `backward(seed)`。

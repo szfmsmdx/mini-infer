@@ -28,7 +28,7 @@ mini_infer/
 - [x] **Tensor 基础**：存储与共享视图、标量、dtype、填充、复制和设备迁移。
 - [x] **CPU 计算与反向**：逐元素算子、全元素 `sum`、反向引擎及对应 CPU 测试。
 - [x] **布局操作**：`transpose`、`permute` 的前向和反向。
-- [ ] **CUDA 计算与反向**：设备迁移、逐元素算子和全元素 `sum` 的最新实现及测试需要 GPU 验证。
+- [x] **CUDA 计算与反向**：设备迁移、逐元素算子和全元素 `sum` 的测试在 Colab A100 上通过。
 - [ ] **视图反向**：`operator[]`、`narrow`、`reshape`。
 - [ ] **基础算子**：广播、指定维度归约、`mean`、矩阵乘和 Softmax。
 - [ ] **Module / Layer**：组织参数、子模块和 forward，实现 Linear、Embedding、Norm、激活等基础层。

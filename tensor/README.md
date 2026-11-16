@@ -176,7 +176,7 @@ Autograd 的数据结构、反向节点和引擎见 [autograd/README.md](../auto
 - [x] `to(device)`、同设备共享和 CPU/CUDA 双向迁移
 - [x] 嵌套打印与 FP16 / BF16 解码
 - [x] CUDA 内存分配、释放、数据复制和 fill kernel 已写入源码
-- [ ] 在 GPU 环境验证当前 CUDA 构建和行为
+- [x] 在 Colab A100 验证 CUDA 构建及 Tensor 测试
 - [x] 拆分公共入口、CPU 后端和 CUDA 后端，保持已有接口语义
 - [x] `requires_grad_` / `grad()` / `has_grad()` 接口
 - [x] `detach()` 接口

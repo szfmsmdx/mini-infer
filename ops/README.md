@@ -24,7 +24,7 @@ ops/
         elementwise.cu      # CUDA 逐元素计算
         data_ops.cu         # CUDA 复制、填充、清零及设备间数据传输
         index.cuh           # CUDA 逻辑下标到 stride 偏移的辅助函数
-        reduction.cu        # CUDA 全元素归约（待 GPU 验证）
+        reduction.cu        # CUDA 全元素归约
     README.md
 ```
 
@@ -163,8 +163,7 @@ FP16/BF16 使用 16 位编码，不能直接将编码作为整数参与浮点运
 - [ ] 实现 `matmul()` / `linear()` 的 CPU 路径。
 - [ ] 实现 `rms_norm()` / `rms_norm_zero_centered()` / `rms_norm_gated()` / `layer_norm()`。
 - [ ] 实现 `silu()` / `sigmoid()` / `softplus()` / `exp()`。
-- [x] 实现全元素 `sum()` 的 CPU/CUDA 前向与反向，CPU 路径通过测试。
-- [ ] 在目标 GPU 验证 `sum()` 的 CUDA 路径。
+- [x] 实现全元素 `sum()` 的 CPU/CUDA 前向与反向，并在 Colab A100 验证 CUDA 测试。
 - [ ] 实现指定维度的 `sum()`，以及 `mean()` / `max()` / `softmax()` / `argmax()` / `topk()`。
 - [ ] 实现 `embedding()` / `index_select()` / `gather()` / `scatter_add()`。
 - [ ] 实现 `rope()`；确定 MRoPE 接口。
