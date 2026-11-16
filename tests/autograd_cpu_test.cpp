@@ -53,7 +53,7 @@ void CheckAutogradProtection(Operation operation, const char* message) {
     throw std::runtime_error(message);
 }
 
-Tensor Scalar(float value) {
+Tensor MakeScalarTensor(float value) {
     Tensor tensor({}, Dtype::kFloat32);
     tensor.fill_(value);
     return tensor;
@@ -72,8 +72,8 @@ void CheckThrows(Operation operation) {
 void CheckBackwardEngine() {
     // Chain: unretained intermediates must still transmit gradients.
     {
-        Tensor a = Scalar(3);
-        Tensor b = Scalar(2);
+        Tensor a = MakeScalarTensor(3);
+        Tensor b = MakeScalarTensor(2);
         a.requires_grad_(true);
         b.requires_grad_(true);
         Tensor product = a * b;
@@ -92,7 +92,7 @@ void CheckBackwardEngine() {
     // Diamond with unequal branch depths: shared nodes execute once,
     // after all contributions arrive. Repeat without reusing old gradients.
     {
-        Tensor a = Scalar(3);
+        Tensor a = MakeScalarTensor(3);
         a.requires_grad_(true);
         Tensor shared = a * a;
         shared.requires_grad_(true);
@@ -116,7 +116,7 @@ void CheckBackwardEngine() {
 
     // Detach cuts the original graph but remains usable as a new leaf.
     {
-        Tensor a = Scalar(3);
+        Tensor a = MakeScalarTensor(3);
         a.requires_grad_(true);
         Tensor intermediate = a * a;
         Tensor detached = intermediate.detach();
@@ -132,7 +132,7 @@ void CheckBackwardEngine() {
 
     // Existing graphs can run under an outer no-grad guard.
     {
-        Tensor a = Scalar(2);
+        Tensor a = MakeScalarTensor(2);
         a.requires_grad_(true);
         Tensor loss = a * a;
         {
@@ -172,8 +172,8 @@ void CheckBackwardEngine() {
     // A composite expression covers all five operators; compare both inputs
     // against independent central finite differences.
     {
-        Tensor a = Scalar(1.5f);
-        Tensor b = Scalar(2.0f);
+        Tensor a = MakeScalarTensor(1.5f);
+        Tensor b = MakeScalarTensor(2.0f);
         a.requires_grad_(true);
         b.requires_grad_(true);
         Tensor loss = neg(div(sub(mul(a, b), a), add(a, b)));
@@ -200,14 +200,14 @@ void CheckBackwardEngine() {
         CheckThrows<std::invalid_argument>([&] { empty.backward(); });
         Tensor vector({2}, Dtype::kFloat32);
         CheckThrows<std::invalid_argument>([&] { vector.backward(); });
-        Tensor leaf = Scalar(1);
+        Tensor leaf = MakeScalarTensor(1);
         CheckThrows<std::logic_error>([&] { leaf.backward(); });
         for (Dtype dtype : {Dtype::kInt8, Dtype::kUInt8, Dtype::kInt16,
                             Dtype::kInt32, Dtype::kInt64}) {
             Tensor integer({}, dtype);
             CheckThrows<std::invalid_argument>([&] { integer.backward(); });
         }
-        Tensor malformed = Scalar(1);
+        Tensor malformed = MakeScalarTensor(1);
         auto node = std::make_shared<TestNode>();
         node->inputs = {leaf};
         malformed.set_grad_node(node);
@@ -218,6 +218,14 @@ void CheckBackwardEngine() {
 
 int main() {
     CheckBackwardEngine();
+    {
+        Tensor x = MakeScalarTensor(3);
+        x.requires_grad_(true);
+        Tensor y = x.clone();
+        Tensor loss = mul(y, y);
+        loss.backward();
+        CheckFloatValues(x.grad(), {6.0f});
+    }
     if (!EnableGrad()) throw std::runtime_error("gradient recording must be enabled initially");
     {
         NogradNode outer;
@@ -413,7 +421,7 @@ int main() {
         CheckFloatValues(grads[1], {-6.0f, -6.0f});
     }
 
-    // Autograd protection for clone / cross-device to / views
+    // Views still reject operations that would disconnect the graph.
     {
         float a_values[] = {1.0f, 2.0f};
         float b_values[] = {3.0f, 4.0f};
@@ -421,15 +429,12 @@ int main() {
         Tensor b(b_values, {2}, Dtype::kFloat32);
         Tensor out = add(a, b);
 
-        CheckAutogradProtection([&] { out.clone(); }, "clone on graph tensor must be rejected");
-        CheckAutogradProtection([&] { out.to(Device::kCUDA); }, "cross-device to on graph tensor must be rejected");
         CheckAutogradProtection([&] { out[0]; }, "operator[] on graph tensor must be rejected");
         CheckAutogradProtection([&] { out.narrow(0, 0, 1); }, "narrow on graph tensor must be rejected");
         CheckAutogradProtection([&] { out.reshape({1, 2}); }, "reshape on graph tensor must be rejected");
 
         Tensor leaf(a_values, {2}, Dtype::kFloat32);
         leaf.requires_grad_(true);
-        CheckAutogradProtection([&] { leaf.clone(); }, "clone on leaf requiring grad must be rejected");
         CheckAutogradProtection([&] { leaf[0]; }, "operator[] on leaf requiring grad must be rejected");
 
         Tensor same_device = leaf.to(Device::kCPU);

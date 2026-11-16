@@ -5,6 +5,7 @@
 #include <utility>
 #include <vector>
 
+#include "autograd/autograd.h"
 #include "tensor/tensor.h"
 
 namespace mtensor {
@@ -142,6 +143,7 @@ int main() {
         if (status == cudaErrorNoDevice || status == cudaErrorInsufficientDriver ||
             (status == cudaSuccess && count == 0)) return 77;
         Check(status == cudaSuccess, "cudaGetDeviceCount failed");
+        mtensor::NogradNode guard;
         RunTests();
         Check(cudaDeviceSynchronize() == cudaSuccess, "CUDA synchronization failed");
         std::cout << "CUDA metadata tests passed\n";

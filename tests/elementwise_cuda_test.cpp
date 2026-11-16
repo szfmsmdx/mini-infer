@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <vector>
 
+#include "autograd/autograd.h"
 #include "ops/elementwise.h"
 #include "tensor/tensor.h"
 
@@ -331,6 +332,7 @@ int main() {
             return 77;
         }
         CheckCuda(status);
+        mtensor::NogradNode guard;
         TestFloat32();
         TestIntegers();
         TestHalf();

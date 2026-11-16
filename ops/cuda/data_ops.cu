@@ -1,24 +1,44 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <stdexcept>
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 
-#include "tensor/tensor.h"
+#include "ops/backend.h"
+#include "ops/cuda/index.cuh"
 #include "utils/memory.h"
 
-namespace mtensor{
+namespace mtensor {
 
-__device__ std::size_t GetNumelIndex(
-    std::size_t idx, const int* shape_cuda, const std::size_t* stride_cuda, int ndim
-){
-    std::size_t offset = 0;
-    for(int d = ndim - 1; d >= 0; d--){
-        std::size_t cur_offset = idx % shape_cuda[d];
-        idx /= shape_cuda[d];
-        offset += cur_offset * stride_cuda[d];
+__global__ void CopyKernel(std::byte* dst, const std::byte* src, const int* shape,
+                                  const std::size_t* dst_stride, const std::size_t* src_stride,
+                                  int ndim, int numel, std::size_t element_size) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < numel) {
+        const auto dst_offset = GetNumelIndex(idx, shape, dst_stride, ndim) * element_size;
+        const auto src_offset = GetNumelIndex(idx, shape, src_stride, ndim) * element_size;
+        memcpy(dst + dst_offset, src + src_offset, element_size);
     }
-    return offset;
+}
+
+void CopyCUDA(void* destination, const void* source, const int* shape,
+                     const std::size_t* dst_stride, const std::size_t* src_stride,
+                     int ndim, std::size_t numel, std::size_t element_size) {
+    if (numel == 0) return;
+    constexpr unsigned int threads = 256;
+    const auto blocks = static_cast<unsigned int>((numel - 1) / threads + 1);
+    CopyKernel<<<blocks, threads>>>(static_cast<std::byte*>(destination),
+        static_cast<const std::byte*>(source), shape, dst_stride, src_stride, ndim, numel, element_size);
+    CUDA_CHECK(cudaGetLastError());
+}
+
+void CopyHostToCUDA(void* destination, const void* source, std::size_t bytes) {
+    CUDA_CHECK(cudaMemcpy(destination, source, bytes, cudaMemcpyHostToDevice));
+}
+
+void CopyCUDAToHost(void* destination, const void* source, std::size_t bytes) {
+    CUDA_CHECK(cudaMemcpy(destination, source, bytes, cudaMemcpyDeviceToHost));
 }
 
 template <typename Element>
@@ -72,6 +92,30 @@ void FillCUDA(
     CUDA_CHECK(cudaGetLastError());
 }
 
+__global__ void FillFromDeviceKernel(
+    std::byte* destination, const std::byte* value, std::size_t numel,
+    std::size_t element_size, const int* shape, const std::size_t* stride, int ndim
+) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < numel) {
+        const std::size_t offset = GetNumelIndex(idx, shape, stride, ndim) * element_size;
+        for (std::size_t i = 0; i < element_size; ++i) {
+            destination[offset + i] = value[i];
+        }
+    }
+}
+
+void FillCUDAFromDevice(void* device_ptr, std::size_t numel, std::size_t element_size,
+                        const void* device_value, const int* shape,
+                        const std::size_t* stride, int ndim) {
+    if (numel == 0) return;
+    constexpr unsigned int threads = 256;
+    const unsigned int blocks = static_cast<unsigned int>((numel - 1) / threads + 1);
+    FillFromDeviceKernel<<<blocks, threads>>>(static_cast<std::byte*>(device_ptr),
+        static_cast<const std::byte*>(device_value), numel, element_size, shape, stride, ndim);
+    CUDA_CHECK(cudaGetLastError());
+}
+
 __global__ void ZeroKernel(
     void* data_ptr,
     const int* shape_cuda,
@@ -103,33 +147,4 @@ void ZeroCUDA(
     CUDA_CHECK(cudaGetLastError());
 }
 
-__global__ void CopyKernel(std::byte* dst, const std::byte* src, const int* shape,
-                                  const std::size_t* dst_stride, const std::size_t* src_stride,
-                                  int ndim, int numel, std::size_t element_size) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < numel) {
-        const auto dst_offset = GetNumelIndex(idx, shape, dst_stride, ndim) * element_size;
-        const auto src_offset = GetNumelIndex(idx, shape, src_stride, ndim) * element_size;
-        memcpy(dst + dst_offset, src + src_offset, element_size);
-    }
-}
-
-void CopyCUDA(void* destination, const void* source, const int* shape,
-                     const std::size_t* dst_stride, const std::size_t* src_stride,
-                     int ndim, std::size_t numel, std::size_t element_size) {
-    if (numel == 0) return;
-    constexpr unsigned int threads = 256;
-    const auto blocks = static_cast<unsigned int>((numel - 1) / threads + 1);
-    CopyKernel<<<blocks, threads>>>(static_cast<std::byte*>(destination),
-        static_cast<const std::byte*>(source), shape, dst_stride, src_stride, ndim, numel, element_size);
-    CUDA_CHECK(cudaGetLastError());
-}
-
-void CopyHostToCUDA(void* destination, const void* source, std::size_t bytes) {
-    CUDA_CHECK(cudaMemcpy(destination, source, bytes, cudaMemcpyHostToDevice));
-}
-
-void CopyCUDAToHost(void* destination, const void* source, std::size_t bytes) {
-    CUDA_CHECK(cudaMemcpy(destination, source, bytes, cudaMemcpyDeviceToHost));
-}
-}
+}  // namespace mtensor

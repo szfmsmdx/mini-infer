@@ -19,13 +19,15 @@ class AutogradNode {
 public:
     virtual ~AutogradNode() = default;
 
-    // grad_output 与本次前向输出同 shape/dtype/device；
+    // output_grad 与本次前向输出同 shape/dtype/device；
     // 返回值第 i 项是 inputs[i] 的梯度。
-    virtual std::vector<Tensor> backward(const Tensor& grad_output) = 0;
+    virtual std::vector<Tensor> backward(const Tensor& output_grad) = 0;
 
     std::vector<Tensor> inputs;   // 本次前向的输入
 };
 
+// 检查当前 Autograd 是否支持该 dtype，支持时返回 true。
+bool CheckGradDtype(Dtype dtype);
 bool EnableGrad();
 
 class NogradNode{

@@ -30,13 +30,17 @@ void TopoSort(
 }
 
 void CheckBackwardDtype(Dtype dtype) {
-    if (dtype != Dtype::kFloat32 &&
-        dtype != Dtype::kFloat16 &&
-        dtype != Dtype::kBFloat16) {
+    if (!CheckGradDtype(dtype)) {
         throw std::invalid_argument(
             "RunBackward: only floating-point dtypes are supported");
     }
 }
+}
+
+bool CheckGradDtype(Dtype dtype) {
+    return dtype == Dtype::kBFloat16 ||
+           dtype == Dtype::kFloat16 ||
+           dtype == Dtype::kFloat32;
 }
 
 bool EnableGrad() {
@@ -85,13 +89,13 @@ void RunBackward(const Tensor& loss_tensor) {
     for(auto& output : topo_order){ // 第一个遍历的是 loss_tensor
 
         auto node = output.grad_node();
-        Tensor grad_output = pending_grads.at(node.get());  // at 取自动报错
+        Tensor output_grad = pending_grads.at(node.get());  // at 取自动报错
         if(output.requires_grad()){
-            output.accumulate_grad(grad_output);
+            output.accumulate_grad(output_grad);
         }  
 
         // 根据输出梯度计算输入节点梯度
-        std::vector<Tensor> input_grads = node->backward(grad_output);
+        std::vector<Tensor> input_grads = node->backward(output_grad);
         if(input_grads.size() != node->inputs.size()){
             throw std::logic_error("RunBackward: gradient count does not match input count");
         }

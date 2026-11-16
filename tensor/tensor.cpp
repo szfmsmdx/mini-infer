@@ -1,6 +1,7 @@
 #include <cstddef>
 #include <cstdlib>
 #include <functional>
+#include <limits>
 #include <numeric>
 #include <stdexcept>
 #include <utility>
@@ -10,21 +11,10 @@
 #include "tensor/dtype.h"
 #include "ops/elementwise.h"
 #include "utils/memory.h"
+#include "ops/backend.h"
 #include "autograd/autograd.h"
 
 namespace mtensor{
-
-namespace {
-std::vector<std::size_t> ContiguousStride(const std::vector<int>& shape) {
-    std::vector<std::size_t> result(shape.size());
-    std::size_t stride = 1;
-    for (std::size_t i = shape.size(); i > 0; --i) {
-        result[i - 1] = stride;
-        stride *= static_cast<std::size_t>(shape[i - 1]);
-    }
-    return result;
-}
-}
 
 void Tensor::InitCUDAMetadata() {
 #ifdef ENABLE_CUDA
@@ -50,6 +40,17 @@ void Tensor::InitCUDAMetadata() {
 // std::shared_ptr<AutogradMeta> 默认构造出来是空指针，不会创建 AutogradMeta
 // 所以需要手动构造，而不能直接 = default
 Tensor::Tensor() : autograd_metadata_(std::make_shared<AutogradMetadata>()) {}
+
+Tensor::Tensor(const Scalar& value)
+    : Tensor(/*shape=*/std::vector<int>{},
+             /*dtype=*/value.is_floating_point() ? Dtype::kFloat32 : Dtype::kInt64,
+             /*device=*/Device::kCPU) {
+    if (value.is_unsigned_integer() &&
+        value.to<std::uint64_t>() > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+        throw std::out_of_range("Tensor: integer value is out of Int64 range");
+    }
+    fill_(value);
+}
 
 Tensor::Tensor(const void* data_ptr, std::vector<int> shape, Dtype dtype, Device device)
 : shape_(std::move(shape)), dtype_(dtype), device_(device),
@@ -278,6 +279,10 @@ bool Tensor::empty() const {
     return data_ptr_ == nullptr;
 }
 
+bool Tensor::is_scalar() const {
+    return !empty() && shape_.empty();
+}
+
 bool Tensor::is_contiguous() const {
     if (stride_.size() != shape_.size()) {
         return false;
@@ -316,33 +321,6 @@ Device Tensor::device() const {
     return device_;
 }
 
-Tensor Tensor::operator[](int index) const {
-    if(shape_.empty() || index < 0 || index >= size(0)){
-        throw std::out_of_range("Tensor::operator[]: index out of range");
-    }
-    if (data_ptr_ == nullptr) {
-        throw std::logic_error("Tensor::operator[]: null data pointer");
-    }
-
-    // TODO: 实现 ViewNode 后移除保护，使索引视图可微分。
-    if (EnableGrad() && (requires_grad() || grad_node())) {
-        throw std::logic_error("Tensor::operator[]: autograd through views is not implemented");
-    }
-
-    const std::size_t offset = static_cast<std::size_t>(index) * this->stride_[0] * element_size();
-    Tensor result;
-    result.device_ = device_, result.dtype_ = dtype_;
-    result.shape_.assign(shape_.begin() + 1, shape_.end());
-    result.stride_.assign(stride_.begin() + 1, stride_.end());
-    result.data_ptr_ = static_cast<std::byte*>(data_ptr_) + offset;
-    result.storage_ = storage_;
-    if (result.device_ == Device::kCUDA) {
-        result.InitCUDAMetadata();
-    }
-
-    return result;
-}
-
 const void* Tensor::data_ptr() const {
     return data_ptr_;
 }
@@ -351,305 +329,4 @@ void* Tensor::data_ptr() {
     return data_ptr_;
 }
 
-void Tensor::print() const {
-    /*
-    使用示例（a 为已构造的 CPU Tensor）：
-        a.print();
-    */
-    const std::size_t count = numel();
-    if (count > 0 && data_ptr_ == nullptr) {
-        throw std::logic_error("Tensor::print: null data pointer");
-    }
-
-    if (device_ == Device::kCPU) {
-        PrintCPU(data_ptr_, shape_, stride_, dtype_, empty());
-    } else if (device_ == Device::kCUDA) {
-#ifdef ENABLE_CUDA
-        if (!is_contiguous()) {
-            clone().print();
-            return;
-        }
-        const std::size_t bytes = nbytes();
-        std::vector<std::byte> host_buffer(bytes);
-        if (bytes > 0) {
-            CopyCUDAToHost(host_buffer.data(), data_ptr_, bytes);
-        }
-        PrintCPU(host_buffer.data(), shape_, stride_, dtype_, empty());
-#else
-        throw std::logic_error("Tensor::print: CUDA support is disabled");
-#endif
-    } else {
-        throw std::invalid_argument("Tensor::print: unsupported device");
-    }
-}
-
-Tensor& Tensor::FillValue(const void* host_value) {
-    if (device_ == Device::kCPU) {
-        FillCPU(data_ptr_, shape_, stride_, element_size(), host_value);
-    } else if (device_ == Device::kCUDA) {
-#ifdef ENABLE_CUDA
-        FillCUDA(data_ptr_, numel(), dtype_, host_value, shape_cuda_.get(), stride_cuda_.get(), dim());
-#else
-        throw std::logic_error("Tensor::fill_: CUDA support is disabled");
-#endif
-    } else {
-        throw std::invalid_argument("Tensor::fill_: unsupported device");
-    }
-    return *this;
-}
-
-Tensor& Tensor::zero_() {
-    /*
-    使用示例（a 为已构造的 CPU Tensor）：
-        a.zero_();
-    */
-    const std::size_t bytes = nbytes();
-    if(bytes > 0){
-        if (device_ == Device::kCPU) {
-            ZeroCPU(data_ptr_, shape_, stride_, element_size());
-        } else if (device_ == Device::kCUDA) {
-#ifdef ENABLE_CUDA
-            ZeroCUDA(data_ptr_, shape_cuda_.get(), stride_cuda_.get(),
-                     dim(), numel(), element_size());
-#else
-            throw std::logic_error("Tensor::zero_: CUDA support is disabled");
-#endif
-        } else {
-            throw std::invalid_argument("Tensor::zero_: unsupported device");
-        }
-    }
-    return *this;
-}
-
-Tensor& Tensor::copy_(const Tensor& src) {
-    /*
-    使用示例（a、b 是形状和类型相同的 CPU Tensor）:
-        b.copy_(a);
-    现有 copy_ 接口不支持数据重叠情况:
-        原数据：     [0, 1, 2, 3]
-        src：        [0, 1, 2]
-        dst：           [1, 2, 3]
-    */
-
-    // 检查 device、shape、dtype 是否一致
-    if(this->shape_ != src.shape_){
-        throw std::invalid_argument("Tensor::copy_: shapes must match");
-    }else if(this->device_ != src.device_){
-        throw std::invalid_argument("Tensor::copy_: devices must match");
-    }else if(this->dtype_ != src.dtype_){
-        throw std::invalid_argument("Tensor::copy_: dtypes must match");
-    }
-
-    if (empty() != src.empty()) {
-        throw std::invalid_argument("Tensor::copy_: empty states must match");
-    }
-    if (empty()) {  // empty = empty 的情况直接跳过
-        return *this;
-    }
-
-    if (data_ptr_ == src.data_ptr_ && stride_ == src.stride_) {
-        return *this;
-    }
-
-    if (storage_ == src.storage_) {
-        if (!is_contiguous() || !src.is_contiguous()) {
-            throw std::invalid_argument("Tensor::copy_: shared non-contiguous storage is not supported");
-        }
-        const auto* storage_ptr = static_cast<const std::byte*>(storage_.get());
-        const auto dst_offset = static_cast<std::size_t>(static_cast<const std::byte*>(data_ptr_) - storage_ptr);
-        const auto src_offset = static_cast<std::size_t>(static_cast<const std::byte*>(src.data_ptr_) - storage_ptr);
-        const std::size_t distance = dst_offset > src_offset ? dst_offset - src_offset : src_offset - dst_offset;
-        if (distance < nbytes()) {
-            throw std::invalid_argument("Tensor::copy_: overlapping storage is not supported");
-        }
-    }
-
-    if (device_ == Device::kCPU) {
-        CopyCPU(data_ptr_, src.data_ptr_, shape_, stride_, src.stride_, element_size());
-    } else if (device_ == Device::kCUDA) {
-#ifdef ENABLE_CUDA
-        CopyCUDA(data_ptr_, src.data_ptr_, shape_cuda_.get(), stride_cuda_.get(),
-                 src.stride_cuda_.get(), dim(), numel(), element_size());
-#else
-        throw std::logic_error("Tensor::copy_: CUDA support is disabled");
-#endif
-    } else {
-        throw std::invalid_argument("Tensor::copy_: unsupported device");
-    }
-    return *this;
-}
-
-Tensor Tensor::to(Device device) const {
-    if (device == device_) {
-        return *this;
-    }
-    if (device != Device::kCPU && device != Device::kCUDA) {
-        throw std::invalid_argument("Tensor::to: unsupported device");
-    }
-
-    // TODO: 实现 CopyNode 后移除保护，使跨设备 to() 可微分。
-    if (EnableGrad() && (requires_grad() || grad_node())) {
-        throw std::logic_error("Tensor::to: autograd through device transfer is not implemented");
-    }
-
-    if (!is_contiguous()) {
-        return clone().to(device);
-    }
-
-#ifdef ENABLE_CUDA
-    Tensor result;
-    result.shape_ = shape_;
-    result.stride_ = ContiguousStride(shape_);
-    result.dtype_ = dtype_;
-    result.device_ = device;
-
-    const std::size_t bytes = nbytes();
-    if (bytes == 0) {
-        return result;
-    }
-    if (device == Device::kCPU) {
-        result.storage_ = std::shared_ptr<void>(AllocateCPU(bytes), std::free);
-        result.data_ptr_ = result.storage_.get();
-        CopyCUDAToHost(result.data_ptr_, data_ptr_, bytes);
-    } else {
-        result.storage_ = std::shared_ptr<void>(AllocateCUDA(bytes), FreeCUDA);
-        result.data_ptr_ = result.storage_.get();
-        CopyHostToCUDA(result.data_ptr_, data_ptr_, bytes);
-        result.InitCUDAMetadata();
-    }
-    return result;
-#else
-    throw std::logic_error("Tensor::to: CUDA support is disabled");
-#endif
-}
-
-Tensor Tensor::clone() const {
-    /*
-    使用示例:
-        Tensor b = a.clone();
-    */
-
-    // TODO: 实现 CloneNode 后移除保护，使 clone() 可微分。
-    if (EnableGrad() && (requires_grad() || grad_node())) {
-        throw std::logic_error("Tensor::clone: autograd through clone is not implemented");
-    }
-
-    Tensor result;
-    result.shape_ = shape_;
-    result.stride_ = ContiguousStride(shape_);
-    result.dtype_ = dtype_;
-    result.device_ = device_;
-
-    const std::size_t bytes = nbytes();
-    if(bytes > 0){
-        if (device_ == Device::kCPU) {
-            result.storage_ = std::shared_ptr<void>(AllocateCPU(bytes), std::free);
-            result.data_ptr_ = result.storage_.get();
-            CopyCPU(result.data_ptr_, data_ptr_, shape_, result.stride_, stride_, element_size());
-        } else if (device_ == Device::kCUDA) {
-#ifdef ENABLE_CUDA
-            result.storage_ = std::shared_ptr<void>(AllocateCUDA(bytes), FreeCUDA);
-            result.data_ptr_ = result.storage_.get();
-            result.InitCUDAMetadata();
-            CopyCUDA(result.data_ptr_, data_ptr_, shape_cuda_.get(),
-                     result.stride_cuda_.get(), stride_cuda_.get(),
-                     dim(), numel(), element_size());
-#else
-            throw std::logic_error("Tensor::clone: CUDA support is disabled");
-#endif
-        } else {
-            throw std::invalid_argument("Tensor::clone: unsupported device");
-        }
-    }
-
-    return result;
-}
-
-Tensor Tensor::reshape(std::vector<int> shape) const {
-    if (!is_contiguous()) {
-        throw std::logic_error("Tensor::reshape: non-contiguous input is not supported");
-    }
-    std::size_t count = 1;
-    for(auto dimension : shape){
-        if(dimension <= 0){
-            throw std::invalid_argument(
-                "Tensor::reshape: dimension must be positive");
-        }
-        count *= dimension;
-    }
-    if(count != this->numel()){
-        throw std::invalid_argument(
-            "Tensor::reshape: shape must match");
-    }
-
-    // TODO: 实现 ViewNode 后移除保护，使 reshape 视图可微分。
-    if (EnableGrad() && (requires_grad() || grad_node())) {
-        throw std::logic_error("Tensor::reshape: autograd through views is not implemented");
-    }
-
-    Tensor result = *this;
-    result.shape_ = std::move(shape);
-    result.stride_ = ContiguousStride(result.shape_);
-    result.autograd_metadata_ = std::make_shared<AutogradMetadata>();
-    if (result.device_ == Device::kCUDA) {
-        result.InitCUDAMetadata();
-    }
-    return result;
-}
-
-Tensor Tensor::narrow(int dim, int start, int length) const{
-    if (dim < 0 || static_cast<std::size_t>(dim) >= shape_.size()) {
-        throw std::out_of_range("Tensor::narrow: dimension index out of range");
-    }
-    const int dimension = size(static_cast<std::size_t>(dim));
-    if (start < 0 || start >= dimension) {
-        throw std::out_of_range("Tensor::narrow: start index out of range");
-    }
-    if (length <= 0 || length > dimension - start) {
-        throw std::invalid_argument("Tensor::narrow: length out of range");
-    }
-    if (data_ptr_ == nullptr) {
-        throw std::logic_error("Tensor::narrow: null data pointer");
-    }
-
-    // TODO: 实现 ViewNode 后移除保护，使 narrow 视图可微分。
-    if (EnableGrad() && (requires_grad() || grad_node())) {
-        throw std::logic_error("Tensor::narrow: autograd through views is not implemented");
-    }
-
-    Tensor result;
-    result.storage_ = storage_;
-    result.shape_ = shape_;
-    result.shape_[dim] = length;
-    result.stride_ = stride_;
-    result.dtype_ = dtype_;
-    result.device_ = device_;
-
-    const std::size_t byte_offset = static_cast<std::size_t>(start) * stride_[dim] * element_size();
-    result.data_ptr_ = static_cast<std::byte*>(data_ptr_) + byte_offset;
-    if (result.device_ == Device::kCUDA) {
-        result.InitCUDAMetadata();
-    }
-    return result;
-}
-
-Tensor Tensor::operator+(const Tensor& other) const {
-    return add(*this, other);
-}
-
-Tensor Tensor::operator-(const Tensor& other) const {
-    return sub(*this, other);
-}
-
-Tensor Tensor::operator*(const Tensor& other) const {
-    return mul(*this, other);
-}
-
-Tensor Tensor::operator/(const Tensor& other) const {
-    return div(*this, other);
-}
-
-Tensor Tensor::operator-() const {
-    return neg(*this);
-}
-}
+}  // namespace mtensor

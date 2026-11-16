@@ -3,7 +3,9 @@
 #include <utility>
 
 #include "ops/elementwise.h"
+#include "ops/backend.h"
 #include "autograd/autograd.h"
+#include "autograd/backward_nodes/elementwise.h"
 
 namespace mtensor {
 namespace {
@@ -17,49 +19,6 @@ void CheckElementwiseInputs(const Tensor& a, const Tensor& b) {
         throw std::invalid_argument("Tensor must be same size");
     }
 }
-
-bool IsGradDtype(Dtype dtype){
-    return dtype == Dtype::kBFloat16 || 
-            dtype == Dtype::kFloat16 || 
-            dtype == Dtype::kFloat32;
-}
-
-// -------------------- backward node --------------------
-class AddNode : public AutogradNode {
-public:
-    std::vector<Tensor> backward(const Tensor& g) override {
-        return { g, g };
-    }
-};
-
-class SubNode : public AutogradNode {
-public:
-    std::vector<Tensor> backward(const Tensor& g) override {
-        return { g, neg(g) };
-    }
-};
-
-class NegNode : public AutogradNode {
-public:
-    std::vector<Tensor> backward(const Tensor& g) override {
-        return { neg(g) };
-    }
-};
-
-class MulNode : public AutogradNode {
-public:
-    std::vector<Tensor> backward(const Tensor& g) override {
-        return { mul(g, inputs[1]), mul(g, inputs[0]) };
-    }
-};
-
-class DivNode : public AutogradNode {
-public:
-    std::vector<Tensor> backward(const Tensor& g) override {
-        return { div(g, inputs[1]),
-                 neg(div(mul(g, inputs[0]), mul(inputs[1], inputs[1]))) };
-    }
-};
 
 }  // namespace
 
@@ -84,7 +43,7 @@ Tensor add(const Tensor& a, const Tensor& b){
     }
 
     // 反向传播建图
-    if(EnableGrad() && IsGradDtype(a.dtype())) {
+    if(EnableGrad() && CheckGradDtype(a.dtype())) {
         auto node = std::make_shared<AddNode>();
         node->inputs = { a, b };
         out.set_grad_node(std::move(node));
@@ -113,7 +72,7 @@ Tensor sub(const Tensor& a, const Tensor& b){
         throw std::invalid_argument("sub: unsupported device");
     }
 
-    if (EnableGrad() && IsGradDtype(a.dtype())) {
+    if (EnableGrad() && CheckGradDtype(a.dtype())) {
         auto node = std::make_shared<SubNode>();
         node->inputs = { a, b };
         out.set_grad_node(std::move(node));
@@ -142,7 +101,7 @@ Tensor mul(const Tensor& a, const Tensor& b){
         throw std::invalid_argument("mul: unsupported device");
     }
 
-    if (EnableGrad() && IsGradDtype(a.dtype())) {
+    if (EnableGrad() && CheckGradDtype(a.dtype())) {
         auto node = std::make_shared<MulNode>();
         node->inputs = { a, b };
         out.set_grad_node(std::move(node));
@@ -171,7 +130,7 @@ Tensor div(const Tensor& a, const Tensor& b){
         throw std::invalid_argument("div: unsupported device");
     }
 
-    if (EnableGrad() && IsGradDtype(a.dtype())) {
+    if (EnableGrad() && CheckGradDtype(a.dtype())) {
         auto node = std::make_shared<DivNode>();
         node->inputs = { a, b };
         out.set_grad_node(std::move(node));
@@ -198,7 +157,7 @@ Tensor neg(const Tensor& a){
         throw std::invalid_argument("neg: unsupported device");
     }
 
-    if (EnableGrad() && IsGradDtype(a.dtype())) {
+    if (EnableGrad() && CheckGradDtype(a.dtype())) {
         auto node = std::make_shared<NegNode>();
         node->inputs = { a };
         out.set_grad_node(std::move(node));

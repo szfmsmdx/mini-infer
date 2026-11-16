@@ -10,7 +10,7 @@ Tensor ──持有──→ AutogradMetadata
                     ├─ std::optional<Tensor> grad
                     └─ grad_node ──→ AutogradNode
                                       ├─ inputs：std::vector<Tensor>（本次前向的输入）
-                                      └─ backward(grad_output)
+                                      └─ backward(output_grad)
 ```
 
 - `AutogradMetadata` 保存一个 Tensor 的全部自动微分状态。
@@ -27,10 +27,17 @@ Tensor ──持有──→ AutogradMetadata
 autograd/
     autograd.h      # AutogradMetadata、AutogradNode、EnableGrad、NogradNode、RunBackward
     autograd.cpp    # 梯度开关与反向引擎
+    backward_nodes/
+        elementwise.h    # 逐元素反向节点声明
+        elementwise.cpp  # 逐元素反向规则
+        reduction.h      # 归约反向节点声明
+        reduction.cpp    # 归约反向节点（SumNode）
+        tensor_ops.h     # CloneNode 和 ToDeviceNode 的声明
+        tensor_ops.cpp   # clone 和跨设备迁移的反向规则
     README.md
 ```
 
-基础算子的 Node 不单独建文件，放在对应算子实现文件的匿名命名空间里。当前只有 `ops/elementwise.cpp`；后续 `matmul`、`softmax` 等按同样方式处理。
+逐元素 Node 在 `autograd/backward_nodes/elementwise.h/.cpp`，前向入口在 `ops/elementwise.cpp` 中创建节点。后续按算子类别组织反向规则，不为每个 Node 单独建文件。
 
 ## 数据结构
 
@@ -48,9 +55,9 @@ struct AutogradMetadata {
 class AutogradNode {
 public:
     virtual ~AutogradNode() = default;
-    // grad_output 与本次前向输出同 shape/dtype/device；
+    // output_grad 与本次前向输出同 shape/dtype/device；
     // 返回值第 i 项对应 inputs[i]。
-    virtual std::vector<Tensor> backward(const Tensor& grad_output) = 0;
+    virtual std::vector<Tensor> backward(const Tensor& output_grad) = 0;
 
     std::vector<Tensor> inputs;   // 本次前向的输入，同时延长其存储生命周期
 };
@@ -97,7 +104,7 @@ Tensor add(const Tensor& a, const Tensor& b) {
 
 class AddNode : public AutogradNode {
 public:
-    std::vector<Tensor> backward(const Tensor& g) override { return {g, g}; }
+    std::vector<Tensor> backward(const Tensor& output_grad) override { return {output_grad, output_grad}; }
 };
 ```
 
@@ -113,9 +120,9 @@ RunBackward(root)
 3. 创建 NogradNode：后续梯度计算和累加不再建图
 4. 为 root 对应的节点写入全 1 的 seed
 5. 逆序处理每一项：
-     grad_output = 临时梯度表中该节点的梯度
+     output_grad = 临时梯度表中该节点的梯度
      输出 Tensor 的 requires_grad 为 true 时，先累加到持久 grad（此刻梯度已收齐）
-     input_grads = node->backward(grad_output)
+     input_grads = node->backward(output_grad)
      逐个输入：有 grad_node 的累加到临时表；叶子若 requires_grad 则直接累加到持久 grad
 ```
 
@@ -137,44 +144,18 @@ RunBackward(root)
 
 - 只支持标量输出 `backward()`；非标量后续加 `backward(seed)`。
 - 支持 Float32、Float16、BFloat16 梯度；`RunBackward` 拒绝整数 dtype，`requires_grad_` 本身不限制 dtype。
-- 视图、`clone()` 和跨设备 `to()` 尚无反向规则。当前在建图开启且 Tensor 参与 autograd（`requires_grad()` 或 `grad_node()` 非空）时抛 `std::logic_error`，避免静默断图；`detach()` 和同设备 `to()` 不受影响。
-- 后续实现 `CloneNode`（恒等反向）、`CopyNode`（梯度复制回源设备）、`ViewNode`（梯度散射回基张量）后移除上述保护，使这些操作可微分。
-- 先验证 CPU；Node 和引擎与设备无关，CUDA 复用同一批算子，但需要目标 GPU 环境验证。
+- `transpose()`、`permute()`、`clone()` 和跨设备 `to()` 接入反向节点。`operator[]`、`narrow()`、`reshape()` 在建图开启且 Tensor 参与 autograd 时抛 `std::logic_error`；`detach()` 和同设备 `to()` 不受影响。
 - `zero_` / `fill_` / `copy_` 不建图；优化器更新需在 `NogradNode` 下进行。
 - `detach()` 共享存储但使用新的空 meta，其梯度不会回传到原 Tensor。
 
 ## 任务清单
 
-分工：用户实现核心代码；助手负责测试、运行验证和审查。完成一项并通过测试后再进入下一项。
-
-当前已完成：`autograd.h` 接口、开关/守卫、Tensor 的全部 autograd 方法、五种逐元素算子的反向 Node、临时保护路径，以及 `TopoSort` 和 `RunBackward` 的完整梯度传递。2026-11-15 本机 MSVC Release CPU 构建与 CTest 5/5 通过，包含端到端反向和有限差分测试。CUDA 反向尚未验证。
-
-### 第一天：Tensor 梯度状态与反向规则
-
-- [x] 1. `autograd/autograd.h`：`AutogradMetadata`、`AutogradNode`、`EnableGrad`、`NogradNode`、`RunBackward` 声明。
-- [x] 2. `autograd/autograd.cpp`：梯度开关和 guard；把该文件加入 `CMakeLists.txt` 的库源文件；完整引擎见第二天任务。
-- [x] 3. `tensor/tensor.h/.cpp`：`autograd_metadata_` 成员；构造函数、拷贝/移动和 `reshape` 的 meta 初始化；`requires_grad_` / `has_grad` / `grad`。
-- [x] 4. `tensor/tensor.cpp`：`grad_node()` / `set_grad_node()` / `accumulate_grad()` / `detach()` / `backward()` 及视图、`clone()`、跨设备 `to()` 的临时保护。
-- [x] 5. `AddNode` + `add()` 建图；直接调用 `grad_node()->backward(seed)` 验证。
-- [x] 6. `SubNode`、`NegNode`。
-- [x] 7. `MulNode`、`DivNode`（保存前向输入）。
-- [x] 8. 注册 `autograd_cpu_test`；当前 5/5 通过，覆盖开关、元数据、各算子直接反向和保护路径。
-
-### 第二天：反向引擎
-
-- [x] 9. `RunBackward` 入口：参数与浮点 dtype 检查、`NogradNode`、全 1 seed。
-- [x] 10. `TopoSort`：DFS 后序 + `visited` 去重，保存输出 Tensor；`topo_order` 为前向拓扑序。
-- [x] 11. 逆序处理：临时梯度表以 `const AutogradNode*` 为键；中间量在自身节点处理时写持久梯度，叶子收到梯度时直接累加。
-- [x] 12. 端到端用例：链式、菱形、重复输入与反向、梯度保存、`detach()`、`no_grad`、错误输入、三种浮点 dtype 及组合表达式有限差分。
-- [x] 13. 更新本 README、`tests/README.md` 和 `AGENTS.md` 状态。
-
-### 后续：可微分 Tensor 操作
-
-- [ ] 实现 `CloneNode`，反向为恒等，移除 `clone()` 保护。
-- [ ] 实现 `CopyNode`，把梯度复制回源设备，移除跨设备 `to()` 保护。
-- [ ] 实现 `ViewNode`，覆盖 `operator[]`、`narrow`、`reshape`，处理 stride 和重叠视图的梯度累加，移除视图保护。
-- [ ] 补对应端到端测试。
-
-测试由助手编写并运行；CUDA 反向需在有 GPU 的环境补跑。
-
-下一次先实现并验证 `CloneNode`，再推进 `CopyNode` 和 `ViewNode`，每完成一项先补测试。当前测试不覆盖前向后原地修改输入，尚无版本计数保护。
+- [x] 梯度元数据、建图开关和 `NogradNode` 守卫。
+- [x] 反向拓扑排序、临时梯度汇总和持久梯度累加。
+- [x] 逐元素算子、`clone`、`transpose`、`permute` 和全元素 `sum` 的反向规则。
+- [x] 跨设备 `to()` 的反向节点与 CUDA 测试代码。
+- [x] 在 Colab A100 验证跨设备迁移、转置视图和 `sum` 的相关前向与反向测试。
+- [ ] 支持 `operator[]`、`narrow`、`reshape` 的视图反向。
+- [ ] 支持指定维度归约、广播及矩阵乘的反向。
+- [ ] 支持非标量输出的 `backward(seed)`。
+- [ ] 增加原地修改检测及对应测试。
