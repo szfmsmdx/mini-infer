@@ -1,6 +1,7 @@
 #include <memory>
 #include <stdexcept>
 #include <utility>
+#include <vector>
 
 #include "ops/elementwise.h"
 #include "ops/backend.h"
@@ -9,6 +10,20 @@
 
 namespace mtensor {
 namespace {
+
+std::vector<int> BroadcastShape(const std::vector<int>& a, const std::vector<int>& b) {
+    const std::size_t ndim = a.size() > b.size() ? a.size() : b.size();
+    std::vector<int> shape(ndim, 1);
+    for (std::size_t i = 0; i < ndim; ++i) {
+        const int a_size = i < a.size() ? a[a.size() - 1 - i] : 1;
+        const int b_size = i < b.size() ? b[b.size() - 1 - i] : 1;
+        if (a_size != b_size && a_size != 1 && b_size != 1) {
+            throw std::invalid_argument("BroadcastShape: incompatible shapes");
+        }
+        shape[ndim - 1 - i] = a_size == 1 ? b_size : a_size;
+    }
+    return shape;
+}
 
 void CheckElementwiseInputs(const Tensor& a, const Tensor& b) {
     if(a.device() != b.device()){
@@ -26,15 +41,18 @@ Tensor add(const Tensor& a, const Tensor& b){
     if(a.empty() || b.empty()){
         throw std::invalid_argument("Get Empty Tensor");
     }
-    CheckElementwiseInputs(a, b);
-    Tensor out(a.shape(), a.dtype(), a.device());
+    const auto shape = BroadcastShape(a.shape(), b.shape());
+    Tensor lhs = a.shape() == shape ? a : a.broadcast(shape);
+    Tensor rhs = b.shape() == shape ? b : b.broadcast(shape);
+    CheckElementwiseInputs(lhs, rhs);
+    Tensor out(shape, a.dtype(), a.device());
     if (a.device() == Device::kCPU) {
-        AddCPU(a.data_ptr(), b.data_ptr(), out.data_ptr(), a.dtype(),
-               a.shape(), a.stride(), b.stride(), out.stride());
+        AddCPU(lhs.data_ptr(), rhs.data_ptr(), out.data_ptr(), a.dtype(),
+               shape, lhs.stride(), rhs.stride(), out.stride());
     } else if (a.device() == Device::kCUDA) {
 #ifdef ENABLE_CUDA
-        AddCUDA(a.data_ptr(), b.data_ptr(), out.data_ptr(), a.numel(), a.dtype(),
-                a.shape_cuda(), a.stride_cuda(), b.stride_cuda(), a.dim());
+        AddCUDA(lhs.data_ptr(), rhs.data_ptr(), out.data_ptr(), out.numel(), a.dtype(),
+                out.shape_cuda(), lhs.stride_cuda(), rhs.stride_cuda(), out.dim());
 #else
         throw std::logic_error("add: CUDA support is disabled");
 #endif
@@ -45,7 +63,7 @@ Tensor add(const Tensor& a, const Tensor& b){
     // 反向传播建图
     if(EnableGrad() && CheckGradDtype(a.dtype())) {
         auto node = std::make_shared<AddNode>();
-        node->inputs = { a, b };
+        node->inputs = { lhs, rhs };
         out.set_grad_node(std::move(node));
     }
 
@@ -56,15 +74,18 @@ Tensor sub(const Tensor& a, const Tensor& b){
     if(a.empty() || b.empty()){
         throw std::invalid_argument("Get Empty Tensor");
     }
-    CheckElementwiseInputs(a, b);
-    Tensor out(a.shape(), a.dtype(), a.device());
+    const auto shape = BroadcastShape(a.shape(), b.shape());
+    Tensor lhs = a.shape() == shape ? a : a.broadcast(shape);
+    Tensor rhs = b.shape() == shape ? b : b.broadcast(shape);
+    CheckElementwiseInputs(lhs, rhs);
+    Tensor out(shape, a.dtype(), a.device());
     if (a.device() == Device::kCPU) {
-        SubCPU(a.data_ptr(), b.data_ptr(), out.data_ptr(), a.dtype(),
-               a.shape(), a.stride(), b.stride(), out.stride());
+        SubCPU(lhs.data_ptr(), rhs.data_ptr(), out.data_ptr(), a.dtype(),
+               shape, lhs.stride(), rhs.stride(), out.stride());
     } else if (a.device() == Device::kCUDA) {
 #ifdef ENABLE_CUDA
-        SubCUDA(a.data_ptr(), b.data_ptr(), out.data_ptr(), a.numel(), a.dtype(),
-                a.shape_cuda(), a.stride_cuda(), b.stride_cuda(), a.dim());
+        SubCUDA(lhs.data_ptr(), rhs.data_ptr(), out.data_ptr(), out.numel(), a.dtype(),
+                out.shape_cuda(), lhs.stride_cuda(), rhs.stride_cuda(), out.dim());
 #else
         throw std::logic_error("sub: CUDA support is disabled");
 #endif
@@ -74,7 +95,7 @@ Tensor sub(const Tensor& a, const Tensor& b){
 
     if (EnableGrad() && CheckGradDtype(a.dtype())) {
         auto node = std::make_shared<SubNode>();
-        node->inputs = { a, b };
+        node->inputs = { lhs, rhs };
         out.set_grad_node(std::move(node));
     }
 
@@ -85,15 +106,18 @@ Tensor mul(const Tensor& a, const Tensor& b){
     if(a.empty() || b.empty()){
         throw std::invalid_argument("Get Empty Tensor");
     }
-    CheckElementwiseInputs(a, b);
-    Tensor out(a.shape(), a.dtype(), a.device());
+    const auto shape = BroadcastShape(a.shape(), b.shape());
+    Tensor lhs = a.shape() == shape ? a : a.broadcast(shape);
+    Tensor rhs = b.shape() == shape ? b : b.broadcast(shape);
+    CheckElementwiseInputs(lhs, rhs);
+    Tensor out(shape, a.dtype(), a.device());
     if (a.device() == Device::kCPU) {
-        MulCPU(a.data_ptr(), b.data_ptr(), out.data_ptr(), a.dtype(),
-               a.shape(), a.stride(), b.stride(), out.stride());
+        MulCPU(lhs.data_ptr(), rhs.data_ptr(), out.data_ptr(), a.dtype(),
+               shape, lhs.stride(), rhs.stride(), out.stride());
     } else if (a.device() == Device::kCUDA) {
 #ifdef ENABLE_CUDA
-        MulCUDA(a.data_ptr(), b.data_ptr(), out.data_ptr(), a.numel(), a.dtype(),
-                a.shape_cuda(), a.stride_cuda(), b.stride_cuda(), a.dim());
+        MulCUDA(lhs.data_ptr(), rhs.data_ptr(), out.data_ptr(), out.numel(), a.dtype(),
+                out.shape_cuda(), lhs.stride_cuda(), rhs.stride_cuda(), out.dim());
 #else
         throw std::logic_error("mul: CUDA support is disabled");
 #endif
@@ -103,7 +127,7 @@ Tensor mul(const Tensor& a, const Tensor& b){
 
     if (EnableGrad() && CheckGradDtype(a.dtype())) {
         auto node = std::make_shared<MulNode>();
-        node->inputs = { a, b };
+        node->inputs = { lhs, rhs };
         out.set_grad_node(std::move(node));
     }
 
@@ -114,15 +138,18 @@ Tensor div(const Tensor& a, const Tensor& b){
     if(a.empty() || b.empty()){
         throw std::invalid_argument("Get Empty Tensor");
     }
-    CheckElementwiseInputs(a, b);
-    Tensor out(a.shape(), a.dtype(), a.device());
+    const auto shape = BroadcastShape(a.shape(), b.shape());
+    Tensor lhs = a.shape() == shape ? a : a.broadcast(shape);
+    Tensor rhs = b.shape() == shape ? b : b.broadcast(shape);
+    CheckElementwiseInputs(lhs, rhs);
+    Tensor out(shape, a.dtype(), a.device());
     if (a.device() == Device::kCPU) {
-        DivCPU(a.data_ptr(), b.data_ptr(), out.data_ptr(), a.dtype(),
-               a.shape(), a.stride(), b.stride(), out.stride());
+        DivCPU(lhs.data_ptr(), rhs.data_ptr(), out.data_ptr(), a.dtype(),
+               shape, lhs.stride(), rhs.stride(), out.stride());
     } else if (a.device() == Device::kCUDA) {
 #ifdef ENABLE_CUDA
-        DivCUDA(a.data_ptr(), b.data_ptr(), out.data_ptr(), a.numel(), a.dtype(),
-                a.shape_cuda(), a.stride_cuda(), b.stride_cuda(), a.dim());
+        DivCUDA(lhs.data_ptr(), rhs.data_ptr(), out.data_ptr(), out.numel(), a.dtype(),
+                out.shape_cuda(), lhs.stride_cuda(), rhs.stride_cuda(), out.dim());
 #else
         throw std::logic_error("div: CUDA support is disabled");
 #endif
@@ -132,7 +159,7 @@ Tensor div(const Tensor& a, const Tensor& b){
 
     if (EnableGrad() && CheckGradDtype(a.dtype())) {
         auto node = std::make_shared<DivNode>();
-        node->inputs = { a, b };
+        node->inputs = { lhs, rhs };
         out.set_grad_node(std::move(node));
     }
 

@@ -6,6 +6,8 @@
 
 其他算子将在开始实现时按需建立文件和接口。
 
+`add()` / `sub()` / `mul()` / `div()` 支持自动广播：右对齐推导公共 shape，在设备分发前按需创建 `broadcast()` 视图，复用 stride kernel；反向节点保存广播后的输入，由 `BroadcastNode` 沿广播维度求和。相同 shape 不创建额外视图。输入仍须同 dtype、同 device。
+
 ## 文件结构
 
 ```text

@@ -138,7 +138,7 @@ RunBackward(root)
 | `div(a, b)` | `dA = G / b`, `dB = -G * a / (b * b)` |
 | `neg(a)` | `dA = -G` |
 
-当前不做广播，输入输出 shape 相同，反向不需要归约。`G` 是上游梯度，由引擎传入。
+`G` 是上游梯度，由引擎传入。`add` / `sub` / `mul` / `div` 自动广播时，反向节点保存广播后的输入，上述公式产生公共 shape 的梯度，再由 `BroadcastNode` 沿广播维度归约到原输入 shape。
 
 ## 第一阶段限制
 

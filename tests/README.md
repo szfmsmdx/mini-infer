@@ -45,6 +45,15 @@ ctest --test-dir build/tests -C Release --output-on-failure
 
 测试使用 `Check()` 抛异常，Release 构建也会执行检查。
 
+`reduction_cpu_test` / `reduction_cuda_test` 还覆盖二元逐元素算子的自动广播：
+
+- `add/sub/mul/div` 的双边广播、前向数值和两端梯度 shape 与数值。
+- 标量与非连续视图的双向运算、关闭建图及不兼容 shape。
+- Float32、FP16、BF16、Int32 的多前导维广播；浮点梯度归约及整数不建图。
+- 同一叶子经不同广播路径参与计算时的梯度累加。
+
+最新自动广播用例已在本地通过 CPU 回归（8/8）；用户在 Colab 完成包含新增用例的 CPU/CUDA 回归，CTest 13/13 通过。
+
 只跑其中一组，例如 Tensor：
 
 ```powershell

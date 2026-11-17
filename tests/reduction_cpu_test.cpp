@@ -26,6 +26,146 @@ void CheckIntegerSum(Dtype dtype, const std::vector<T>& values, std::int64_t exp
     Check(!result.grad_node(), "integer sum must not build a gradient node");
 }
 
+void TestAddBroadcast() {
+    float a_data[] = {1, 2};
+    float b_data[] = {10, 20, 30};
+    Tensor a(a_data, {2, 1}, Dtype::kFloat32, Device::kCPU);
+    Tensor b(b_data, {3}, Dtype::kFloat32, Device::kCPU);
+    a.requires_grad_(true);
+    b.requires_grad_(true);
+    Tensor result = add(a, b);
+    Check(result.shape() == std::vector<int>({2, 3}), "add broadcast shape");
+    sum(result).backward();
+    NogradNode guard;
+    Tensor host = result.to(Device::kCPU);
+    const auto* values = static_cast<const float*>(host.data_ptr());
+    for (int i = 0; i < 6; ++i) {
+        Check(values[i] == a_data[i / 3] + b_data[i % 3], "add broadcast values");
+    }
+    Tensor ga = a.grad().to(Device::kCPU);
+    Tensor gb = b.grad().to(Device::kCPU);
+    Check(ga.shape() == a.shape() && gb.shape() == b.shape(), "add broadcast gradient shapes");
+    for (int i = 0; i < 2; ++i)
+        Check(static_cast<const float*>(ga.data_ptr())[i] == 3, "add lhs gradient");
+    for (int i = 0; i < 3; ++i)
+        Check(static_cast<const float*>(gb.data_ptr())[i] == 2, "add rhs gradient");
+
+    Tensor scalar = full({}, 5.0f, Dtype::kFloat32, Device::kCPU);
+    Tensor strided = result.transpose(0, 1);
+    Tensor shifted = add(scalar, strided).to(Device::kCPU);
+    Tensor reversed = add(strided, scalar).to(Device::kCPU);
+    for (int i = 0; i < 6; ++i) {
+        const float expected = a_data[i % 2] + b_data[i / 2] + 5;
+        Check(static_cast<const float*>(shifted.data_ptr())[i] == expected, "scalar strided add");
+        Check(static_cast<const float*>(reversed.data_ptr())[i] == expected, "reversed broadcast add");
+    }
+    Check(!shifted.grad_node(), "no-grad broadcast add");
+    bool rejected = false;
+    try { add(b, full({2}, 0.0f, Dtype::kFloat32, Device::kCPU)); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    Check(rejected, "incompatible add broadcast shapes");
+}
+void TestBinaryBroadcast() {
+    using BinaryOp = Tensor (*)(const Tensor&, const Tensor&);
+    const BinaryOp operations[] = {sub, mul, div};
+    for (int op = 0; op < 3; ++op) {
+        float a_data[] = {2, 4};
+        float b_data[] = {1, 2, 4};
+        Tensor a(a_data, {2, 1}, Dtype::kFloat32, Device::kCPU);
+        Tensor b(b_data, {3}, Dtype::kFloat32, Device::kCPU);
+        a.requires_grad_(true);
+        b.requires_grad_(true);
+        Tensor result = operations[op](a, b);
+        Check(result.shape() == std::vector<int>({2, 3}), "binary broadcast shape");
+        sum(result).backward();
+        NogradNode guard;
+        Tensor host = result.to(Device::kCPU);
+        for (int i = 0; i < 6; ++i) {
+            const float av = a_data[i / 3], bv = b_data[i % 3];
+            const float expected = op == 0 ? av - bv : (op == 1 ? av * bv : av / bv);
+            Check(static_cast<const float*>(host.data_ptr())[i] == expected, "binary broadcast value");
+        }
+        Tensor ga = a.grad().to(Device::kCPU), gb = b.grad().to(Device::kCPU);
+        Check(ga.shape() == a.shape() && gb.shape() == b.shape(), "binary broadcast grad shapes");
+        for (int i = 0; i < 2; ++i) {
+            const float expected = op == 0 ? 3.0f : (op == 1 ? 7.0f : 1.75f);
+            Check(static_cast<const float*>(ga.data_ptr())[i] == expected, "binary broadcast lhs grad");
+        }
+        for (int i = 0; i < 3; ++i) {
+            const float expected = op == 0 ? -2.0f : (op == 1 ? 6.0f : -6.0f / (b_data[i] * b_data[i]));
+            Check(static_cast<const float*>(gb.data_ptr())[i] == expected, "binary broadcast rhs grad");
+        }
+        Tensor scalar = full({}, 2.0f, Dtype::kFloat32, Device::kCPU);
+        Tensor view = result.transpose(0, 1);
+        for (bool reverse : {false, true}) {
+            Tensor output = reverse ? operations[op](scalar, view) : operations[op](view, scalar);
+            Check(!output.grad_node(), "no-grad binary broadcast");
+            Tensor actual = output.to(Device::kCPU);
+            for (int i = 0; i < 6; ++i) {
+                const float value = static_cast<const float*>(host.data_ptr())[(i % 2) * 3 + i / 2];
+                const float lhs = reverse ? 2.0f : value, rhs = reverse ? value : 2.0f;
+                const float expected = op == 0 ? lhs - rhs : (op == 1 ? lhs * rhs : lhs / rhs);
+                Check(static_cast<const float*>(actual.data_ptr())[i] == expected, "scalar strided binary broadcast");
+            }
+        }
+        bool rejected = false;
+        try { operations[op](b, full({2}, 1.0f, Dtype::kFloat32, Device::kCPU)); }
+        catch (const std::invalid_argument&) { rejected = true; }
+        Check(rejected, "incompatible binary broadcast shapes");
+    }
+}
+void TestBroadcastDtypesAndRanks() {
+    using BinaryOp = Tensor (*)(const Tensor&, const Tensor&);
+    const BinaryOp operations[] = {add, sub, mul, div};
+    for (Dtype dtype : {Dtype::kFloat32, Dtype::kFloat16, Dtype::kBFloat16, Dtype::kInt32}) {
+        for (int op = 0; op < 4; ++op) {
+            // Three leading dimensions on rhs; both inputs expand along different axes.
+            Tensor a = full({2, 1, 3, 1}, 8, dtype, Device::kCPU);
+            Tensor b = full({4}, 2, dtype, Device::kCPU);
+            if (dtype != Dtype::kInt32) {
+                a.requires_grad_(true);
+                b.requires_grad_(true);
+            }
+            Tensor result = operations[op](a, b);
+            Check(result.shape() == std::vector<int>({2, 1, 3, 4}), "multi-axis broadcast shape");
+            const int expected = op == 0 ? 10 : (op == 1 ? 6 : (op == 2 ? 16 : 4));
+            if (dtype != Dtype::kInt32) sum(result).backward();
+            else Check(!result.grad_node(), "integer broadcast must not build graph");
+            NogradNode guard;
+            Tensor host = result.to(Device::kCPU);
+            auto check_value = [dtype](const Tensor& tensor, int index, float value) {
+                const void* data = tensor.data_ptr();
+                if (dtype == Dtype::kFloat32)
+                    Check(static_cast<const float*>(data)[index] == value, "float broadcast value");
+                else if (dtype == Dtype::kInt32)
+                    Check(static_cast<const std::int32_t*>(data)[index] == static_cast<int>(value), "integer broadcast value");
+                else {
+                    const auto bits = static_cast<const std::uint16_t*>(data)[index];
+                    const auto expected_bits = dtype == Dtype::kFloat16 ? EncodeFloat16(value) : EncodeBFloat16(value);
+                    Check(bits == expected_bits, "half broadcast value");
+                }
+            };
+            for (int i = 0; i < 24; ++i) check_value(host, i, static_cast<float>(expected));
+            if (dtype != Dtype::kInt32) {
+                Tensor ga = a.grad().to(Device::kCPU), gb = b.grad().to(Device::kCPU);
+                Check(ga.shape() == a.shape() && gb.shape() == b.shape(), "multi-axis grad shape");
+                const float da = op == 2 ? 8.0f : (op == 3 ? 2.0f : 4.0f);
+                const float db = op == 0 ? 6.0f : (op == 1 ? -6.0f : (op == 2 ? 48.0f : -12.0f));
+                for (int i = 0; i < 6; ++i) check_value(ga, i, da);
+                for (int i = 0; i < 4; ++i) check_value(gb, i, db);
+            }
+        }
+    }
+    // The same leaf reaches the loss through a direct path and a broadcast path.
+    Tensor scalar = full({}, 2.0f, Dtype::kFloat32, Device::kCPU);
+    scalar.requires_grad_(true);
+    Tensor expanded = scalar.broadcast({2, 3});
+    sum(mul(scalar, expanded)).backward();
+    NogradNode guard;
+    Tensor grad = scalar.grad().to(Device::kCPU);
+    Check(grad.is_scalar() && *static_cast<const float*>(grad.data_ptr()) == 24,
+          "shared leaf broadcast gradient accumulation");
+}
 void TestMeanAndBroadcast() {
     const Device device = Device::kCPU;
     float data[] = {1, 2, 3, 4, 5, 6};
@@ -211,6 +351,9 @@ void TestViewsAndBackward() {
 int main() {
     try {
         TestDtypes();
+        TestAddBroadcast();
+        TestBinaryBroadcast();
+        TestBroadcastDtypesAndRanks();
         TestMeanAndBroadcast();
         TestBroadcastBackward();
         TestBroadcastBoundaries();
