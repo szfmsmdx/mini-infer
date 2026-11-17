@@ -74,6 +74,7 @@ bool requires_grad() const;
 Tensor& requires_grad_(bool value);   // 控制是否保存梯度
 bool has_grad() const;                // meta->grad.has_value()
 Tensor grad() const;                  // 无梯度返回默认空 Tensor
+void zero_grad();                     // 已有梯度清零，保留存储和 has_grad 状态
 void backward();                      // 单元素入口，默认上游梯度为 1
 void backward(const Tensor& gradient); // 指定上游梯度，须同 shape/dtype/device
 Tensor detach() const;                // 共享存储，使用新的空 meta
@@ -127,7 +128,7 @@ RunBackward(root, gradient)
      逐个输入：有 grad_node 的累加到临时表；叶子若 requires_grad 则直接累加到持久 grad
 ```
 
-临时梯度表以 `const AutogradNode*` 为键：每个前向调用创建唯一的 Node，就是该输出的身份；没有 `grad_node` 的 Tensor 是叶子，梯度不再上传，直接写持久梯度，因此不需要给 Tensor 增加 meta 访问器。中间量的持久梯度在它自己的节点被处理时写入，不会重复累加。临时梯度与持久 `grad` 分开，避免重复 `backward()` 时把旧梯度再次用于传递。第一次实现不释放计算图，多次 `backward()` 会继续累加持久梯度，清梯度留到优化器阶段。
+临时梯度表以 `const AutogradNode*` 为键：每个前向调用创建唯一的 Node，就是该输出的身份；没有 `grad_node` 的 Tensor 是叶子，梯度不再上传，直接写持久梯度，因此不需要给 Tensor 增加 meta 访问器。中间量的持久梯度在它自己的节点被处理时写入，不会重复累加。临时梯度与持久 `grad` 分开，避免重复 `backward()` 时把旧梯度再次用于传递。第一次实现不释放计算图，多次 `backward()` 会继续累加持久梯度，通过 Tensor::zero_grad() 清零已保存的梯度；仅作用于当前 Tensor，不遍历计算图，不改变 requires_grad 或 grad_node。
 
 ## 算子反向公式
 
@@ -140,6 +141,16 @@ RunBackward(root, gradient)
 | `neg(a)` | `dA = -G` |
 
 `G` 是上游梯度，由引擎传入。`add` / `sub` / `mul` / `div` 自动广播时，反向节点保存广播后的输入，上述公式产生公共 shape 的梯度，再由 `BroadcastNode` 沿广播维度归约到原输入 shape。
+
+## 原地修改检测
+
+Tensor 通过共享的 `version_` 记录存储修改次数。拷贝、共享视图和 `detach()` 共用计数器；`clone()`、跨设备复制等独立存储使用新计数器。
+
+`fill_`（普通数值和标量 Tensor）、`zero_`、`copy_` 在校验完成、实际写入前调用 `update_version()`，`NogradNode` 下也更新。空操作、同位置的 `copy_` 和参数校验失败不更新；写入开始后若失败，版本保守地保持已递增状态。`zero_grad()` 修改梯度存储的版本，不改变参数存储的版本。
+
+`MulNode`、`DivNode` 在前向保存两个输入的版本，反向读取输入数值前通过 `CheckVersion` 检查，不一致时抛 `std::logic_error`。输入是否请求保存梯度不影响检查；`add/sub/neg` 及当前视图、归约反向不读取原输入数值，不检查数据版本。
+
+通过 `data_ptr()` 或自定义 kernel 写内存时，框架无法自动感知，调用方须在写入前显式调用 `update_version()`。新算子的反向如果依赖保存的 Tensor 数值，也需要保存并检查对应版本。
 
 ## 第一阶段限制
 
@@ -161,4 +172,5 @@ RunBackward(root, gradient)
 - [x] 支持 `operator[]` 的视图反向与前向建图，本地 CPU 及 Colab CPU/CUDA 回归已通过。
 - [ ] 支持指定维度归约、广播及矩阵乘的反向。
 - [x] 支持非标量输出的 `backward(gradient)`；本地 CPU 回归 8/8 通过，用户在 Colab 完成 CPU/CUDA 回归，CTest 13/13 通过（2.30 秒）。
-- [ ] 增加原地修改检测及对应测试。
+- [x] Tensor::zero_grad() 保留梯度存储并清零；本地 CPU 及用户 Colab CPU/CUDA 回归已通过。
+- [x] 共享版本计数、原地写入更新及 mul/div 反向版本检查；本地 CPU 及用户 Colab CPU/CUDA 回归已通过。

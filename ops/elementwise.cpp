@@ -123,6 +123,8 @@ Tensor mul(const Tensor& a, const Tensor& b){
     if (EnableGrad() && CheckGradDtype(a.dtype())) {
         auto node = std::make_shared<MulNode>();
         node->inputs = { lhs, rhs };
+        node->input_versions[0] = lhs.version();
+        node->input_versions[1] = rhs.version();
         out.set_grad_node(std::move(node));
     }
 
@@ -156,6 +158,8 @@ Tensor div(const Tensor& a, const Tensor& b){
     if (EnableGrad() && CheckGradDtype(a.dtype())) {
         auto node = std::make_shared<DivNode>();
         node->inputs = { lhs, rhs };
+        node->input_versions[0] = lhs.version();
+        node->input_versions[1] = rhs.version();
         out.set_grad_node(std::move(node));
     }
 

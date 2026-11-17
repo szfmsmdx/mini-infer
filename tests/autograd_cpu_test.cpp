@@ -204,6 +204,202 @@ void CheckBackwardEngine() {
     }
 }
 
+void TestInplaceVersions() {
+    auto require = [](bool condition, const char* message) {
+        if (!condition) throw std::runtime_error(message);
+    };
+    auto rejects_modified = [&require](Tensor loss) {
+        bool rejected = false;
+        try { loss.backward(); }
+        catch (const std::logic_error& error) {
+            rejected = std::string(error.what()).find("input modified after forward") != std::string::npos;
+        }
+        require(rejected && EnableGrad(), "backward must reject changed saved data and restore grad mode");
+    };
+    Tensor base = full({2, 3}, 3.0f, Dtype::kFloat32, Device::kCPU);
+    std::vector<Tensor> aliases = {
+        base, base[0], base.narrow(1, 1, 2), base.transpose(0, 1), base.permute({1, 0}),
+        base.reshape({6}), base.unsqueeze(1), base.unsqueeze(1).squeeze(1), base.detach(),
+        base.to(Device::kCPU), base.narrow(0, 0, 1).broadcast({2, 3})
+    };
+    auto version = base.version();
+    aliases[1].fill_(5);
+    require(base.version() == version + 1, "index write must update base version once");
+    for (const auto& alias : aliases)
+        require(alias.version() == base.version(), "all storage aliases must share the version");
+    Tensor assigned;
+    assigned = base;
+    Tensor moved(std::move(assigned));
+    Tensor destination;
+    destination = std::move(moved);
+    version = base.version();
+    destination.zero_();
+    require(base.version() == version + 1 && destination.version() == base.version(), "copy and move must retain version sharing");
+    Tensor independent = base.clone();
+    Tensor reshaped_copy = base.transpose(0, 1).reshape({6});
+    independent.fill_(2);
+    reshaped_copy.fill_(2);
+    require(base.version() == version + 1, "independent allocations must not change base version");
+    if (base.device() == Device::kCUDA) {
+        Tensor cpu_copy = base.to(Device::kCPU);
+        cpu_copy.zero_();
+        require(base.version() == version + 1, "cross-device copy must have independent version");
+    }
+    version = base.version();
+    base.copy_(base);
+    require(base.version() == version, "self copy must not update version");
+    bool rejected = false;
+    try { base.copy_(full({1}, 0.0f, Dtype::kFloat32, Device::kCPU)); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    require(rejected && base.version() == version, "failed copy validation must not update version");
+    rejected = false;
+    try { aliases.back().fill_(1); } catch (const std::invalid_argument&) { rejected = true; }
+    require(rejected && base.version() == version, "rejected broadcast write must not update version");
+    Tensor scalar = full({}, 2.0f, Dtype::kFloat32, Device::kCPU);
+    base.fill_(scalar);
+    require(base.version() == version + 1, "Tensor scalar fill must update version once");
+    version = base.version();
+    {
+        NogradNode guard;
+        base.fill_(base[0][0]);  // Scalar and destination share storage.
+    }
+    require(base.version() == version + 1, "aliased scalar fill must update version once");
+
+    using BinaryOp = Tensor (*)(const Tensor&, const Tensor&);
+    for (BinaryOp operation : {mul, div}) {
+        for (Dtype dtype : {Dtype::kFloat32, Dtype::kFloat16, Dtype::kBFloat16}) {
+            for (int side = 0; side < 2; ++side) {
+                for (int write = 0; write < 4; ++write) {
+                    Tensor a = full({2, 3}, 6, dtype, Device::kCPU);
+                    Tensor b = full({3}, 2, dtype, Device::kCPU);
+                    a.requires_grad_(true);
+                    // b does not request a gradient, but its value is still needed for a's gradient.
+                    Tensor loss = operation(a, b).sum();
+                    Tensor target = side == 0 ? a : b;
+                    auto before = target.version();
+                    {
+                        NogradNode guard;
+                        if (write == 0) target.fill_(4);
+                        else if (write == 1) target.zero_();
+                        else if (write == 2) target.copy_(full(target.shape(), 4, dtype, Device::kCPU));
+                        else target.detach().narrow(0, 0, 1).fill_(4);
+                    }
+                    require(target.version() == before + 1, "in-place write must update shared version once");
+                    rejects_modified(loss);
+                }
+            }
+        }
+    }
+    Tensor x = full({2, 3}, 3.0f, Dtype::kFloat32, Device::kCPU);
+    x.requires_grad_(true);
+    Tensor original_loss = mul(x, x).sum();
+    // Modifying clone storage must not invalidate the original graph.
+    x.clone().fill_(9);
+    original_loss.backward();
+    version = x.version();
+    auto gradient_version = x.grad().version();
+    x.zero_grad();
+    require(x.version() == version && x.grad().version() == gradient_version + 1,
+            "zero_grad changes gradient version only");
+    original_loss.backward();  // Reusing an unchanged graph is still valid.
+    {
+        NogradNode guard;
+        Tensor grad = x.grad().to(Device::kCPU);
+        for (int i = 0; i < 6; ++i)
+            require(static_cast<const float*>(grad.data_ptr())[i] == 6, "unchanged graph gradient");
+        x.fill_(4);           // Parameter update after backward.
+    }
+    rejects_modified(original_loss);
+    x.zero_grad();
+    mul(x, x).sum().backward();  // New forward records the new version.
+    {
+        NogradNode guard;
+        Tensor grad = x.grad().to(Device::kCPU);
+        for (int i = 0; i < 6; ++i)
+            require(static_cast<const float*>(grad.data_ptr())[i] == 8, "new graph after parameter update");
+    }
+    x.zero_grad();
+    Tensor value_independent = sub(add(x, x), x).reshape({6}).sum();
+    x.fill_(7);
+    value_independent.backward();  // These derivatives do not read saved input data.
+    {
+        NogradNode guard;
+        Tensor grad = x.grad().to(Device::kCPU);
+        for (int i = 0; i < 6; ++i)
+            require(static_cast<const float*>(grad.data_ptr())[i] == 1, "value-independent backward must not reject mutation");
+    }
+    Tensor external_loss = mul(x, x).sum();
+    x.update_version();  // External writers explicitly notify the framework.
+    rejects_modified(external_loss);
+}
+void TestZeroGrad() {
+    auto require = [](bool condition, const char* message) {
+        if (!condition) throw std::runtime_error(message);
+    };
+    Tensor empty;
+    empty.zero_grad();
+    require(!empty.has_grad(), "zero_grad must not create gradient on empty tensor");
+    for (Dtype dtype : {Dtype::kFloat32, Dtype::kFloat16, Dtype::kBFloat16}) {
+        auto read = [dtype](const Tensor& tensor, int i) {
+            if (dtype == Dtype::kFloat32) return static_cast<const float*>(tensor.data_ptr())[i];
+            const auto bits = static_cast<const std::uint16_t*>(tensor.data_ptr())[i];
+            return dtype == Dtype::kFloat16 ? static_cast<float>(Float16::from_bits(bits))
+                                            : static_cast<float>(BFloat16::from_bits(bits));
+        };
+        auto check_values = [&require, &read](const Tensor& tensor, float expected) {
+            NogradNode guard;
+            Tensor host = tensor.to(Device::kCPU);
+            for (std::size_t i = 0; i < host.numel(); ++i)
+                require(read(host, i) == expected, "zero_grad gradient value");
+        };
+        Tensor x = full({2}, 3, dtype, Device::kCPU);
+        x.requires_grad_(true);
+        x.zero_grad();
+        require(!x.has_grad() && x.requires_grad(), "zero_grad on fresh leaf must be a no-op");
+        Tensor output = mul(x, x);
+        output.requires_grad_(true);
+        auto node = output.grad_node();
+        Tensor gradient = full({2}, 1, dtype, Device::kCPU);
+        output.backward(gradient);
+        output.backward(gradient);
+        check_values(x.grad(), 12);
+        check_values(output.grad(), 2);
+        Tensor saved_gradient = x.grad();
+        const void* saved_pointer = saved_gradient.data_ptr();
+        Tensor alias = x;
+        alias.zero_grad();
+        require(x.has_grad() && alias.has_grad() && x.grad().data_ptr() == saved_pointer,
+                "zero_grad must retain shared gradient storage");
+        require(x.requires_grad() && !x.grad_node() && output.grad_node() == node,
+                "zero_grad must preserve gradient settings and graph");
+        require(x.grad().shape() == x.shape() && x.grad().dtype() == dtype &&
+                x.grad().device() == x.device(), "zero_grad must preserve gradient metadata");
+        check_values(saved_gradient, 0);
+        check_values(output.grad(), 2);  // Only the selected Tensor is cleared.
+        check_values(x, 3);              // Parameter data is unchanged.
+        x.zero_grad();
+        check_values(x.grad(), 0);       // Repeated calls remain valid.
+        output.zero_grad();
+        require(output.has_grad() && output.requires_grad() && output.grad_node() == node,
+                "zero_grad must preserve non-leaf metadata");
+        check_values(output.grad(), 0);
+        output.backward(gradient);
+        check_values(x.grad(), 6);
+        check_values(output.grad(), 1);
+        require(!x.grad().grad_node() && !output.grad().grad_node(), "zero_grad must not record graph");
+        require(EnableGrad(), "zero_grad must preserve grad mode");
+        {
+            NogradNode guard;
+            x.zero_grad();
+            require(!EnableGrad(), "zero_grad must preserve outer no-grad mode");
+        }
+        check_values(x.grad(), 0);
+    }
+    Tensor source = full({}, 1.0f, Dtype::kFloat32, Device::kCPU);
+    Tensor moved = std::move(source);
+    source.zero_grad();
+    require(!source.has_grad() && !moved.has_grad(), "zero_grad on moved-from tensor must be safe");
+}
 void TestExplicitBackwardGradient() {
     auto require = [](bool condition, const char* message) {
         if (!condition) throw std::runtime_error(message);
@@ -600,6 +796,8 @@ void TestReshapeBackward() {
     }
 }
 int main() {
+    TestInplaceVersions();
+    TestZeroGrad();
     TestExplicitBackwardGradient();
     TestSqueezeUnsqueeze();
     TestIndexBackward();

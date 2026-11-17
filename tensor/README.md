@@ -137,13 +137,15 @@ Autograd 的数据结构、反向节点和引擎见 [autograd/README.md](../auto
 | `autograd_metadata_` | 自动微分状态 | `std::shared_ptr<AutogradMetadata>`；拷贝共享，视图新建 |
 | `requires_grad()` / `requires_grad_(bool)` | 查询和设置 | 控制是否保存梯度；RunBackward 仅接受 Float32/Float16/BFloat16 |
 | `has_grad()` / `grad()` | 查询梯度 | `meta->grad` 是否有值；无梯度返回默认空 Tensor |
+| `zero_grad()` | 清零当前 Tensor 的梯度 | 保留梯度存储和 has_grad 状态；无梯度时不操作，不改变计算图或参数数据 |
 | `backward()` | 单元素反向入口 | 上游梯度默认为 1，要求 `numel() == 1` |
 | `backward(gradient)` | 指定上游梯度 | 支持非标量输出；gradient 须与输出同 shape/dtype/device，输出须有 grad_node |
 | `detach()` | 断开图和梯度 | 共享 `storage_`，创建新的空 meta |
 | `grad_node()` / `set_grad_node()` | 图的连边 | 读写 `meta->grad_node`；Node 只保存输入，不保存输出 |
 | `accumulate_grad()` | 梯度累加 | 首次 `grad.emplace(g.clone())`，之后 `add()` |
+| `version()` / `update_version()` | 查询版本 / 版本加一 | 共享存储的 Tensor 共用计数；原地写入自动更新，通过 data_ptr 写入须手动通知 |
 
-拷贝共享 `storage_` 和 `autograd_metadata_`；移动后由目标接管这些句柄。视图（`operator[]`、`narrow`）新建 meta，`reshape` 复制 `*this` 后重置 meta。当前 `operator[]`、`reshape()`、`narrow()`、`clone()` 和跨设备 `to()` 已接入反向节点。`detach()` 和同设备 `to()` 保持原有语义。
+拷贝共享 `storage_`、`version_` 和 `autograd_metadata_`；移动后由目标接管这些句柄。共享视图和 `detach()` 新建 meta，但继续共享版本；独立存储有独立版本。当前 `operator[]`、`reshape()`、`narrow()`、`clone()` 和跨设备 `to()` 已接入反向节点。`detach()` 和同设备 `to()` 保持原有语义。
 
 ## dtype
 

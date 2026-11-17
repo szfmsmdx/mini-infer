@@ -45,6 +45,8 @@ ctest --test-dir build/tests -C Release --output-on-failure
 
 测试使用 `Check()` 抛异常，Release 构建也会执行检查。
 
+`autograd_cpu_test` / `autograd_cuda_test` 新增梯度管理与版本检测用例：清梯度保留存储、再次反向、别名/视图/detach 的版本共享、fill_/zero_/copy_ 的版本递增、mul/div 修改输入后的报错、独立副本不误报，以及反向后更新参数再重新前向的流程。覆盖 Float32、FP16、BF16，本地 CPU 回归 8/8 通过，用户在 Colab 确认 CPU/CUDA 回归全部通过。
+
 `reduction_cpu_test` / `reduction_cuda_test` 还覆盖二元逐元素算子的自动广播：
 
 - `add/sub/mul/div` 的双边广播、前向数值和两端梯度 shape 与数值。

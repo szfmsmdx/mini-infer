@@ -36,6 +36,10 @@ void CheckDataPointer(const Tensor& tensor, const char* message) {
     if (!tensor.data_ptr()) throw std::logic_error(message);
 }
 
+void CheckVersion(const Tensor& tensor, std::uint64_t expected, const char* message) {
+    if (tensor.version() != expected) throw std::logic_error(message);
+}
+
 void CheckDim(int dim, std::size_t ndim, const char* message) {
     if (dim < 0 || dim >= ndim) throw std::out_of_range(message);
 }

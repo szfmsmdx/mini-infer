@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <vector>
 
 #include "tensor/dtype.h"
@@ -18,6 +19,7 @@ void CheckNonnegativeShape(const std::vector<int>& shape, const char* message);
 
 // 指针检查抛 logic_error；维度必须在 [0, ndim) 内，否则抛 out_of_range。
 void CheckDataPointer(const Tensor& tensor, const char* message);
+void CheckVersion(const Tensor& tensor, std::uint64_t expected, const char* message);
 void CheckDim(int dim, std::size_t ndim, const char* message);
 void CheckBroadcastWritable(const Tensor& tensor);
 void CheckPermutation(const std::vector<int>& dims, std::size_t ndim);

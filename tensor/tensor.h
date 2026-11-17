@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <stdexcept>
 #include <vector>
@@ -58,6 +59,7 @@ public:
     Tensor& requires_grad_(bool value);
     bool has_grad() const;
     Tensor grad() const;
+    void zero_grad();        // 已有梯度清零并保留存储；无梯度时不操作
     Tensor detach() const;   // 共享 storage，使用新的空 meta
     void backward();         // 标量反向入口
     void backward(const Tensor& gradient);  // 指定上游梯度，须同 shape/dtype/device
@@ -65,6 +67,8 @@ public:
     std::shared_ptr<AutogradNode> grad_node() const;
     void set_grad_node(std::shared_ptr<AutogradNode> node);
     void accumulate_grad(const Tensor& grad);
+    std::uint64_t version() const;
+    void update_version();   // 原地写入前递增；直接通过 data_ptr 写入时也须调用
 
 public:
     // ---------------------------------------- tensor_ops ----------------------------------------
@@ -115,6 +119,8 @@ private:
     // 存储所有权、当前数据位置和 Tensor 元数据。
     void* data_ptr_ = nullptr;
     std::shared_ptr<void> storage_;
+    // 共享存储的视图和 detach 共享版本，独立分配使用新版本。
+    std::shared_ptr<std::uint64_t> version_ = std::make_shared<std::uint64_t>(0);
     std::vector<int> shape_;
     std::vector<std::size_t> stride_;
     Dtype dtype_ = Dtype::kFloat32;

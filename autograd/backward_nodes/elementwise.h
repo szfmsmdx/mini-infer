@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include "autograd/autograd.h"
 
 namespace mtensor {
@@ -21,11 +23,13 @@ public:
 
 class MulNode : public AutogradNode {
 public:
+    std::uint64_t input_versions[2] = {};
     std::vector<Tensor> backward(const Tensor& output_grad) override;
 };
 
 class DivNode : public AutogradNode {
 public:
+    std::uint64_t input_versions[2] = {};
     std::vector<Tensor> backward(const Tensor& output_grad) override;
 };
 

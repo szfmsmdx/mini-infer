@@ -82,6 +82,7 @@ Tensor Tensor::operator[](int index) const {
     result.stride_.assign(stride_.begin() + 1, stride_.end());
     result.data_ptr_ = static_cast<std::byte*>(data_ptr_) + offset;
     result.storage_ = storage_;
+    result.version_ = version_;
     if (result.device_ == Device::kCUDA) {
         result.InitCUDAMetadata();
     }
@@ -184,15 +185,18 @@ Tensor& Tensor::fill_(const Tensor& value) {
         // 先保存填充值，避免 value 与目标共享存储时被覆盖。
         std::vector<std::byte> saved_value(element_size());
         std::memcpy(saved_value.data(), value.data_ptr_, element_size());
+        update_version();
         FillCPU(data_ptr_, shape_, stride_, element_size(), saved_value.data());
     } else if (device_ == Device::kCUDA) {
 #ifdef ENABLE_CUDA
         if (storage_ == value.storage_) {
             NogradNode guard;
             Tensor saved_value = value.clone();
+            update_version();
             FillCUDAFromDevice(data_ptr_, numel(), element_size(), saved_value.data_ptr_,
                                shape_cuda_.get(), stride_cuda_.get(), dim());
         } else {
+            update_version();
             FillCUDAFromDevice(data_ptr_, numel(), element_size(), value.data_ptr_,
                                shape_cuda_.get(), stride_cuda_.get(), dim());
         }
@@ -207,9 +211,11 @@ Tensor& Tensor::fill_(const Tensor& value) {
 
 Tensor& Tensor::FillValue(const void* host_value) {
     if (device_ == Device::kCPU) {
+        update_version();
         FillCPU(data_ptr_, shape_, stride_, element_size(), host_value);
     } else if (device_ == Device::kCUDA) {
 #ifdef ENABLE_CUDA
+        update_version();
         FillCUDA(data_ptr_, numel(), dtype_, host_value, shape_cuda_.get(), stride_cuda_.get(), dim());
 #else
         throw std::logic_error("Tensor::fill_: CUDA support is disabled");
@@ -229,9 +235,11 @@ Tensor& Tensor::zero_() {
     if(bytes > 0){
         CheckBroadcastWritable(*this);
         if (device_ == Device::kCPU) {
+            update_version();
             ZeroCPU(data_ptr_, shape_, stride_, element_size());
         } else if (device_ == Device::kCUDA) {
 #ifdef ENABLE_CUDA
+            update_version();
             ZeroCUDA(data_ptr_, shape_cuda_.get(), stride_cuda_.get(),
                      dim(), numel(), element_size());
 #else
@@ -284,9 +292,11 @@ Tensor& Tensor::copy_(const Tensor& src) {
     }
 
     if (device_ == Device::kCPU) {
+        update_version();
         CopyCPU(data_ptr_, src.data_ptr_, shape_, stride_, src.stride_, element_size());
     } else if (device_ == Device::kCUDA) {
 #ifdef ENABLE_CUDA
+        update_version();
         CopyCUDA(data_ptr_, src.data_ptr_, shape_cuda_.get(), stride_cuda_.get(),
                  src.stride_cuda_.get(), dim(), numel(), element_size());
 #else
@@ -557,6 +567,7 @@ Tensor Tensor::narrow(int dim, int start, int length) const{
 
     Tensor result;
     result.storage_ = storage_;
+    result.version_ = version_;
     result.shape_ = shape_;
     result.shape_[dim] = length;
     result.stride_ = stride_;

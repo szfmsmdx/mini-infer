@@ -141,6 +141,7 @@ Tensor& Tensor::operator=(const Tensor& other) {
     shape_cuda_ = other.shape_cuda_;
     stride_cuda_ = other.stride_cuda_;
     storage_ = other.storage_;
+    version_ = other.version_;
     data_ptr_ = other.data_ptr_;
     dtype_ = other.dtype_;
     device_ = other.device_;
@@ -151,6 +152,7 @@ Tensor& Tensor::operator=(const Tensor& other) {
 Tensor::Tensor(Tensor&& other) noexcept
 :   data_ptr_(other.data_ptr_),
     storage_(std::move(other.storage_)),
+    version_(std::move(other.version_)),
     shape_(std::move(other.shape_)),
     stride_(std::move(other.stride_)),
     dtype_(other.dtype_),
@@ -170,6 +172,7 @@ Tensor& Tensor::operator=(Tensor&& other) noexcept
         return *this;
     }
     storage_ = std::move(other.storage_);
+    version_ = std::move(other.version_);
     data_ptr_ = other.data_ptr_;
     shape_ = std::move(other.shape_);
     stride_ = std::move(other.stride_);
@@ -206,6 +209,15 @@ Tensor Tensor::grad() const {
     return has_grad() ? *autograd_metadata_->grad : Tensor();
 }
 
+void Tensor::zero_grad() {
+    if(has_grad()){
+        autograd_metadata_->grad->zero_();
+    }
+}
+
+std::uint64_t Tensor::version() const { return version_ ? *version_ : 0; }
+void Tensor::update_version() { if (version_) ++(*version_); }
+
 std::shared_ptr<AutogradNode> Tensor::grad_node() const {
     return autograd_metadata_ ? autograd_metadata_->grad_node : nullptr;
 }
@@ -233,6 +245,7 @@ void Tensor::accumulate_grad(const Tensor& grad) {
 Tensor Tensor::detach() const {
     Tensor result;
     result.storage_ = storage_;
+    result.version_ = version_;
     result.data_ptr_ = data_ptr_;
     result.shape_ = shape_;
     result.stride_ = stride_;
