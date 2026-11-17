@@ -43,10 +43,78 @@ void TestMeanAndBroadcast() {
     for (int i = 0; i < 6; ++i)
         Check(std::abs(static_cast<const float*>(grad.data_ptr())[i] - 1.0f / 6) < 1e-6f,
               "mean backward");
-    Tensor broadcasted = reduced.broadcast({2, 4}).to(Device::kCPU);
+    Tensor view = reduced.broadcast({2, 4});
+    Check(view.data_ptr() == reduced.data_ptr(), "broadcast must share storage");
+    Check(view.stride() == std::vector<std::size_t>({1, 0}), "broadcast stride");
+    Tensor broadcasted = view.clone();
     for (int i = 0; i < 8; ++i)
         Check(static_cast<const float*>(broadcasted.data_ptr())[i] == (i < 4 ? 2 : 5),
               "broadcast repeated rows");
+
+    auto expect_rejected = [&](auto write) {
+        bool rejected = false;
+        try { write(); } catch (const std::invalid_argument&) { rejected = true; }
+        Check(rejected, "broadcast view write must be rejected");
+    };
+    Tensor scalar(1.0f);
+    Tensor source({2, 4}, Dtype::kFloat32);
+    expect_rejected([&] { view.fill_(1.0f); });
+    expect_rejected([&] { view.fill_(scalar); });
+    expect_rejected([&] { view.zero_(); });
+    expect_rejected([&] { view.copy_(source); });
+    source.copy_(view);
+    Check(static_cast<const float*>(source.data_ptr())[4] == 5, "broadcast source copy");
+}
+
+void TestBroadcastBackward() {
+    float data[] = {1, 2, 3};
+    Tensor input(data, {1, 3}, Dtype::kFloat32);
+    input.requires_grad_(true);
+    Tensor view = input.broadcast({2, 4, 3});
+    sum(view).backward();
+    Tensor grad = input.grad();
+    Check(grad.shape() == std::vector<int>({1, 3}), "broadcast backward shape");
+    const auto* values = static_cast<const float*>(grad.data_ptr());
+    for (int i = 0; i < 3; ++i) Check(values[i] == 8, "broadcast backward value");
+
+    Tensor scalar(2.0f);
+    scalar.requires_grad_(true);
+    sum(scalar.broadcast({2, 3})).backward();
+    Check(*static_cast<const float*>(scalar.grad().data_ptr()) == 6, "scalar broadcast backward");
+}
+
+void TestBroadcastBoundaries() {
+    float data[] = {1, 2, 3, 4, 5, 6};
+    Tensor base(data, {3, 1, 2}, Dtype::kFloat32);
+    base.requires_grad_(true);
+    Tensor input = base.transpose(0, 1);
+    Tensor view = input.broadcast({2, 4, 3, 2});
+    Check(view.data_ptr() == base.data_ptr(), "broadcast non-contiguous input shares storage");
+    Check(view.stride() == std::vector<std::size_t>({0, 0, 2, 1}), "broadcast strides");
+    float weights[48];
+    for (int i = 0; i < 48; ++i) weights[i] = static_cast<float>(i + 1);
+    Tensor weight(weights, {2, 4, 3, 2}, Dtype::kFloat32);
+    sum(view * weight).backward();
+    const auto* grad = static_cast<const float*>(base.grad().data_ptr());
+    for (int j = 0; j < 6; ++j) {
+        float expected = 0;
+        for (int a = 0; a < 2; ++a)
+            for (int b = 0; b < 4; ++b) expected += weights[(a * 4 + b) * 6 + j];
+        Check(grad[j] == expected, "weighted broadcast gradient");
+    }
+
+    NogradNode guard;
+    Tensor unchanged = input.broadcast({1, 3, 2});
+    Check(unchanged.stride() == input.stride(), "unchanged singleton stride");
+    bool invalid = false;
+    try { input.broadcast({2, 2}); } catch (const std::invalid_argument&) { invalid = true; }
+    Check(invalid, "broadcast rank check");
+    invalid = false;
+    try { input.broadcast({2, 4, 2}); } catch (const std::invalid_argument&) { invalid = true; }
+    Check(invalid, "broadcast incompatible shape");
+    invalid = false;
+    try { input.broadcast({-1, 3, 2}); } catch (const std::invalid_argument&) { invalid = true; }
+    Check(invalid, "broadcast negative dimension");
 }
 
 void TestDtypes() {
@@ -144,6 +212,8 @@ int main() {
     try {
         TestDtypes();
         TestMeanAndBroadcast();
+        TestBroadcastBackward();
+        TestBroadcastBoundaries();
         TestDimensionSum();
         TestViewsAndBackward();
         std::cout << "CPU reduction tests passed\n";

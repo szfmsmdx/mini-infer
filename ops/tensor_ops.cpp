@@ -16,6 +16,15 @@
 namespace mtensor {
 
 namespace {
+void CheckBroadcastWritable(const Tensor& tensor) {
+    if (tensor.numel() == 0) return;
+    for (std::size_t i = 0; i < tensor.shape().size(); ++i) {
+        if (tensor.shape()[i] > 1 && tensor.stride()[i] == 0) {
+            throw std::invalid_argument("Cannot write to a broadcast view with overlapping elements");
+        }
+    }
+}
+
 std::vector<std::size_t> ContiguousStride(const std::vector<int>& shape) {
     std::vector<std::size_t> result(shape.size());
     std::size_t stride = 1;
@@ -90,6 +99,7 @@ Tensor& Tensor::fill_(const Scalar& value) {
     if (numel() == 0) {
         return *this;
     }
+    CheckBroadcastWritable(*this);
     if (data_ptr_ == nullptr) {
         throw std::logic_error("Tensor::fill_: null data pointer");
     }
@@ -141,6 +151,7 @@ Tensor& Tensor::fill_(const Tensor& value) {
     if (empty()) {
         return *this;
     }
+    CheckBroadcastWritable(*this);
 
     if (device_ == Device::kCPU) {
         // 先保存填充值，避免 value 与目标共享存储时被覆盖。
@@ -189,6 +200,7 @@ Tensor& Tensor::zero_() {
     */
     const std::size_t bytes = nbytes();
     if(bytes > 0){
+        CheckBroadcastWritable(*this);
         if (device_ == Device::kCPU) {
             ZeroCPU(data_ptr_, shape_, stride_, element_size());
         } else if (device_ == Device::kCUDA) {
@@ -230,6 +242,7 @@ Tensor& Tensor::copy_(const Tensor& src) {
     if (empty()) {  // empty = empty 的情况直接跳过
         return *this;
     }
+    CheckBroadcastWritable(*this);
 
     if (data_ptr_ == src.data_ptr_ && stride_ == src.stride_) {
         return *this;
@@ -299,6 +312,7 @@ Tensor Tensor::to(Device device) const {
     if (EnableGrad() && CheckGradDtype(dtype_)) {
         auto node = std::make_shared<ToDeviceNode>();
         node->inputs = {*this};
+        node->input_device = device_;
         result.set_grad_node(node);
     }
     return result;
@@ -521,11 +535,14 @@ Tensor Tensor::broadcast(const std::vector<int>& target_shape) const {
     if (empty()) {
         throw std::invalid_argument("broadcast: input must not be empty");
     }
-    // check dim
     if (shape_.size() > target_shape.size()) {
         throw std::invalid_argument("broadcast: target rank is too small");
     }
-
+    for (int size : target_shape) {
+        if (size <= 0) {
+            throw std::invalid_argument("broadcast: target dimensions must be positive");
+        }
+    }
     const std::size_t leading = target_shape.size() - shape_.size();
     for (std::size_t i = 0; i < shape_.size(); ++i) {
         if (shape_[i] != target_shape[leading + i] && shape_[i] != 1) {
@@ -533,44 +550,22 @@ Tensor Tensor::broadcast(const std::vector<int>& target_shape) const {
         }
     }
 
-    // broadcast
-    // 对应关系：offset(a) = Σ i[k] × a.stride[k] —— offset(b) = Σ j[k] × b.stride[k]
-    auto IdxToOffset = [&](std::size_t idx) -> std::size_t{
-        std::size_t offset = 0;
-        for(std::size_t axis = target_shape.size(); axis > 0; --axis){
-            const std::size_t k = axis - 1;
-            const std::size_t coordinate = idx % target_shape[k];
-            idx /= target_shape[k];
-
-            if (k < leading) continue;
-
-            const std::size_t input_axis = k - leading;
-            // 输入长度为 1 时，对应下标为 0，不增加 offset
-            if (shape_[input_axis] != 1) {
-                offset += coordinate * stride_[input_axis];
-            }
+    Tensor result = *this;
+    result.autograd_metadata_ = std::make_shared<AutogradMetadata>();
+    result.shape_ = target_shape;
+    result.stride_.assign(target_shape.size(), 0);
+    for (std::size_t i = 0; i < shape_.size(); ++i) {
+        if (shape_[i] != 1 || target_shape[leading + i] == 1) {
+            result.stride_[leading + i] = stride_[i];
         }
-        return offset;
-    };
-    Tensor result(target_shape, dtype_, device_);
-    if (device_ == Device::kCPU) {
-        const std::size_t bytes = element_size();
-        const auto* src = static_cast<const std::byte*>(data_ptr_);
-        auto* dst = static_cast<std::byte*>(result.data_ptr_);
-        for (std::size_t i = 0; i < result.numel(); ++i) {
-            const std::size_t input_offset = IdxToOffset(i);
-            std::memcpy(dst + i * bytes, src + input_offset * bytes, bytes);
-        }
-    } else if (device_ == Device::kCUDA) {
-        // 临时视图用零 stride 表达重复读取，复用已有 CUDA 复制 kernel。
-        Tensor source = *this;
-        source.shape_ = target_shape;
-        source.stride_.assign(target_shape.size(), 0);
-        for (std::size_t i = 0; i < shape_.size(); ++i) {
-            if (shape_[i] != 1) source.stride_[leading + i] = stride_[i];
-        }
-        source.InitCUDAMetadata();
-        result.copy_(source);
+    }
+    if (result.device_ == Device::kCUDA) {
+        result.InitCUDAMetadata();
+    }
+    if (EnableGrad() && CheckGradDtype(dtype_)) {
+        auto node = std::make_shared<BroadcastNode>();
+        node->inputs = { *this };
+        result.set_grad_node(node);
     }
 
     return result;

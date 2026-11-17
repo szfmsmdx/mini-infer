@@ -124,7 +124,8 @@ void TestTensorFillAndFull() {
     node.inputs = {result};
     const auto gradients = node.backward(scalar);
     Check(gradients.size() == 1 && gradients[0].shape() == result.shape(), "sum backward shape");
-    const float* grad_data = static_cast<const float*>(gradients[0].data_ptr());
+    Tensor contiguous_grad = gradients[0].clone();
+    const float* grad_data = static_cast<const float*>(contiguous_grad.data_ptr());
     for (int i = 0; i < 6; ++i) Check(grad_data[i] == 2.5f, "sum backward value");
     Tensor scalar_result = full({}, 7, Dtype::kInt32);
     Check(scalar_result.is_scalar() && *static_cast<const std::int32_t*>(scalar_result.data_ptr()) == 7,

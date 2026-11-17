@@ -67,6 +67,31 @@ void TestDtypes() {
         {EncodeBFloat16(1.0f), EncodeBFloat16(-2.0f), EncodeBFloat16(4.5f)});
 }
 
+void TestBroadcastBackward() {
+    float data[] = {1, 2, 3, 4, 5, 6};
+    float weights[48];
+    for (int i = 0; i < 48; ++i) weights[i] = static_cast<float>(i + 1);
+    Tensor base(data, {3, 1, 2}, Dtype::kFloat32, Device::kCUDA);
+    base.requires_grad_(true);
+    Tensor view = base.transpose(0, 1).broadcast({2, 4, 3, 2});
+    Check(view.data_ptr() == base.data_ptr(), "CUDA broadcast must share storage");
+    Check(view.stride() == std::vector<std::size_t>({0, 0, 2, 1}), "CUDA broadcast stride");
+    Tensor weight(weights, {2, 4, 3, 2}, Dtype::kFloat32, Device::kCUDA);
+    sum(view * weight).backward();
+    NogradNode guard;
+    Tensor host_grad = base.grad().to(Device::kCPU);
+    const auto* grad = static_cast<const float*>(host_grad.data_ptr());
+    for (int j = 0; j < 6; ++j) {
+        float expected = 0;
+        for (int a = 0; a < 2; ++a)
+            for (int b = 0; b < 4; ++b) expected += weights[(a * 4 + b) * 6 + j];
+        Check(grad[j] == expected, "CUDA weighted broadcast gradient");
+    }
+    bool rejected = false;
+    try { view.zero_(); } catch (const std::invalid_argument&) { rejected = true; }
+    Check(rejected, "CUDA broadcast view write must be rejected");
+}
+
 void TestBlockBoundaries() {
     for (int size : {1, 31, 32, 33, 255, 256, 257, 1023, 1024, 1025, 65537, 262145}) {
         CompareSum<float>(Dtype::kFloat32, std::vector<float>(size, 1.0f));
@@ -127,6 +152,7 @@ int main() {
         Check(status == cudaSuccess, "cudaGetDeviceCount failed");
         TestDtypes();
         TestMeanAndBroadcast();
+        TestBroadcastBackward();
         TestBlockBoundaries();
         TestDimensionSum();
         TestViewsAndBackward();

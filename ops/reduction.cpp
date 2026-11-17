@@ -81,6 +81,14 @@ Tensor sum(const Tensor& input, int dim, bool keepdim) {
     return result;
 }
 
+Tensor Tensor::sum() const {
+    return mtensor::sum(*this);
+}
+
+Tensor Tensor::sum(int dim, bool keepdim) const {
+    return mtensor::sum(*this, dim, keepdim);
+}
+
 Tensor mean(const Tensor& input) {
     if (!CheckGradDtype(input.dtype())) {
         throw std::invalid_argument("mean: input must have floating dtype");
