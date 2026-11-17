@@ -5,6 +5,7 @@
 
 #include "ops/elementwise.h"
 #include "ops/backend.h"
+#include "tensor/check.h"
 #include "autograd/autograd.h"
 #include "autograd/backward_nodes/elementwise.h"
 
@@ -25,26 +26,18 @@ std::vector<int> BroadcastShape(const std::vector<int>& a, const std::vector<int
     return shape;
 }
 
-void CheckElementwiseInputs(const Tensor& a, const Tensor& b) {
-    if(a.device() != b.device()){
-        throw std::invalid_argument("Tensor must be same device");
-    }else if(a.dtype() != b.dtype()){
-        throw std::invalid_argument("Tensor must be same dtype");
-    }else if(a.shape() != b.shape()){
-        throw std::invalid_argument("Tensor must be same size");
-    }
-}
-
 }  // namespace
 
+
 Tensor add(const Tensor& a, const Tensor& b){
-    if(a.empty() || b.empty()){
-        throw std::invalid_argument("Get Empty Tensor");
-    }
+    CheckNotEmpty(a, "Get Empty Tensor");
+    CheckNotEmpty(b, "Get Empty Tensor");
     const auto shape = BroadcastShape(a.shape(), b.shape());
     Tensor lhs = a.shape() == shape ? a : a.broadcast(shape);
     Tensor rhs = b.shape() == shape ? b : b.broadcast(shape);
-    CheckElementwiseInputs(lhs, rhs);
+    CheckSameDevice(lhs, rhs, "Tensor must be same device");
+    CheckSameDtype(lhs, rhs, "Tensor must be same dtype");
+    CheckSameShape(lhs, rhs, "Tensor must be same size");
     Tensor out(shape, a.dtype(), a.device());
     if (a.device() == Device::kCPU) {
         AddCPU(lhs.data_ptr(), rhs.data_ptr(), out.data_ptr(), a.dtype(),
@@ -71,13 +64,14 @@ Tensor add(const Tensor& a, const Tensor& b){
 }
 
 Tensor sub(const Tensor& a, const Tensor& b){
-    if(a.empty() || b.empty()){
-        throw std::invalid_argument("Get Empty Tensor");
-    }
+    CheckNotEmpty(a, "Get Empty Tensor");
+    CheckNotEmpty(b, "Get Empty Tensor");
     const auto shape = BroadcastShape(a.shape(), b.shape());
     Tensor lhs = a.shape() == shape ? a : a.broadcast(shape);
     Tensor rhs = b.shape() == shape ? b : b.broadcast(shape);
-    CheckElementwiseInputs(lhs, rhs);
+    CheckSameDevice(lhs, rhs, "Tensor must be same device");
+    CheckSameDtype(lhs, rhs, "Tensor must be same dtype");
+    CheckSameShape(lhs, rhs, "Tensor must be same size");
     Tensor out(shape, a.dtype(), a.device());
     if (a.device() == Device::kCPU) {
         SubCPU(lhs.data_ptr(), rhs.data_ptr(), out.data_ptr(), a.dtype(),
@@ -103,13 +97,14 @@ Tensor sub(const Tensor& a, const Tensor& b){
 }
 
 Tensor mul(const Tensor& a, const Tensor& b){
-    if(a.empty() || b.empty()){
-        throw std::invalid_argument("Get Empty Tensor");
-    }
+    CheckNotEmpty(a, "Get Empty Tensor");
+    CheckNotEmpty(b, "Get Empty Tensor");
     const auto shape = BroadcastShape(a.shape(), b.shape());
     Tensor lhs = a.shape() == shape ? a : a.broadcast(shape);
     Tensor rhs = b.shape() == shape ? b : b.broadcast(shape);
-    CheckElementwiseInputs(lhs, rhs);
+    CheckSameDevice(lhs, rhs, "Tensor must be same device");
+    CheckSameDtype(lhs, rhs, "Tensor must be same dtype");
+    CheckSameShape(lhs, rhs, "Tensor must be same size");
     Tensor out(shape, a.dtype(), a.device());
     if (a.device() == Device::kCPU) {
         MulCPU(lhs.data_ptr(), rhs.data_ptr(), out.data_ptr(), a.dtype(),
@@ -135,13 +130,14 @@ Tensor mul(const Tensor& a, const Tensor& b){
 }
 
 Tensor div(const Tensor& a, const Tensor& b){
-    if(a.empty() || b.empty()){
-        throw std::invalid_argument("Get Empty Tensor");
-    }
+    CheckNotEmpty(a, "Get Empty Tensor");
+    CheckNotEmpty(b, "Get Empty Tensor");
     const auto shape = BroadcastShape(a.shape(), b.shape());
     Tensor lhs = a.shape() == shape ? a : a.broadcast(shape);
     Tensor rhs = b.shape() == shape ? b : b.broadcast(shape);
-    CheckElementwiseInputs(lhs, rhs);
+    CheckSameDevice(lhs, rhs, "Tensor must be same device");
+    CheckSameDtype(lhs, rhs, "Tensor must be same dtype");
+    CheckSameShape(lhs, rhs, "Tensor must be same size");
     Tensor out(shape, a.dtype(), a.device());
     if (a.device() == Device::kCPU) {
         DivCPU(lhs.data_ptr(), rhs.data_ptr(), out.data_ptr(), a.dtype(),
@@ -167,9 +163,7 @@ Tensor div(const Tensor& a, const Tensor& b){
 }
 
 Tensor neg(const Tensor& a){
-    if(a.empty()){
-        throw std::invalid_argument("Get Empty Tensor");
-    }
+    CheckNotEmpty(a, "Get Empty Tensor");
     Tensor out(a.shape(), a.dtype(), a.device());
     if (a.device() == Device::kCPU) {
         NegCPU(a.data_ptr(), out.data_ptr(), a.dtype(), a.shape(), a.stride(), out.stride());

@@ -1,12 +1,14 @@
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <utility>
 #include <vector>
 
 #include "tensor/tensor.h"
+#include "tensor/check.h"
 #include "autograd/autograd.h"
 #include "autograd/backward_nodes/tensor_ops.h"
 #include "ops/elementwise.h"
@@ -16,13 +18,44 @@
 namespace mtensor {
 
 namespace {
-void CheckBroadcastWritable(const Tensor& tensor) {
-    if (tensor.numel() == 0) return;
-    for (std::size_t i = 0; i < tensor.shape().size(); ++i) {
-        if (tensor.shape()[i] > 1 && tensor.stride()[i] == 0) {
-            throw std::invalid_argument("Cannot write to a broadcast view with overlapping elements");
+std::vector<int> InferReshapeShape(std::vector<int> shape, std::size_t numel) {
+    // 检查目标维度，记录唯一的 -1，并计算已知维度的乘积。
+    std::size_t count = 1;
+    std::size_t inferred_dim = shape.size();
+    for (std::size_t i = 0; i < shape.size(); ++i) {
+        const int dimension = shape[i];
+        if (dimension == -1) {
+            if (inferred_dim != shape.size()) {
+                throw std::invalid_argument("Tensor::reshape: only one inferred dimension is allowed");
+            }
+            inferred_dim = i;
+            continue;
         }
+        if (dimension <= 0) {
+            throw std::invalid_argument(
+                "Tensor::reshape: dimension must be positive or -1");
+        }
+        if (count > std::numeric_limits<std::size_t>::max() / dimension) {
+            throw std::overflow_error("Tensor::reshape: shape product overflow");
+        }
+        count *= dimension;
     }
+    // 有 -1 时根据总元素数推导该维；否则检查目标元素数是否一致。
+    if (inferred_dim != shape.size()) {
+        if (numel == 0 || numel % count != 0) {
+            throw std::invalid_argument("Tensor::reshape: cannot infer dimension");
+        }
+        const std::size_t inferred_size = numel / count;
+        if (inferred_size > std::numeric_limits<int>::max()) {
+            throw std::overflow_error("Tensor::reshape: inferred dimension exceeds int range");
+        }
+        shape[inferred_dim] = static_cast<int>(inferred_size);
+    } else if (count != numel) {
+        throw std::invalid_argument(
+            "Tensor::reshape: shape must match");
+    }
+
+    return shape;
 }
 
 std::vector<std::size_t> ContiguousStride(const std::vector<int>& shape) {
@@ -40,14 +73,7 @@ Tensor Tensor::operator[](int index) const {
     if(shape_.empty() || index < 0 || index >= size(0)){
         throw std::out_of_range("Tensor::operator[]: index out of range");
     }
-    if (data_ptr_ == nullptr) {
-        throw std::logic_error("Tensor::operator[]: null data pointer");
-    }
-
-    // TODO: 实现 ViewNode 后移除保护，使索引视图可微分。
-    if (EnableGrad() && (requires_grad() || grad_node())) {
-        throw std::logic_error("Tensor::operator[]: autograd through views is not implemented");
-    }
+    CheckDataPointer(*this, "Tensor::operator[]: null data pointer");
 
     const std::size_t offset = static_cast<std::size_t>(index) * this->stride_[0] * element_size();
     Tensor result;
@@ -59,6 +85,12 @@ Tensor Tensor::operator[](int index) const {
     if (result.device_ == Device::kCUDA) {
         result.InitCUDAMetadata();
     }
+    if (EnableGrad() && CheckGradDtype(dtype_)) {
+        auto node = std::make_shared<IndexNode>();
+        node->inputs = {*this};
+        node->index = index;
+        result.set_grad_node(std::move(node));
+    }
 
     return result;
 }
@@ -69,9 +101,7 @@ void Tensor::print() const {
         a.print();
     */
     const std::size_t count = numel();
-    if (count > 0 && data_ptr_ == nullptr) {
-        throw std::logic_error("Tensor::print: null data pointer");
-    }
+    if (count > 0) CheckDataPointer(*this, "Tensor::print: null data pointer");
 
     if (device_ == Device::kCPU) {
         PrintCPU(data_ptr_, shape_, stride_, dtype_, empty());
@@ -100,9 +130,7 @@ Tensor& Tensor::fill_(const Scalar& value) {
         return *this;
     }
     CheckBroadcastWritable(*this);
-    if (data_ptr_ == nullptr) {
-        throw std::logic_error("Tensor::fill_: null data pointer");
-    }
+    CheckDataPointer(*this, "Tensor::fill_: null data pointer");
 
     switch (dtype_) {
         case Dtype::kFloat32: {
@@ -145,9 +173,8 @@ Tensor& Tensor::fill_(const Tensor& value) {
     if (!value.is_scalar()) {
         throw std::invalid_argument("Tensor::fill_: value must be a non-empty scalar Tensor");
     }
-    if (dtype_ != value.dtype_ || device_ != value.device_) {
-        throw std::invalid_argument("Tensor::fill_: dtype and device must match");
-    }
+    CheckSameDtype(*this, value, "Tensor::fill_: dtype and device must match");
+    CheckSameDevice(*this, value, "Tensor::fill_: dtype and device must match");
     if (empty()) {
         return *this;
     }
@@ -227,14 +254,9 @@ Tensor& Tensor::copy_(const Tensor& src) {
         dst：           [1, 2, 3]
     */
 
-    // 检查 device、shape、dtype 是否一致
-    if(this->shape_ != src.shape_){
-        throw std::invalid_argument("Tensor::copy_: shapes must match");
-    }else if(this->device_ != src.device_){
-        throw std::invalid_argument("Tensor::copy_: devices must match");
-    }else if(this->dtype_ != src.dtype_){
-        throw std::invalid_argument("Tensor::copy_: dtypes must match");
-    }
+    CheckSameShape(*this, src, "Tensor::copy_: shapes must match");
+    CheckSameDevice(*this, src, "Tensor::copy_: devices must match");
+    CheckSameDtype(*this, src, "Tensor::copy_: dtypes must match");
 
     if (empty() != src.empty()) {
         throw std::invalid_argument("Tensor::copy_: empty states must match");
@@ -369,11 +391,8 @@ Tensor Tensor::transpose(int dim0, int dim1) const {
     使用示例:
         Tensor b = a.transpose(0, 1);
     */
-    if (dim0 < 0 || dim1 < 0 ||
-        static_cast<std::size_t>(dim0) >= shape_.size() ||
-        static_cast<std::size_t>(dim1) >= shape_.size()) {
-        throw std::out_of_range("Tensor::transpose: dimension index out of range");
-    }
+    CheckDim(dim0, shape_.size(), "Tensor::transpose: dimension index out of range");
+    CheckDim(dim1, shape_.size(), "Tensor::transpose: dimension index out of range");
 
     Tensor result(*this);
     result.autograd_metadata_ = std::make_shared<AutogradMetadata>();
@@ -406,21 +425,7 @@ Tensor Tensor::permute(const std::vector<int>& dims) const {
     // 新旧下标取到同一个元素的 offset 应该一致，那么一个简单的直觉证明就是直接交换
     // offset(b) = Σ jₖ × b.stride[k] = Σ jₖ × a.stride[dims[k]]
 
-    // check dims
-    if (dims.size() != shape_.size()) {
-        throw std::invalid_argument("Tensor::permute: dimension count must match tensor rank");
-    }
-    std::vector<bool> seen(shape_.size(), false);
-    for (int dim : dims) {
-        if (dim < 0 || static_cast<std::size_t>(dim) >= shape_.size()) {
-            throw std::out_of_range("Tensor::permute: dimension index out of range");
-        }
-        if (seen[dim]) {
-            throw std::invalid_argument("Tensor::permute: duplicate dimension index");
-        }
-        seen[dim] = true;
-    }
-    // end check
+    CheckPermutation(dims, shape_.size());
 
     Tensor result = *this;
     result.autograd_metadata_ = std::make_shared<AutogradMetadata>();
@@ -443,28 +448,84 @@ Tensor Tensor::permute(const std::vector<int>& dims) const {
     return result;
 }
 
+Tensor Tensor::contiguous() const {
+    /*
+    使用示例:
+        Tensor b = a.contiguous();
+        tensor b 在不连续的情况下申请一块薪内存，存储新的数据分布
+    */
+
+    if(is_contiguous())
+        return *this;
+
+    return clone(); // 反向传播也借用 clone 了
+}
+
+Tensor Tensor::squeeze(int dim) const {
+    /*
+    使用示例:
+        Tensor b = a.squeeze(1);
+    */
+    CheckNotEmpty(*this, "Tensor::squeeze: input must not be empty");
+    CheckDim(dim, shape_.size(), "Tensor::squeeze: dimension index out of range");
+    if(shape_[dim] != 1)
+        return *this;
+
+    Tensor res(*this);
+    res.autograd_metadata_ = std::make_shared<AutogradMetadata>();
+    res.shape_.erase(res.shape_.begin() + dim);
+    res.stride_.erase(res.stride_.begin() + dim);
+
+    if(device_ == Device::kCUDA) {
+        res.InitCUDAMetadata();
+    }
+
+    if(EnableGrad() && CheckGradDtype(dtype_)){
+        auto node = std::make_shared<SqueezeNode>();
+        node->inputs = { *this };
+        node->dim = dim;
+        res.set_grad_node(node);
+    }
+
+    return res;
+}
+
+Tensor Tensor::unsqueeze(int dim) const {
+    /*
+    使用示例:
+        Tensor b = a.unsqueeze(1);
+    */
+    CheckNotEmpty(*this, "Tensor::unsqueeze: input must not be empty");
+    CheckDim(dim, shape_.size() + 1, "Tensor::unsqueeze: dimension index out of range");
+    Tensor res(*this);
+    res.autograd_metadata_ = std::make_shared<AutogradMetadata>();
+    const std::size_t inserted_stride =
+        dim == this->dim() ? 1 : stride_[dim] * shape_[dim];
+    res.shape_.insert(res.shape_.begin() + dim, 1);
+    res.stride_.insert(res.stride_.begin() + dim, inserted_stride);
+    if(device_ == Device::kCUDA){
+        res.InitCUDAMetadata();
+    }
+
+    if(EnableGrad() && CheckGradDtype(dtype_)){
+        auto node = std::make_shared<UnsqueezeNode>();
+        node->dim = dim;
+        node->inputs = { *this };
+        res.set_grad_node(node);
+    }
+
+    return res;
+}
+
 Tensor Tensor::reshape(std::vector<int> shape) const {
+    shape = InferReshapeShape(std::move(shape), numel());
+
+    // 非连续输入先按逻辑顺序复制，复用 CloneNode 和 ReshapeNode 的反向链。
     if (!is_contiguous()) {
-        throw std::logic_error("Tensor::reshape: non-contiguous input is not supported");
-    }
-    std::size_t count = 1;
-    for(auto dimension : shape){
-        if(dimension <= 0){
-            throw std::invalid_argument(
-                "Tensor::reshape: dimension must be positive");
-        }
-        count *= dimension;
-    }
-    if(count != this->numel()){
-        throw std::invalid_argument(
-            "Tensor::reshape: shape must match");
+        return clone().reshape(std::move(shape));
     }
 
-    // TODO: 实现 ViewNode 后移除保护，使 reshape 视图可微分。
-    if (EnableGrad() && (requires_grad() || grad_node())) {
-        throw std::logic_error("Tensor::reshape: autograd through views is not implemented");
-    }
-
+    // 连续输入创建共享存储的新视图，更新布局并使用独立的 Autograd 元数据。
     Tensor result = *this;
     result.shape_ = std::move(shape);
     result.stride_ = ContiguousStride(result.shape_);
@@ -472,13 +533,19 @@ Tensor Tensor::reshape(std::vector<int> shape) const {
     if (result.device_ == Device::kCUDA) {
         result.InitCUDAMetadata();
     }
+
+    // 保存前向输入，反向时将梯度恢复为输入 shape。
+    if(EnableGrad() && CheckGradDtype(dtype_)){
+        auto node = std::make_shared<ReshapeNode>();
+        node->inputs = { *this };
+        result.set_grad_node(node);
+    }
+
     return result;
 }
 
 Tensor Tensor::narrow(int dim, int start, int length) const{
-    if (dim < 0 || static_cast<std::size_t>(dim) >= shape_.size()) {
-        throw std::out_of_range("Tensor::narrow: dimension index out of range");
-    }
+    CheckDim(dim, shape_.size(), "Tensor::narrow: dimension index out of range");
     const int dimension = size(static_cast<std::size_t>(dim));
     if (start < 0 || start >= dimension) {
         throw std::out_of_range("Tensor::narrow: start index out of range");
@@ -486,14 +553,7 @@ Tensor Tensor::narrow(int dim, int start, int length) const{
     if (length <= 0 || length > dimension - start) {
         throw std::invalid_argument("Tensor::narrow: length out of range");
     }
-    if (data_ptr_ == nullptr) {
-        throw std::logic_error("Tensor::narrow: null data pointer");
-    }
-
-    // TODO: 实现 ViewNode 后移除保护，使 narrow 视图可微分。
-    if (EnableGrad() && (requires_grad() || grad_node())) {
-        throw std::logic_error("Tensor::narrow: autograd through views is not implemented");
-    }
+    CheckDataPointer(*this, "Tensor::narrow: null data pointer");
 
     Tensor result;
     result.storage_ = storage_;
@@ -508,47 +568,31 @@ Tensor Tensor::narrow(int dim, int start, int length) const{
     if (result.device_ == Device::kCUDA) {
         result.InitCUDAMetadata();
     }
+    if (EnableGrad() && CheckGradDtype(dtype_)) {
+        auto node = std::make_shared<NarrowNode>();
+        node->inputs = {*this};
+        node->dim = dim;
+        node->start = start;
+        node->length = length;
+        result.set_grad_node(std::move(node));
+    }
     return result;
 }
 
-Tensor Tensor::operator+(const Tensor& other) const {
-    return add(*this, other);
-}
+Tensor Tensor::operator+(const Tensor& other) const { return add(*this, other); }
 
-Tensor Tensor::operator-(const Tensor& other) const {
-    return sub(*this, other);
-}
+Tensor Tensor::operator-(const Tensor& other) const { return sub(*this, other); }
 
-Tensor Tensor::operator*(const Tensor& other) const {
-    return mul(*this, other);
-}
+Tensor Tensor::operator*(const Tensor& other) const { return mul(*this, other); }
 
-Tensor Tensor::operator/(const Tensor& other) const {
-    return div(*this, other);
-}
+Tensor Tensor::operator/(const Tensor& other) const { return div(*this, other); }
 
-Tensor Tensor::operator-() const {
-    return neg(*this);
-}
+Tensor Tensor::operator-() const { return neg(*this); }
 
 Tensor Tensor::broadcast(const std::vector<int>& target_shape) const {
-    if (empty()) {
-        throw std::invalid_argument("broadcast: input must not be empty");
-    }
-    if (shape_.size() > target_shape.size()) {
-        throw std::invalid_argument("broadcast: target rank is too small");
-    }
-    for (int size : target_shape) {
-        if (size <= 0) {
-            throw std::invalid_argument("broadcast: target dimensions must be positive");
-        }
-    }
+    CheckNotEmpty(*this, "broadcast: input must not be empty");
+    CheckBroadcastTarget(shape_, target_shape);
     const std::size_t leading = target_shape.size() - shape_.size();
-    for (std::size_t i = 0; i < shape_.size(); ++i) {
-        if (shape_[i] != target_shape[leading + i] && shape_[i] != 1) {
-            throw std::invalid_argument("broadcast: incompatible shape");
-        }
-    }
 
     Tensor result = *this;
     result.autograd_metadata_ = std::make_shared<AutogradMetadata>();

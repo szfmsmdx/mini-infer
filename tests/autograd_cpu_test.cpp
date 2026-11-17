@@ -1,6 +1,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -38,19 +39,6 @@ void CheckFloatValues(const Tensor& tensor, const std::vector<float>& expected) 
             throw std::runtime_error("Unexpected gradient value");
         }
     }
-}
-
-template <typename Operation>
-void CheckAutogradProtection(Operation operation, const char* message) {
-    try {
-        operation();
-    } catch (const std::logic_error& error) {
-        if (std::string(error.what()).find("autograd") != std::string::npos) {
-            return;
-        }
-        throw std::runtime_error(message);
-    }
-    throw std::runtime_error(message);
 }
 
 Tensor MakeScalarTensor(float value) {
@@ -216,7 +204,334 @@ void CheckBackwardEngine() {
     }
 }
 
+void TestSqueezeUnsqueeze() {
+    auto require = [](bool condition, const char* message) {
+        if (!condition) throw std::runtime_error(message);
+    };
+    for (Dtype dtype : {Dtype::kFloat32, Dtype::kFloat16, Dtype::kBFloat16}) {
+        Tensor x = full({2, 3}, 2, dtype, Device::kCPU);
+        x.requires_grad_(true);
+        Tensor view = x.transpose(0, 1);
+        for (int dim = 0; dim <= view.dim(); ++dim) {
+            Tensor expanded = view.unsqueeze(dim);
+            auto expected_shape = view.shape();
+            expected_shape.insert(expected_shape.begin() + dim, 1);
+            auto expected_stride = view.stride();
+            const std::size_t inserted = dim == view.dim() ? 1 : view.stride()[dim] * view.size(dim);
+            expected_stride.insert(expected_stride.begin() + dim, inserted);
+            require(expanded.shape() == expected_shape && expanded.stride() == expected_stride,
+                    "unsqueeze must preserve strided mapping");
+            require(expanded.data_ptr() == view.data_ptr() && expanded.grad_node() != view.grad_node(),
+                    "unsqueeze storage and metadata");
+            Tensor squeezed = expanded.squeeze(dim);
+            require(squeezed.shape() == view.shape() && squeezed.stride() == view.stride(),
+                    "squeeze must restore shape and stride");
+            require(squeezed.data_ptr() == view.data_ptr(), "squeeze must share storage");
+            require(view.squeeze(0).grad_node() == view.grad_node(), "no-op squeeze keeps graph");
+            Tensor weights = full({3, 2}, 0, dtype, Device::kCPU);
+            {
+                NogradNode guard;
+                for (int i = 0; i < 3; ++i)
+                    for (int j = 0; j < 2; ++j) weights[i][j].fill_(i * 2 + j + 1);
+            }
+            mul(squeezed, weights).sum().backward();
+        }
+        {
+            NogradNode guard;
+            Tensor grad = x.grad().to(Device::kCPU);
+            require(grad.shape() == x.shape() && grad.dtype() == dtype && x.grad().device() == x.device(),
+                    "squeeze gradient metadata");
+            const float expected[] = {3, 9, 15, 6, 12, 18};
+            for (int i = 0; i < 6; ++i) {
+                if (dtype == Dtype::kFloat32)
+                    require(static_cast<const float*>(grad.data_ptr())[i] == expected[i], "squeeze float gradient");
+                else {
+                    const auto bits = static_cast<const std::uint16_t*>(grad.data_ptr())[i];
+                    require(bits == (dtype == Dtype::kFloat16 ? EncodeFloat16(expected[i]) : EncodeBFloat16(expected[i])),
+                            "squeeze half gradient");
+                }
+            }
+            require(!x.unsqueeze(1).grad_node(), "no-grad unsqueeze");
+            require(!x.unsqueeze(1).squeeze(1).grad_node(), "no-grad squeeze");
+        }
+    }
+    Tensor scalar = full({}, 3.0f, Dtype::kFloat32, Device::kCPU);
+    scalar.requires_grad_(true);
+    Tensor vector = scalar.unsqueeze(0);
+    require(vector.shape() == std::vector<int>({1}) && !scalar.grad_node(), "scalar unsqueeze metadata");
+    vector.squeeze(0).backward();
+    {
+        NogradNode guard;
+        Tensor grad = scalar.grad().to(Device::kCPU);
+        require(grad.is_scalar() && *static_cast<const float*>(grad.data_ptr()) == 1, "scalar squeeze gradient");
+        Tensor row = full({2, 3}, 0.0f, Dtype::kFloat32, Device::kCPU);
+        row.unsqueeze(1)[1][0][2].fill_(7);
+        Tensor host = row.to(Device::kCPU);
+        require(static_cast<const float*>(host.data_ptr())[5] == 7, "unsqueeze shares writable storage");
+    }
+    Tensor integer = full({1, 2}, 1, Dtype::kInt32, Device::kCPU);
+    require(!integer.unsqueeze(0).grad_node() && !integer.squeeze(0).grad_node(), "integer layout no graph");
+    for (int dim : {-1, 3}) {
+        bool rejected = false;
+        try { integer.squeeze(dim); } catch (const std::out_of_range&) { rejected = true; }
+        require(rejected, "squeeze invalid dimension");
+        rejected = false;
+        try { integer.unsqueeze(dim); } catch (const std::out_of_range&) { rejected = true; }
+        require(rejected, "unsqueeze invalid dimension");
+    }
+    Tensor empty;
+    for (bool insert : {false, true}) {
+        bool rejected = false;
+        try { insert ? empty.unsqueeze(0) : empty.squeeze(0); }
+        catch (const std::invalid_argument&) { rejected = true; }
+        require(rejected, "empty layout input must be rejected");
+    }
+}
+void TestIndexBackward() {
+    auto require = [](bool condition, const char* message) {
+        if (!condition) throw std::runtime_error(message);
+    };
+    for (Dtype dtype : {Dtype::kFloat32, Dtype::kFloat16, Dtype::kBFloat16}) {
+        Tensor x = full({2, 2, 3}, 2, dtype, Device::kCPU);
+        x.requires_grad_(true);
+        Tensor y = x[1];
+        require(y.shape() == std::vector<int>({2, 3}), "index removes first dimension");
+        require(y.grad_node() && !x.grad_node(), "index independent metadata");
+        Tensor weights = full({3, 2}, 0, dtype, Device::kCPU);
+        {
+            NogradNode guard;
+            for (int i = 0; i < 3; ++i)
+                for (int j = 0; j < 2; ++j) weights[i][j].fill_(i * 2 + j + 1);
+        }
+        mul(y.transpose(0, 1), weights).sum().backward();
+        NogradNode guard;
+        Tensor grad = x.grad().to(Device::kCPU);
+        require(grad.shape() == x.shape() && grad.dtype() == dtype &&
+                x.grad().device() == x.device(), "index gradient metadata");
+        const float expected[] = {0, 0, 0, 0, 0, 0, 1, 3, 5, 2, 4, 6};
+        for (int i = 0; i < 12; ++i) {
+            if (dtype == Dtype::kFloat32)
+                require(static_cast<const float*>(grad.data_ptr())[i] == expected[i], "index float gradient");
+            else {
+                const auto bits = static_cast<const std::uint16_t*>(grad.data_ptr())[i];
+                require(bits == (dtype == Dtype::kFloat16 ? EncodeFloat16(expected[i]) : EncodeBFloat16(expected[i])),
+                        "index half gradient");
+            }
+        }
+        require(!x[1].grad_node(), "no-grad index must not record node");
+    }
+    Tensor x = full({2, 3}, 1.0f, Dtype::kFloat32, Device::kCPU);
+    x.requires_grad_(true);
+    // A strided column selection and a chained scalar selection overlap.
+    add(x.transpose(0, 1)[1].sum(), x[1][1]).backward();
+    {
+        NogradNode guard;
+        Tensor grad = x.grad().to(Device::kCPU);
+        const float expected[] = {0, 1, 0, 0, 2, 0};
+        for (int i = 0; i < 6; ++i)
+            require(static_cast<const float*>(grad.data_ptr())[i] == expected[i], "strided chained index gradient");
+    }
+    Tensor integer = full({2}, 1, Dtype::kInt32, Device::kCPU);
+    require(!integer[0].grad_node(), "integer index must not record node");
+    for (int index : {-1, 2}) {
+        bool rejected = false;
+        try { integer[index]; } catch (const std::out_of_range&) { rejected = true; }
+        require(rejected, "invalid index must be rejected");
+    }
+}
+void TestNarrowBackward() {
+    auto require = [](bool condition, const char* message) {
+        if (!condition) throw std::runtime_error(message);
+    };
+    for (Dtype dtype : {Dtype::kFloat32, Dtype::kFloat16, Dtype::kBFloat16}) {
+        Tensor x = full({2, 4}, 2, dtype, Device::kCPU);
+        x.requires_grad_(true);
+        Tensor y = x.narrow(1, 1, 2);
+        require(y.shape() == std::vector<int>({2, 2}) && !y.is_contiguous(), "narrow view layout");
+        require(y.grad_node() && !x.grad_node(), "narrow independent metadata");
+        Tensor weights = full({2, 2}, 0, dtype, Device::kCPU);
+        {
+            NogradNode guard;
+            for (int i = 0; i < 2; ++i)
+                for (int j = 0; j < 2; ++j) weights[i][j].fill_(i * 2 + j + 1);
+        }
+        // Transpose supplies a non-contiguous upstream gradient to NarrowNode.
+        mul(y.transpose(0, 1), weights).sum().backward();
+        {
+            NogradNode guard;
+            Tensor grad = x.grad().to(Device::kCPU);
+            require(grad.shape() == x.shape() && grad.dtype() == dtype &&
+                    x.grad().device() == x.device(), "narrow gradient metadata");
+            const float expected[] = {0, 1, 3, 0, 0, 2, 4, 0};
+            for (int i = 0; i < 8; ++i) {
+                if (dtype == Dtype::kFloat32)
+                    require(static_cast<const float*>(grad.data_ptr())[i] == expected[i], "narrow float gradient");
+                else {
+                    const auto bits = static_cast<const std::uint16_t*>(grad.data_ptr())[i];
+                    require(bits == (dtype == Dtype::kFloat16 ? EncodeFloat16(expected[i]) : EncodeBFloat16(expected[i])),
+                            "narrow half gradient");
+                }
+            }
+            require(!x.narrow(1, 1, 2).grad_node(), "no-grad narrow must not record node");
+        }
+    }
+    Tensor x = full({2, 4}, 1.0f, Dtype::kFloat32, Device::kCPU);
+    x.requires_grad_(true);
+    // Non-contiguous input, chained narrow, and overlapping branches.
+    Tensor view = x.transpose(0, 1);
+    Tensor left = view.narrow(0, 0, 3).narrow(0, 1, 2);
+    Tensor right = view.narrow(0, 2, 2);
+    add(left.sum(), right.sum()).backward();
+    {
+        NogradNode guard;
+        Tensor grad = x.grad().to(Device::kCPU);
+        const float expected[] = {0, 1, 2, 1, 0, 1, 2, 1};
+        for (int i = 0; i < 8; ++i)
+            require(static_cast<const float*>(grad.data_ptr())[i] == expected[i], "chained overlapping narrow gradient");
+    }
+    Tensor integer = full({3}, 1, Dtype::kInt32, Device::kCPU);
+    require(!integer.narrow(0, 1, 1).grad_node(), "integer narrow must not record node");
+}
+void TestReshapeInference() {
+    auto require = [](bool condition, const char* message) {
+        if (!condition) throw std::runtime_error(message);
+    };
+    Tensor x = full({2, 3, 4}, 2.0f, Dtype::kFloat32, Device::kCPU);
+    x.requires_grad_(true);
+    const std::vector<std::vector<int>> targets = {{-1, 4, 2}, {3, -1, 2}, {3, 2, -1}, {-1}};
+    const std::vector<std::vector<int>> expected = {{3, 4, 2}, {3, 4, 2}, {3, 2, 4}, {24}};
+    for (std::size_t i = 0; i < targets.size(); ++i) {
+        Tensor y = x.reshape(targets[i]);
+        require(y.shape() == expected[i] && y.data_ptr() == x.data_ptr(), "inferred reshape shape and storage");
+        y.sum().backward();
+    }
+    {
+        NogradNode guard;
+        Tensor grad = x.grad().to(Device::kCPU);
+        for (int i = 0; i < 24; ++i)
+            require(static_cast<const float*>(grad.data_ptr())[i] == 4, "inferred reshape backward accumulation");
+        require(!x.reshape({-1}).grad_node(), "no-grad inferred reshape");
+    }
+    Tensor scalar = full({}, 1.0f, Dtype::kFloat32, Device::kCPU);
+    require(scalar.reshape({-1}).shape() == std::vector<int>({1}), "scalar inferred reshape");
+    const std::vector<std::vector<int>> invalid = {{-1, -1}, {-1, 5}, {0, -1}, {-2, 12}, {5, 5}};
+    for (const auto& shape : invalid) {
+        bool rejected = false;
+        try { x.reshape(shape); } catch (const std::invalid_argument&) { rejected = true; }
+        require(rejected, "invalid inferred reshape must be rejected");
+    }
+    bool overflow = false;
+    const int big = std::numeric_limits<int>::max();
+    try { x.reshape({big, big, big}); }
+    catch (const std::overflow_error&) { overflow = true; }
+    require(overflow, "reshape shape multiplication overflow");
+}
+void TestReshapeBackward() {
+    auto require = [](bool condition, const char* message) {
+        if (!condition) throw std::runtime_error(message);
+    };
+    for (Dtype dtype : {Dtype::kFloat32, Dtype::kFloat16, Dtype::kBFloat16}) {
+        Tensor x = full({6}, 2.0f, dtype, Device::kCPU);
+        x.requires_grad_(true);
+        Tensor y = x.reshape({2, 3});
+        require(y.data_ptr() == x.data_ptr(), "reshape must share storage");
+        require(x.shape() == std::vector<int>({6}), "reshape must preserve input shape");
+        require(y.grad_node() && !x.grad_node(), "reshape must use independent metadata");
+        require(y.grad_node()->inputs[0].data_ptr() == x.data_ptr(), "reshape must save input");
+        // Transpose backward produces a non-contiguous [2, 3] gradient.
+        Tensor weights = full({3, 2}, 0.0f, dtype, Device::kCPU);
+        {
+            NogradNode guard;
+            for (int i = 0; i < 3; ++i)
+                for (int j = 0; j < 2; ++j)
+                    weights[i][j].fill_(i * 2 + j + 1);
+        }
+        Tensor loss = mul(y.transpose(0, 1), weights).sum();
+        loss.backward();
+        const float expected[] = {1, 3, 5, 2, 4, 6};
+        {
+            NogradNode guard;
+            Tensor grad = x.grad().to(Device::kCPU);
+            require(grad.shape() == x.shape() && grad.dtype() == dtype &&
+                    x.grad().device() == x.device(), "reshape gradient metadata");
+            for (int i = 0; i < 6; ++i) {
+                float value;
+                if (dtype == Dtype::kFloat32) value = static_cast<const float*>(grad.data_ptr())[i];
+                else {
+                    const auto bits = static_cast<const std::uint16_t*>(grad.data_ptr())[i];
+                    value = dtype == Dtype::kFloat16 ? static_cast<float>(Float16::from_bits(bits))
+                                                    : static_cast<float>(BFloat16::from_bits(bits));
+                }
+                require(value == expected[i], "non-contiguous reshape gradient value");
+            }
+            Tensor detached_view = x.reshape({3, 2});
+            require(!detached_view.grad_node() && !detached_view.requires_grad(), "no-grad reshape metadata");
+        }
+        require(EnableGrad(), "reshape backward must restore grad recording");
+        // sum backward supplies a zero-stride broadcast gradient.
+        Tensor z = full({2, 3}, 1.0f, dtype, Device::kCPU);
+        z.requires_grad_(true);
+        z.reshape({6}).sum().backward();
+        require(z.grad().shape() == z.shape(), "broadcast reshape gradient shape");
+        NogradNode guard;
+        Tensor total = z.grad().sum().to(Device::kCPU);
+        if (dtype == Dtype::kFloat32)
+            require(*static_cast<const float*>(total.data_ptr()) == 6, "broadcast reshape gradient total");
+        else {
+            const auto bits = *static_cast<const std::uint16_t*>(total.data_ptr());
+            require(bits == (dtype == Dtype::kFloat16 ? EncodeFloat16(6) : EncodeBFloat16(6)),
+                    "half broadcast reshape gradient total");
+        }
+    }
+    Tensor scalar = full({}, 3.0f, Dtype::kFloat32, Device::kCPU);
+    scalar.requires_grad_(true);
+    scalar.reshape({1, 1}).reshape({}).backward();
+    {
+        NogradNode guard;
+        Tensor grad = scalar.grad().to(Device::kCPU);
+        require(grad.is_scalar() && *static_cast<const float*>(grad.data_ptr()) == 1,
+                "scalar reshape chain gradient");
+    }
+    Tensor integer = full({2}, 1, Dtype::kInt32, Device::kCPU);
+    require(!integer.reshape({1, 2}).grad_node(), "integer reshape must not build graph");
+    float values[] = {1, 2, 3, 4, 5, 6};
+    Tensor matrix(values, {2, 3}, Dtype::kFloat32, Device::kCPU);
+    matrix.requires_grad_(true);
+    Tensor transposed = matrix.transpose(0, 1);
+    Tensor flat = transposed.reshape({-1});
+    require(flat.is_contiguous() && flat.shape() == std::vector<int>({6}), "strided reshape layout");
+    require(flat.data_ptr() != matrix.data_ptr(), "strided reshape must copy storage");
+    float weight_values[] = {1, 2, 3, 4, 5, 6};
+    Tensor weights(weight_values, {6}, Dtype::kFloat32, Device::kCPU);
+    mul(flat, weights).sum().backward();
+    {
+        NogradNode guard;
+        Tensor host = flat.to(Device::kCPU);
+        Tensor grad = matrix.grad().to(Device::kCPU);
+        const float expected[] = {1, 4, 2, 5, 3, 6};
+        const float expected_grad[] = {1, 3, 5, 2, 4, 6};
+        for (int i = 0; i < 6; ++i) {
+            require(static_cast<const float*>(host.data_ptr())[i] == expected[i], "strided reshape logical order");
+            require(static_cast<const float*>(grad.data_ptr())[i] == expected_grad[i], "strided reshape backward");
+        }
+        flat.fill_(0);
+        Tensor source = matrix.to(Device::kCPU);
+        require(static_cast<const float*>(source.data_ptr())[0] == 1, "strided reshape storage independence");
+        Tensor sliced = matrix.narrow(1, 1, 2).reshape({-1}).to(Device::kCPU);
+        const float sliced_expected[] = {2, 3, 5, 6};
+        for (int i = 0; i < 4; ++i)
+            require(static_cast<const float*>(sliced.data_ptr())[i] == sliced_expected[i], "narrow reshape logical order");
+        Tensor repeated = matrix.narrow(0, 0, 1).broadcast({2, 3}).reshape({-1}).to(Device::kCPU);
+        for (int i = 0; i < 6; ++i)
+            require(static_cast<const float*>(repeated.data_ptr())[i] == i % 3 + 1, "broadcast reshape logical order");
+    }
+}
 int main() {
+    TestSqueezeUnsqueeze();
+    TestIndexBackward();
+    TestNarrowBackward();
+    TestReshapeInference();
+    TestReshapeBackward();
     CheckBackwardEngine();
     {
         Tensor x = MakeScalarTensor(3);
@@ -421,7 +736,7 @@ int main() {
         CheckFloatValues(grads[1], {-6.0f, -6.0f});
     }
 
-    // Views still reject operations that would disconnect the graph.
+    // Views retain the input graph and use independent metadata.
     {
         float a_values[] = {1.0f, 2.0f};
         float b_values[] = {3.0f, 4.0f};
@@ -429,13 +744,24 @@ int main() {
         Tensor b(b_values, {2}, Dtype::kFloat32);
         Tensor out = add(a, b);
 
-        CheckAutogradProtection([&] { out[0]; }, "operator[] on graph tensor must be rejected");
-        CheckAutogradProtection([&] { out.narrow(0, 0, 1); }, "narrow on graph tensor must be rejected");
-        CheckAutogradProtection([&] { out.reshape({1, 2}); }, "reshape on graph tensor must be rejected");
+        Tensor indexed = out[0];
+        if (!indexed.grad_node() || indexed.grad_node()->inputs[0].grad_node() != out.grad_node()) {
+            throw std::runtime_error("index must retain the input graph");
+        }
+        Tensor narrowed = out.narrow(0, 0, 1);
+        if (!narrowed.grad_node() || narrowed.grad_node()->inputs[0].grad_node() != out.grad_node()) {
+            throw std::runtime_error("narrow must retain the input graph");
+        }
+        Tensor reshaped = out.reshape({1, 2});
+        if (!reshaped.grad_node() || reshaped.grad_node()->inputs[0].grad_node() != out.grad_node()) {
+            throw std::runtime_error("reshape must retain the input graph");
+        }
 
         Tensor leaf(a_values, {2}, Dtype::kFloat32);
         leaf.requires_grad_(true);
-        CheckAutogradProtection([&] { leaf[0]; }, "operator[] on leaf requiring grad must be rejected");
+        if (!leaf[0].grad_node() || leaf.grad_node()) {
+            throw std::runtime_error("index must record a node without modifying the leaf metadata");
+        }
 
         Tensor same_device = leaf.to(Device::kCPU);
         if (same_device.data_ptr() != leaf.data_ptr()) {

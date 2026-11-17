@@ -75,7 +75,6 @@ public:
     // 广播到目标形状，保持 dtype 和 device 不变。
     Tensor broadcast(const std::vector<int>& target_shape) const;
 
-    // 下列布局操作目前只有声明，尚未实现。
     Tensor transpose(int dim0, int dim1) const;
     Tensor permute(const std::vector<int>& dims) const;
     Tensor contiguous() const;

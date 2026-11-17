@@ -83,3 +83,5 @@ ctest --test-dir build/tests -C Release --output-on-failure
 上面的 `89` 对应 Colab L4 和 RTX 4060；其他 GPU 应改成其对应架构。
 
 VS Code 安装 C/C++ 与 CMake Tools 后运行 `CMake: Configure`，由 CMake Tools 提供实际编译器、include 和宏定义；`.vscode/` 不保存机器绝对路径。未安装完整 Toolkit 时，可选的 `build/cuda-headers-12.4/include` 仅供本地补全，不参与 CUDA 构建。首次配置如需选择 Kit，Windows CUDA 开发选择 Visual Studio x64。
+
+本轮视图与布局扩展（reshape/narrow/索引反向、contiguous/squeeze/unsqueeze、reshape 推导与非连续输入、公共检查重构）已由用户在 Colab 完成 CPU/CUDA 回归，CTest 13/13 通过，总耗时 2.30 秒；本地 CPU 回归 8/8 通过。

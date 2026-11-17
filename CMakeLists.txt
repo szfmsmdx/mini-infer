@@ -35,6 +35,7 @@ add_library(mini_infer STATIC
     ops/cpu/elementwise.cpp
     ops/cpu/reduction.cpp
     tensor/tensor.cpp
+    tensor/check.cpp
     ops/cpu/data_ops.cpp
     utils/logger.cpp
     utils/memory.cpp

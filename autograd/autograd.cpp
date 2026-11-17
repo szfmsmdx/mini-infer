@@ -4,6 +4,7 @@
 #include <unordered_map>
 
 #include "autograd/autograd.h"
+#include "tensor/check.h"
 
 namespace mtensor{
 namespace {
@@ -29,12 +30,6 @@ void TopoSort(
     topo_order.push_back(output);
 }
 
-void CheckBackwardDtype(Dtype dtype) {
-    if (!CheckGradDtype(dtype)) {
-        throw std::invalid_argument(
-            "RunBackward: only floating-point dtypes are supported");
-    }
-}
 }
 
 bool CheckGradDtype(Dtype dtype) {
@@ -60,7 +55,7 @@ void RunBackward(const Tensor& loss_tensor) {
         throw std::invalid_argument("RunBackward: loss_tensor must contain exactly one element");
     }
 
-    CheckBackwardDtype(loss_tensor.dtype());
+    CheckFloatingDtype(loss_tensor.dtype(), "RunBackward: only floating-point dtypes are supported");
 
     if(!loss_tensor.grad_node()) {
         throw std::logic_error("RunBackward: loss_tensor does not have a grad node"); 

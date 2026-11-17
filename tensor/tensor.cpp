@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "tensor/tensor.h"
+#include "tensor/check.h"
 #include "tensor/dtype.h"
 #include "ops/elementwise.h"
 #include "utils/memory.h"
@@ -60,11 +61,7 @@ Tensor::Tensor(const void* data_ptr, std::vector<int> shape, Dtype dtype, Device
         float values[] = {1.0f, 2.0f};
         Tensor a(values, {2}, Dtype::kFloat32);
     */
-    for (int dimension : this->shape_) {
-        if (dimension < 0) {
-            throw std::invalid_argument("Tensor dimensions must be non-negative");
-        }
-    }
+    CheckNonnegativeShape(shape_, "Tensor dimensions must be non-negative");
 
     stride_.resize(shape_.size());
     std::size_t stride = 1;
@@ -102,11 +99,7 @@ Tensor::Tensor(const void* data_ptr, std::vector<int> shape, Dtype dtype, Device
 Tensor::Tensor(std::vector<int> shape, Dtype dtype, Device device)
 :shape_(shape), dtype_(dtype), device_(device), 
     autograd_metadata_(std::make_shared<AutogradMetadata>()){
-    for (int dimension : shape_) {
-        if (dimension < 0) {
-            throw std::invalid_argument("Tensor dimensions must be non-negative");
-        }
-    }
+    CheckNonnegativeShape(shape_, "Tensor dimensions must be non-negative");
 
     stride_.resize(shape_.size());
     std::size_t stride = 1;

@@ -40,4 +40,31 @@ std::vector<Tensor> BroadcastNode::backward(const Tensor& output_grad) {
     return { res };
 }
 
+std::vector<Tensor> ReshapeNode::backward(const Tensor& output_grad) {
+    auto contiguous_grad = output_grad.is_contiguous() ? output_grad : output_grad.clone();
+    return { contiguous_grad.reshape(inputs[0].shape()) };
+}
+
+std::vector<Tensor> NarrowNode::backward(const Tensor& output_grad) {
+    Tensor res(inputs[0].shape(), inputs[0].dtype(), inputs[0].device());
+    res.zero_();
+    res.narrow(dim, start, length).copy_(output_grad);
+    return { res };
+}
+
+std::vector<Tensor> IndexNode::backward(const Tensor& output_grad) {
+    Tensor res(inputs[0].shape(), inputs[0].dtype(), inputs[0].device());
+    res.zero_();
+    res[index].copy_(output_grad);
+    return { res };
+}
+
+std::vector<Tensor> SqueezeNode::backward(const Tensor& output_grad) {
+    return { output_grad.unsqueeze(dim) };
+}
+
+std::vector<Tensor> UnsqueezeNode::backward(const Tensor& output_grad) {
+    return {output_grad.squeeze(dim)};
+}
+
 }  // namespace mtensor

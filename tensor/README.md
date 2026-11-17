@@ -82,8 +82,8 @@ public：
 | `zero_()` | 原地清零 | CPU 和 CUDA 按 stride 清零逻辑元素 |
 | `print()` | 打印内容 | 根据 shape 递归输出括号，FP16/BF16 解码后打印 |
 | `narrow(dim, start, length)` | 沿指定维度取范围 | 返回共享存储的视图，保留 stride；当前要求 length 大于 0 |
-| `reshape` / `transpose` / `permute` | 形状与布局操作 | reshape 暂只支持连续输入；transpose、permute 返回共享存储的视图 |
-| `contiguous` / `squeeze` / `unsqueeze` | 形状与布局操作 | 接口待实现 |
+| `reshape` / `transpose` / `permute` | 形状与布局操作 | reshape 支持一个 -1 推导；连续输入共享存储，非连续输入先复制；transpose、permute 返回共享视图 |
+| `contiguous` / `squeeze` / `unsqueeze` | 形状与布局操作 | 已实现；squeeze/unsqueeze 支持非连续视图及反向，目前只接受非负维度 |
 
 `shape()` 和 `stride()` 返回形状与跨度的只读引用，`size(dim)` 返回指定维度长度，`dim()` 返回维数，`numel()` 返回元素总数，`nbytes()` 返回字节数。`element_size()`、`dtype()`、`device()` 提供对应的元数据。原无参 `size()` 已改为 `shape()`；成员变量使用 `shape_`。
 
@@ -142,7 +142,7 @@ Autograd 的数据结构、反向节点和引擎见 [autograd/README.md](../auto
 | `grad_node()` / `set_grad_node()` | 图的连边 | 读写 `meta->grad_node`；Node 只保存输入，不保存输出 |
 | `accumulate_grad()` | 梯度累加 | 首次 `grad.emplace(g.clone())`，之后 `add()` |
 
-拷贝共享 `storage_` 和 `autograd_metadata_`；移动后由目标接管这些句柄。视图（`operator[]`、`narrow`）新建 meta，`reshape` 复制 `*this` 后重置 meta。当前 `clone()` 和跨设备 `to()` 已接入反向节点；建图开启且 Tensor 参与 autograd 时，`operator[]`、`narrow`、`reshape` 仍抛 `std::logic_error`，等待视图反向实现。`detach()` 和同设备 `to()` 保持原有语义。
+拷贝共享 `storage_` 和 `autograd_metadata_`；移动后由目标接管这些句柄。视图（`operator[]`、`narrow`）新建 meta，`reshape` 复制 `*this` 后重置 meta。当前 `operator[]`、`reshape()`、`narrow()`、`clone()` 和跨设备 `to()` 已接入反向节点。`detach()` 和同设备 `to()` 保持原有语义。
 
 ## dtype
 
@@ -172,7 +172,8 @@ Autograd 的数据结构、反向节点和引擎见 [autograd/README.md](../auto
 - [x] 按 shape、dtype、device 只分配输出的构造函数
 - [x] `narrow` 共享视图与 stride 索引
 - [x] `transpose` / `permute` 的视图和反向规则
-- [ ] 完善非连续 `reshape`、`contiguous` / `squeeze` / `unsqueeze`
+- [x] 实现 `contiguous` / `squeeze` / `unsqueeze`（squeeze/unsqueeze 本地 CPU 及 Colab CPU/CUDA 回归已通过）
+- [x] 非连续输入的 `reshape` 和单个 -1 推导（本地 CPU 及 Colab CPU/CUDA 回归已通过）
 - [x] `to(device)`、同设备共享和 CPU/CUDA 双向迁移
 - [x] 嵌套打印与 FP16 / BF16 解码
 - [x] CUDA 内存分配、释放、数据复制和 fill kernel 已写入源码
@@ -185,7 +186,10 @@ Autograd 的数据结构、反向节点和引擎见 [autograd/README.md](../auto
 - [x] `backward()` 单元素入口（参数检查、拓扑排序及梯度传递已实现）
 - [x] 视图的临时保护
 - [x] `CloneNode`、`ToDeviceNode` 和全元素 `sum` 的反向节点
-- [ ] `operator[]`、`narrow`、`reshape` 的视图反向，以及矩阵乘反向
+- [x] 连续及非连续输入的 `reshape` 反向（本地 CPU 及 Colab CPU/CUDA 回归已通过）
+- [x] `narrow` 反向（本地 CPU 及 Colab CPU/CUDA 回归已通过）
+- [x] `operator[]` 的视图反向（本地 CPU 及 Colab CPU/CUDA 回归已通过）
+- [ ] 矩阵乘反向
 
 ### 测试
 

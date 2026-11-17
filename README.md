@@ -29,7 +29,7 @@ mini_infer/
 - [x] **CPU 计算与反向**：逐元素算子、全元素 `sum`、反向引擎及对应 CPU 测试。
 - [x] **布局操作**：`transpose`、`permute` 的前向和反向。
 - [x] **CUDA 计算与反向**：设备迁移、逐元素算子和全元素 `sum` 的测试在 Colab A100 上通过。
-- [ ] **视图反向**：`operator[]`、`narrow`、`reshape`。
+- [x] **视图反向**：`operator[]`、`reshape`、`narrow` 已实现，本地 CPU 及 Colab CPU/CUDA 回归已通过。
 - [ ] **基础算子**：广播、指定维度归约、`mean`、矩阵乘和 Softmax。
 - [ ] **Module / Layer**：组织参数、子模块和 forward，实现 Linear、Embedding、Norm、激活等基础层。
 - [ ] **模型前向**：组合 Attention、位置编码和 FFN，接入模型配置与权重加载，跑通一个小型 Decoder-only 模型。

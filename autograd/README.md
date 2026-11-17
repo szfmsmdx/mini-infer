@@ -144,7 +144,7 @@ RunBackward(root)
 
 - 只支持标量输出 `backward()`；非标量后续加 `backward(seed)`。
 - 支持 Float32、Float16、BFloat16 梯度；`RunBackward` 拒绝整数 dtype，`requires_grad_` 本身不限制 dtype。
-- `transpose()`、`permute()`、`clone()` 和跨设备 `to()` 接入反向节点。`operator[]`、`narrow()`、`reshape()` 在建图开启且 Tensor 参与 autograd 时抛 `std::logic_error`；`detach()` 和同设备 `to()` 不受影响。
+- `operator[]`、`reshape()`、`narrow()`、`transpose()`、`permute()`、`clone()` 和跨设备 `to()` 接入反向节点。`detach()` 和同设备 `to()` 不受影响。
 - `zero_` / `fill_` / `copy_` 不建图；优化器更新需在 `NogradNode` 下进行。
 - `detach()` 共享存储但使用新的空 meta，其梯度不会回传到原 Tensor。
 
@@ -155,7 +155,9 @@ RunBackward(root)
 - [x] 逐元素算子、`clone`、`transpose`、`permute` 和全元素 `sum` 的反向规则。
 - [x] 跨设备 `to()` 的反向节点与 CUDA 测试代码。
 - [x] 在 Colab A100 验证跨设备迁移、转置视图和 `sum` 的相关前向与反向测试。
-- [ ] 支持 `operator[]`、`narrow`、`reshape` 的视图反向。
+- [x] 支持连续及非连续输入的 `reshape` 反向；非连续上游梯度先 clone，再恢复输入 shape。本地 CPU 及 Colab CPU/CUDA 回归已通过。
+- [x] 支持 `narrow` 反向和前向建图，本地 CPU 及 Colab CPU/CUDA 回归已通过。
+- [x] 支持 `operator[]` 的视图反向与前向建图，本地 CPU 及 Colab CPU/CUDA 回归已通过。
 - [ ] 支持指定维度归约、广播及矩阵乘的反向。
 - [ ] 支持非标量输出的 `backward(seed)`。
 - [ ] 增加原地修改检测及对应测试。

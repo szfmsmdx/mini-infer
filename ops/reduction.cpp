@@ -3,6 +3,7 @@
 #include <vector>
 
 #include "ops/reduction.h"
+#include "tensor/check.h"
 #include "autograd/autograd.h"
 #include "autograd/backward_nodes/reduction.h"
 #include "ops/backend.h"
@@ -11,9 +12,7 @@
 namespace mtensor {
 
 Tensor sum(const Tensor& input) {
-    if (input.empty()) {
-        throw std::invalid_argument("sum: input must not be empty");
-    }
+    CheckNotEmpty(input, "sum: input must not be empty");
     const bool floating = CheckGradDtype(input.dtype());
     Tensor result(/*shape=*/std::vector<int>{},
                   /*dtype=*/floating ? input.dtype() : Dtype::kInt64,
@@ -41,13 +40,9 @@ Tensor sum(const Tensor& input) {
 }
 
 Tensor sum(const Tensor& input, int dim, bool keepdim) {
-    if (input.empty()) {
-        throw std::invalid_argument("sum: input must not be empty");
-    }
+    CheckNotEmpty(input, "sum: input must not be empty");
     if (dim < 0) dim += input.dim();
-    if (dim < 0 || dim >= input.dim()) {
-        throw std::out_of_range("sum: dim out of range");
-    }
+    CheckDim(dim, input.shape().size(), "sum: dim out of range");
 
     const bool floating = CheckGradDtype(input.dtype());
 
@@ -90,9 +85,7 @@ Tensor Tensor::sum(int dim, bool keepdim) const {
 }
 
 Tensor mean(const Tensor& input) {
-    if (!CheckGradDtype(input.dtype())) {
-        throw std::invalid_argument("mean: input must have floating dtype");
-    }
+    CheckFloatingDtype(input.dtype(), "mean: input must have floating dtype");
     Tensor total = sum(input);
     Tensor scale = full(total.shape(), 1.0f / static_cast<float>(input.numel()),
                         input.dtype(), input.device());
@@ -100,9 +93,7 @@ Tensor mean(const Tensor& input) {
 }
 
 Tensor mean(const Tensor& input, int dim, bool keepdim) {
-    if (!CheckGradDtype(input.dtype())) {
-        throw std::invalid_argument("mean: input must have floating dtype");
-    }
+    CheckFloatingDtype(input.dtype(), "mean: input must have floating dtype");
     Tensor total = sum(input, dim, keepdim);
     if (dim < 0) dim += input.dim();
     Tensor scale = full(total.shape(), 1.0f / static_cast<float>(input.size(dim)),
