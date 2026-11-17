@@ -245,9 +245,8 @@ Tensor Tensor::detach() const {
     return result;
 }
 
-void Tensor::backward() {
-    RunBackward(*this);
-}
+void Tensor::backward() { RunBackward(*this); }
+void Tensor::backward(const Tensor& gradient) { RunBackward(*this, gradient); }
 
 const std::vector<int>& Tensor::shape() const {
     return shape_;

@@ -44,4 +44,5 @@ private:
 };
 
 void RunBackward(const Tensor& root);
+void RunBackward(const Tensor& root, const Tensor& gradient);
 }

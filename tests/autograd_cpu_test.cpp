@@ -204,6 +204,79 @@ void CheckBackwardEngine() {
     }
 }
 
+void TestExplicitBackwardGradient() {
+    auto require = [](bool condition, const char* message) {
+        if (!condition) throw std::runtime_error(message);
+    };
+    auto invalid = [&require](Tensor output, const Tensor& gradient) {
+        bool rejected = false;
+        try { output.backward(gradient); }
+        catch (const std::invalid_argument&) { rejected = true; }
+        require(rejected && EnableGrad(), "invalid backward gradient must be rejected");
+    };
+    for (Dtype dtype : {Dtype::kFloat32, Dtype::kFloat16, Dtype::kBFloat16}) {
+        Tensor x = full({2, 3}, 2, dtype, Device::kCPU);
+        x.requires_grad_(true);
+        Tensor output = add(mul(x, x), x);
+        output.requires_grad_(true);
+        Tensor values = full({3, 2}, 0, dtype, Device::kCPU);
+        {
+            NogradNode guard;
+            for (int i = 0; i < 3; ++i)
+                for (int j = 0; j < 2; ++j) values[i][j].fill_(i * 2 + j + 1);
+        }
+        Tensor gradient = values.transpose(0, 1);
+        require(!gradient.is_contiguous(), "test requires strided gradient");
+        output.backward(gradient);
+        output.backward(gradient);
+        require(EnableGrad(), "explicit backward must restore grad mode");
+        {
+            NogradNode guard;
+            Tensor grad = x.grad().to(Device::kCPU);
+            Tensor root_grad = output.grad().to(Device::kCPU);
+            Tensor seed = gradient.clone().to(Device::kCPU);
+            const float weights[] = {1, 3, 5, 2, 4, 6};
+            auto read = [dtype](const Tensor& tensor, int i) {
+                if (dtype == Dtype::kFloat32) return static_cast<const float*>(tensor.data_ptr())[i];
+                const auto bits = static_cast<const std::uint16_t*>(tensor.data_ptr())[i];
+                return dtype == Dtype::kFloat16 ? static_cast<float>(Float16::from_bits(bits))
+                                                : static_cast<float>(BFloat16::from_bits(bits));
+            };
+            require(grad.shape() == x.shape() && grad.dtype() == dtype && x.grad().device() == x.device(),
+                    "explicit backward gradient metadata");
+            for (int i = 0; i < 6; ++i) {
+                require(read(grad, i) == 10 * weights[i], "explicit gradient shared branch accumulation");
+                require(read(root_grad, i) == 2 * weights[i], "root explicit gradient retention");
+                require(read(seed, i) == weights[i], "caller gradient must remain unchanged");
+            }
+        }
+        invalid(output, Tensor());
+        invalid(output, full({6}, 1, dtype, Device::kCPU));
+        invalid(output, full({2, 3}, 1, Dtype::kInt32, Device::kCPU));
+        if (output.device() == Device::kCUDA)
+            invalid(output, full({2, 3}, 1, dtype, Device::kCPU));
+        bool rejected = false;
+        try { output.backward(); } catch (const std::invalid_argument&) { rejected = true; }
+        require(rejected, "implicit gradient remains restricted to one element");
+    }
+    Tensor x = full({}, 3.0f, Dtype::kFloat32, Device::kCPU);
+    x.requires_grad_(true);
+    Tensor output = mul(x, x);
+    Tensor gradient = full({}, 2.0f, Dtype::kFloat32, Device::kCPU);
+    {
+        NogradNode guard;
+        output.backward(gradient);
+        require(!EnableGrad(), "backward must preserve outer no-grad scope");
+        Tensor grad = x.grad().to(Device::kCPU);
+        require(*static_cast<const float*>(grad.data_ptr()) == 12, "explicit scalar gradient");
+    }
+    invalid(Tensor(), gradient);
+    Tensor integer = full({}, 1, Dtype::kInt32, Device::kCPU);
+    invalid(integer, integer);
+    bool rejected = false;
+    try { x.backward(gradient); } catch (const std::logic_error&) { rejected = true; }
+    require(rejected && EnableGrad(), "explicit backward still requires a graph node");
+}
 void TestSqueezeUnsqueeze() {
     auto require = [](bool condition, const char* message) {
         if (!condition) throw std::runtime_error(message);
@@ -527,6 +600,7 @@ void TestReshapeBackward() {
     }
 }
 int main() {
+    TestExplicitBackwardGradient();
     TestSqueezeUnsqueeze();
     TestIndexBackward();
     TestNarrowBackward();

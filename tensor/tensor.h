@@ -60,6 +60,7 @@ public:
     Tensor grad() const;
     Tensor detach() const;   // 共享 storage，使用新的空 meta
     void backward();         // 标量反向入口
+    void backward(const Tensor& gradient);  // 指定上游梯度，须同 shape/dtype/device
     // Autograd 内部接口：供算子和反向引擎使用。
     std::shared_ptr<AutogradNode> grad_node() const;
     void set_grad_node(std::shared_ptr<AutogradNode> node);

@@ -74,7 +74,8 @@ bool requires_grad() const;
 Tensor& requires_grad_(bool value);   // 控制是否保存梯度
 bool has_grad() const;                // meta->grad.has_value()
 Tensor grad() const;                  // 无梯度返回默认空 Tensor
-void backward();                      // 标量入口，调用 RunBackward
+void backward();                      // 单元素入口，默认上游梯度为 1
+void backward(const Tensor& gradient); // 指定上游梯度，须同 shape/dtype/device
 Tensor detach() const;                // 共享存储，使用新的空 meta
 
 // 框架内部
@@ -113,12 +114,12 @@ public:
 ## 反向引擎
 
 ```text
-RunBackward(root)
-1. 检查 root 非空、numel() == 1、dtype 为浮点、grad_node 非空
+RunBackward(root, gradient)
+1. 检查 root 与 gradient 非空、同 shape/dtype/device，root 为浮点且 grad_node 非空；无参入口额外要求 root.numel() == 1
 2. TopoSort(root)：DFS 后序，按 node 指针去重，在 topo_order 中保存输出 Tensor
      通过输出的 grad_node() 取得 Node；将前向拓扑序反转为反向执行顺序
 3. 创建 NogradNode：后续梯度计算和累加不再建图
-4. 为 root 对应的节点写入全 1 的 seed
+4. 为 root 对应的节点写入 gradient.clone()；无参入口创建全 1 梯度后复用此流程
 5. 逆序处理每一项：
      output_grad = 临时梯度表中该节点的梯度
      输出 Tensor 的 requires_grad 为 true 时，先累加到持久 grad（此刻梯度已收齐）
@@ -142,7 +143,7 @@ RunBackward(root)
 
 ## 第一阶段限制
 
-- 只支持标量输出 `backward()`；非标量后续加 `backward(seed)`。
+- 无参 `backward()` 只支持单元素输出；`backward(gradient)` 支持非标量输出，gradient 须非空且与输出同 shape/dtype/device。两个入口均要求输出有 grad_node。
 - 支持 Float32、Float16、BFloat16 梯度；`RunBackward` 拒绝整数 dtype，`requires_grad_` 本身不限制 dtype。
 - `operator[]`、`reshape()`、`narrow()`、`transpose()`、`permute()`、`clone()` 和跨设备 `to()` 接入反向节点。`detach()` 和同设备 `to()` 不受影响。
 - `zero_` / `fill_` / `copy_` 不建图；优化器更新需在 `NogradNode` 下进行。
@@ -159,5 +160,5 @@ RunBackward(root)
 - [x] 支持 `narrow` 反向和前向建图，本地 CPU 及 Colab CPU/CUDA 回归已通过。
 - [x] 支持 `operator[]` 的视图反向与前向建图，本地 CPU 及 Colab CPU/CUDA 回归已通过。
 - [ ] 支持指定维度归约、广播及矩阵乘的反向。
-- [ ] 支持非标量输出的 `backward(seed)`。
+- [x] 支持非标量输出的 `backward(gradient)`；本地 CPU 回归 8/8 通过，用户在 Colab 完成 CPU/CUDA 回归，CTest 13/13 通过（2.30 秒）。
 - [ ] 增加原地修改检测及对应测试。
