@@ -87,3 +87,51 @@ ctest --test-dir build/tests -C Release --output-on-failure
 VS Code 安装 C/C++ 与 CMake Tools 后运行 `CMake: Configure`，由 CMake Tools 提供实际编译器、include 和宏定义；`.vscode/` 不保存机器绝对路径。未安装完整 Toolkit 时，可选的 `build/cuda-headers-12.4/include` 仅供本地补全，不参与 CUDA 构建。首次配置如需选择 Kit，Windows CUDA 开发选择 Visual Studio x64。
 
 本轮视图与布局扩展（reshape/narrow/索引反向、contiguous/squeeze/unsqueeze、reshape 推导与非连续输入、公共检查重构）已由用户在 Colab 完成 CPU/CUDA 回归，CTest 13/13 通过，总耗时 2.30 秒；本地 CPU 回归 8/8 通过。
+
+## Matmul 正确性与 CPU 性能对比
+
+`matmul_cpu_test` 和 `matmul_cuda_test` 通过 CTest 验证二维 matmul，覆盖 8 种 dtype、非连续输入、低精度累加和整数回绕。CUDA 用例还覆盖输出元素数超过一个 block 的线程数。用户在 Colab 完成 CPU/CUDA 回归，CTest 15/15 通过。
+
+性能测试单独构建，唯一对照是 llama.cpp 的 ggml CPU 后端。
+
+```sh
+cmake -S . -B build/bench -DBUILD_BENCHMARKS=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build/bench --config Release --target matmul_cpu_bench
+```
+
+运行 `build/bench/tests/benchmarks/matmul_cpu_bench`。Visual Studio 生成器的可执行文件在该目录下的 `Release/` 中。
+
+### 依赖版本
+
+`3rdparty/CMakeLists.txt` 中的 `LLAMA_CPP_REVISION` 是 llama.cpp 的版本锁定。开启 benchmark 时，CMake 从该 commit 下载源码归档并构建其中的 ggml。已有同版本源码时，可传入 `-DFETCHCONTENT_SOURCE_DIR_LLAMA_CPP=<目录>`。更新版本时，在同一次变更里更新 commit、验证构建并重跑性能对比。
+
+### 用例尺寸
+
+当前程序运行快速组。FP32，固定 `K=N=1024`，取 `M=1/32/128`，分别测行主序 B 和转置权重。该组用于检查 benchmark 能运行和输出一致。
+
+模型层尺寸组用于评估 FP32 kernel 优化，目前已在 CUDA benchmark 提供。形状按 `A[M,K] × B[K,N]` 记录，保持两侧各自的 dtype 和执行配置后再比较不同 M。
+
+| M | K | N | 覆盖场景 |
+|---:|---:|---:|---|
+| 1、2、4、8 | 4096 | 4096 | 单行 decode 到小批 decode |
+| 32、128、512 | 4096 | 4096 | 多行输入，观察权重复用随 M 的变化 |
+| 1、32、512 | 4096 | 14336 | FFN 上投影 |
+| 1、32、512 | 14336 | 4096 | FFN 下投影 |
+
+模型层尺寸组以转置权重为主。评估行主序快路径或 tiling 时，另测同形状的行主序 B，并单独报告结果。
+
+### 计时与报告
+
+mini-infer 当前串行计算。ggml 使用算子 API 的上游默认线程配置 `GGML_DEFAULT_N_THREADS`，锁定版本为 4。基准输出会打印两侧的线程配置。
+
+每组先预热 3 次并校验输出，再交替测量两侧各 10 次。报告均值、中位数和按均值计算的 GFLOP/s。预分配和建图在计时外。行主序 B 需要 ggml 在图中转置并连续化，转换计入耗时。转置权重可直接传给 ggml。两种布局的结果分别解释。
+
+性能报告记录两侧代码版本、CPU、编译器和优化选项、线程数、dtype、M/K/N、布局及计时范围。共享 CI 跑正确性和 benchmark 构建检查。需要设置性能门槛时，在固定机器上建立测量波动范围后再启用。
+
+## CUDA matmul 性能对比
+
+在 Colab GPU runtime 按顺序运行 `setup.ipynb`。CMake 单元格根据 GPU 计算能力选择 CUDA 架构，在 `build/cuda-colab` 一次构建 Release 版测试和 benchmark。接下来的 CTest 和 CUDA perf 单元格分别运行已构建的程序。
+
+默认测 `M=1/32/128, K=N=1024`。在最后一个单元格的命令末尾加 `--model`，可运行表中的 13 个模型层尺寸。当前单 block 路径跑大尺寸耗时较长。
+
+两侧在同一张 GPU 上使用相同的 FP32 输入和 `weight.T` 布局。ggml 运行单个 `ggml_mul_mat` 节点，采用 llama.cpp 的默认 CUDA Graph 配置和 kernel 分发。预分配、上传和输出核对在计时外。预热 3 次后，两侧交替测量各 10 次，计时包含提交和等待 GPU 完成，输出均值、中位数、GFLOP/s 和耗时比。

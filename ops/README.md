@@ -162,7 +162,8 @@ FP16/BF16 使用 16 位编码，不能直接将编码作为整数参与浮点运
 
 - [ ] 按需建立扩展算子的接口和实现。
 - [ ] 新算子实现时同步补 Node 和反向公式。
-- [ ] 实现 `matmul()` / `linear()` 的 CPU 路径。
+- [x] 实现二维 `matmul()` 的 CPU/CUDA 前向，支持 8 种 dtype 和非连续输入。Colab CPU/CUDA 回归 15/15 通过。
+- [ ] 实现 `matmul()` 反向及 `linear()`。
 - [ ] 实现 `rms_norm()` / `rms_norm_zero_centered()` / `rms_norm_gated()` / `layer_norm()`。
 - [ ] 实现 `silu()` / `sigmoid()` / `softplus()` / `exp()`。
 - [x] 实现全元素 `sum()` 的 CPU/CUDA 前向与反向，并在 Colab A100 验证 CUDA 测试。

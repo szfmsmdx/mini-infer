@@ -31,8 +31,10 @@ add_library(mini_infer STATIC
     autograd/backward_nodes/tensor_ops.cpp
     ops/tensor_ops.cpp
     ops/elementwise.cpp
+    ops/matmul.cpp
     ops/reduction.cpp
     ops/cpu/elementwise.cpp
+    ops/cpu/matmul.cpp
     ops/cpu/reduction.cpp
     tensor/tensor.cpp
     tensor/check.cpp
@@ -48,6 +50,7 @@ target_include_directories(mini_infer PUBLIC
 if(ENABLE_CUDA)
     target_sources(mini_infer PRIVATE
         ops/cuda/elementwise.cu
+        ops/cuda/matmul.cu
         ops/cuda/data_ops.cu
         ops/cuda/reduction.cu
     )
@@ -65,7 +68,21 @@ if(MSVC)
 endif()
 
 include(CTest)
+option(BUILD_BENCHMARKS "Build performance benchmarks" OFF)
+option(BUILD_CUDA_BENCHMARKS "Build CUDA performance benchmarks" OFF)
+if(BUILD_CUDA_BENCHMARKS AND NOT ENABLE_CUDA)
+    message(FATAL_ERROR "BUILD_CUDA_BENCHMARKS requires a working CUDA compiler and Toolkit >= 12.4")
+endif()
+if(BUILD_BENCHMARKS OR BUILD_CUDA_BENCHMARKS)
+    add_subdirectory(3rdparty)
+    add_subdirectory(tests/benchmarks)
+endif()
+
 if(BUILD_TESTING)
+    add_executable(matmul_cpu_test tests/matmul_test.cpp)
+    target_link_libraries(matmul_cpu_test PRIVATE mini_infer)
+    add_test(NAME matmul_cpu_test COMMAND matmul_cpu_test)
+
     add_executable(reduction_cpu_test tests/reduction_cpu_test.cpp)
     target_link_libraries(reduction_cpu_test PRIVATE mini_infer)
     add_test(NAME reduction_cpu_test COMMAND reduction_cpu_test)
@@ -99,6 +116,12 @@ if(BUILD_TESTING)
     add_test(NAME elementwise_cpu_test COMMAND elementwise_cpu_test)
 
     if(ENABLE_CUDA)
+        add_executable(matmul_cuda_test tests/matmul_test.cpp)
+        target_compile_definitions(matmul_cuda_test PRIVATE MATMUL_TEST_CUDA)
+        target_link_libraries(matmul_cuda_test PRIVATE mini_infer)
+        add_test(NAME matmul_cuda_test COMMAND matmul_cuda_test)
+        set_tests_properties(matmul_cuda_test PROPERTIES SKIP_RETURN_CODE 77)
+
         add_executable(reduction_cuda_test tests/reduction_cuda_test.cpp)
         target_link_libraries(reduction_cuda_test PRIVATE mini_infer)
         add_test(NAME reduction_cuda_test COMMAND reduction_cuda_test)

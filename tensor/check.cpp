@@ -21,6 +21,19 @@ void CheckSameDevice(const Tensor& a, const Tensor& b, const char* message) {
     if (a.device() != b.device()) throw std::invalid_argument(message);
 }
 
+void CheckMatmul(const Tensor& a, const Tensor& b) {
+    CheckNotEmpty(a, "matmul: left input must not be empty");
+    CheckNotEmpty(b, "matmul: right input must not be empty");
+    CheckSameDtype(a, b, "matmul: inputs must have the same dtype");
+    CheckSameDevice(a, b, "matmul: inputs must be on the same device");
+    if (a.dim() != 2 || b.dim() != 2) {
+        throw std::invalid_argument("matmul: inputs must be two-dimensional");
+    }
+    if (a.size(1) != b.size(0)) {
+        throw std::invalid_argument("matmul: inner dimensions must match");
+    }
+}
+
 void CheckFloatingDtype(Dtype dtype, const char* message) {
     if (dtype != Dtype::kFloat32 && dtype != Dtype::kFloat16 && dtype != Dtype::kBFloat16)
         throw std::invalid_argument(message);

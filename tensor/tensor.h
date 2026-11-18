@@ -99,6 +99,7 @@ public:
 
     // Tensor 操作：求和归约。
     Tensor sum() const;
+    Tensor matmul(const Tensor& other) const;
     Tensor sum(int dim, bool keepdim = false) const;
 
     // Tensor 操作：填充、复制与设备迁移。
