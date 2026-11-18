@@ -5,10 +5,10 @@
 #include <stdexcept>
 #include <type_traits>
 
-#include "autograd/autograd.h"
+#include "mini_infer/autograd.h"
 #include "autograd/backward_nodes/reduction.h"
-#include "tensor/scalar.h"
-#include "tensor/tensor.h"
+#include "mini_infer/scalar.h"
+#include "mini_infer/tensor.h"
 
 namespace {
 

@@ -17,7 +17,7 @@
 #include <ggml-cuda.h>
 
 #include "ops/backend.h"
-#include "tensor/tensor.h"
+#include "mini_infer/tensor.h"
 #include "utils/memory.h"
 
 namespace {

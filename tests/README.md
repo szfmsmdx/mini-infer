@@ -1,5 +1,7 @@
 # 测试
 
+正确性测试在 `tests/CMakeLists.txt` 注册到 CTest。与 ggml 对比的性能程序由 `tests/benchmarks/CMakeLists.txt` 按需构建。
+
 需要支持 C++17 的编译器和 CMake 3.18+。从仓库根目录运行：
 
 ```powershell
@@ -64,7 +66,7 @@ ctest --test-dir build/tests -C Release -R "^tensor_cpu_test$" --output-on-failu
 
 CMake 自动检测 Toolkit >= 12.4 和可用 CUDA 编译器，满足条件时编译 CUDA，否则只构建 CPU。`ENABLE_CUDA` 是自动检测结果，无需手动设置。更换工具链后使用新的构建目录重新检测，避免复用旧缓存。
 仅有 Toolkit 而无可用 GPU/驱动时，CUDA 测试显示为跳过。
-默认 Logger 的 `.log` 位于程序运行时的工作目录；CTest 运行时该目录是构建目录。
+默认 Logger 的 `.log` 位于程序运行时的工作目录。CTest 默认从构建目录下的 `tests/` 运行正确性测试。
 
 在有 CUDA Toolkit 和 GPU 的 Colab 环境，从已同步最新源码的仓库根目录运行：
 

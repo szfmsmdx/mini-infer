@@ -9,7 +9,7 @@
 #include <utility>
 #include <vector>
 
-#include "tensor/tensor.h"
+#include "mini_infer/tensor.h"
 
 namespace {
 

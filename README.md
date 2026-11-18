@@ -6,16 +6,22 @@
 
 ```text
 mini_infer/
-├── tensor/          # Tensor 状态、存储所有权、dtype 与 Scalar
-├── ops/             # Tensor 操作、数值算子和 CPU/CUDA kernel
-├── autograd/        # 梯度状态、反向节点与自动微分引擎（WIP）
-├── utils/           # 内存分配、日志等公共工具
-├── tests/           # CPU/CUDA Tensor、逐元素算子、自动微分、浮点编码与日志测试
-├── CMakeLists.txt   # C++17 构建与 CTest 配置
+├── include/mini_infer/  # Tensor、dtype、Scalar、Autograd 和算子的公开头文件
+├── src/
+│   ├── tensor/          # Tensor 存储所有权、元数据与内部校验
+│   ├── ops/             # 布局、填充、复制、数值算子与 CPU/CUDA kernel
+│   ├── autograd/        # 反向节点与自动微分引擎
+│   └── utils/           # 内存分配与日志
+├── tests/               # CPU/CUDA 正确性测试与独立 benchmark
+├── 3rdparty/            # 按需构建 benchmark 使用的 ggml
+├── CMakeLists.txt       # C++17 库目标与构建选项
+├── setup.ipynb          # Colab 构建、测试和 benchmark
 └── README.md
 ```
 
-各模块的具体说明见各自目录下的 README.md。
+链接 CMake 目标 `mini_infer` 后，可通过 `#include "mini_infer/tensor.h"` 使用 Tensor。算子后端与具体反向节点的头文件位于 `src/`，供库内部使用。
+
+模块说明见 [Tensor](src/tensor/README.md)、[算子](src/ops/README.md)、[Autograd](src/autograd/README.md) 和 [测试](tests/README.md)。
 
 ## CUDA 开发基线
 

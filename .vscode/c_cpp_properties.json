@@ -5,7 +5,8 @@
       "configurationProvider": "ms-vscode.cmake-tools",
       "mergeConfigurations": true,
       "includePath": [
-        "${workspaceFolder}",
+        "${workspaceFolder}/include",
+        "${workspaceFolder}/src",
         "${env:CUDA_PATH}/include",
         "${workspaceFolder}/build/cuda-headers-12.4/include"
       ],

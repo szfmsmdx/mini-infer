@@ -10,8 +10,8 @@
 #include <utility>
 #include <vector>
 
-#include "autograd/autograd.h"
-#include "tensor/tensor.h"
+#include "mini_infer/autograd.h"
+#include "mini_infer/tensor.h"
 #include "utils/memory.h"
 
 namespace {

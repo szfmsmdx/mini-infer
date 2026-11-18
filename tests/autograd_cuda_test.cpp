@@ -8,10 +8,10 @@
 #include <utility>
 #include <vector>
 
-#include "autograd/autograd.h"
+#include "mini_infer/autograd.h"
 #include "autograd/backward_nodes/tensor_ops.h"
-#include "ops/elementwise.h"
-#include "tensor/tensor.h"
+#include "mini_infer/ops/elementwise.h"
+#include "mini_infer/tensor.h"
 
 namespace {
 using namespace mtensor;

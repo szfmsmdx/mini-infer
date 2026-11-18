@@ -5,8 +5,8 @@
 #include <utility>
 #include <vector>
 
-#include "autograd/autograd.h"
-#include "tensor/tensor.h"
+#include "mini_infer/autograd.h"
+#include "mini_infer/tensor.h"
 
 namespace mtensor {
 struct TensorMetadataTestAccess {

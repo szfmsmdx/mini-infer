@@ -7,7 +7,7 @@
 #include <cuda_runtime.h>
 #endif
 
-#include "ops/matmul.h"
+#include "mini_infer/ops/matmul.h"
 
 namespace {
 using namespace mtensor;

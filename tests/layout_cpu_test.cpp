@@ -4,9 +4,9 @@
 #include <stdexcept>
 #include <vector>
 
-#include "autograd/autograd.h"
-#include "ops/elementwise.h"
-#include "tensor/tensor.h"
+#include "mini_infer/autograd.h"
+#include "mini_infer/ops/elementwise.h"
+#include "mini_infer/tensor.h"
 
 namespace {
 using namespace mtensor;

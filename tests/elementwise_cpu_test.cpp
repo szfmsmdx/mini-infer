@@ -6,8 +6,8 @@
 #include <stdexcept>
 #include <vector>
 
-#include "ops/elementwise.h"
-#include "tensor/tensor.h"
+#include "mini_infer/ops/elementwise.h"
+#include "mini_infer/tensor.h"
 
 namespace {
 

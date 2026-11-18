@@ -25,34 +25,40 @@ else()
 endif()
 
 add_library(mini_infer STATIC
-    autograd/autograd.cpp
-    autograd/backward_nodes/elementwise.cpp
-    autograd/backward_nodes/reduction.cpp
-    autograd/backward_nodes/tensor_ops.cpp
-    ops/tensor_ops.cpp
-    ops/elementwise.cpp
-    ops/matmul.cpp
-    ops/reduction.cpp
-    ops/cpu/elementwise.cpp
-    ops/cpu/matmul.cpp
-    ops/cpu/reduction.cpp
-    tensor/tensor.cpp
-    tensor/check.cpp
-    ops/cpu/data_ops.cpp
-    utils/logger.cpp
-    utils/memory.cpp
+    src/autograd/autograd.cpp
+    src/autograd/backward_nodes/elementwise.cpp
+    src/autograd/backward_nodes/reduction.cpp
+    src/autograd/backward_nodes/tensor_ops.cpp
+    src/ops/layout.cpp
+    src/ops/fill.cpp
+    src/ops/copy.cpp
+    src/ops/elementwise.cpp
+    src/ops/matmul.cpp
+    src/ops/reduction.cpp
+    src/ops/cpu/copy.cpp
+    src/ops/cpu/elementwise.cpp
+    src/ops/cpu/fill.cpp
+    src/ops/cpu/matmul.cpp
+    src/ops/cpu/reduction.cpp
+    src/tensor/tensor.cpp
+    src/tensor/check.cpp
+    src/tensor/print.cpp
+    src/utils/logger.cpp
+    src/utils/memory.cpp
 )
 
-target_include_directories(mini_infer PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}
+target_include_directories(mini_infer
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
 if(ENABLE_CUDA)
     target_sources(mini_infer PRIVATE
-        ops/cuda/elementwise.cu
-        ops/cuda/matmul.cu
-        ops/cuda/data_ops.cu
-        ops/cuda/reduction.cu
+        src/ops/cuda/copy.cu
+        src/ops/cuda/elementwise.cu
+        src/ops/cuda/fill.cu
+        src/ops/cuda/matmul.cu
+        src/ops/cuda/reduction.cu
     )
     set_target_properties(mini_infer PROPERTIES CUDA_STANDARD 17 CUDA_STANDARD_REQUIRED ON)
     target_link_libraries(mini_infer PUBLIC CUDA::cudart)
@@ -79,72 +85,5 @@ if(BUILD_BENCHMARKS OR BUILD_CUDA_BENCHMARKS)
 endif()
 
 if(BUILD_TESTING)
-    add_executable(matmul_cpu_test tests/matmul_test.cpp)
-    target_link_libraries(matmul_cpu_test PRIVATE mini_infer)
-    add_test(NAME matmul_cpu_test COMMAND matmul_cpu_test)
-
-    add_executable(reduction_cpu_test tests/reduction_cpu_test.cpp)
-    target_link_libraries(reduction_cpu_test PRIVATE mini_infer)
-    add_test(NAME reduction_cpu_test COMMAND reduction_cpu_test)
-
-    add_executable(layout_cpu_test tests/layout_cpu_test.cpp)
-    target_link_libraries(layout_cpu_test PRIVATE mini_infer)
-    add_test(NAME layout_cpu_test COMMAND layout_cpu_test)
-
-    add_executable(scalar_test tests/scalar_test.cpp)
-    target_link_libraries(scalar_test PRIVATE mini_infer)
-    add_test(NAME scalar_test COMMAND scalar_test)
-
-    add_executable(autograd_cpu_test tests/autograd_cpu_test.cpp)
-    target_link_libraries(autograd_cpu_test PRIVATE mini_infer)
-    add_test(NAME autograd_cpu_test COMMAND autograd_cpu_test)
-
-    add_executable(logger_test tests/logger_test.cpp)
-    target_link_libraries(logger_test PRIVATE mini_infer)
-    add_test(NAME logger_test COMMAND logger_test)
-
-    add_executable(dtype_encode_test tests/dtype_encode_test.cpp)
-    target_link_libraries(dtype_encode_test PRIVATE mini_infer)
-    add_test(NAME dtype_encode_test COMMAND dtype_encode_test)
-
-    add_executable(tensor_cpu_test tests/tensor_cpu_test.cpp)
-    target_link_libraries(tensor_cpu_test PRIVATE mini_infer)
-    add_test(NAME tensor_cpu_test COMMAND tensor_cpu_test)
-
-    add_executable(elementwise_cpu_test tests/elementwise_cpu_test.cpp)
-    target_link_libraries(elementwise_cpu_test PRIVATE mini_infer)
-    add_test(NAME elementwise_cpu_test COMMAND elementwise_cpu_test)
-
-    if(ENABLE_CUDA)
-        add_executable(matmul_cuda_test tests/matmul_test.cpp)
-        target_compile_definitions(matmul_cuda_test PRIVATE MATMUL_TEST_CUDA)
-        target_link_libraries(matmul_cuda_test PRIVATE mini_infer)
-        add_test(NAME matmul_cuda_test COMMAND matmul_cuda_test)
-        set_tests_properties(matmul_cuda_test PROPERTIES SKIP_RETURN_CODE 77)
-
-        add_executable(reduction_cuda_test tests/reduction_cuda_test.cpp)
-        target_link_libraries(reduction_cuda_test PRIVATE mini_infer)
-        add_test(NAME reduction_cuda_test COMMAND reduction_cuda_test)
-        set_tests_properties(reduction_cuda_test PROPERTIES SKIP_RETURN_CODE 77)
-
-        add_executable(autograd_cuda_test tests/autograd_cuda_test.cpp)
-        target_link_libraries(autograd_cuda_test PRIVATE mini_infer)
-        add_test(NAME autograd_cuda_test COMMAND autograd_cuda_test)
-        set_tests_properties(autograd_cuda_test PROPERTIES SKIP_RETURN_CODE 77)
-
-        add_executable(tensor_cuda_metadata_test tests/tensor_cuda_metadata_test.cpp)
-        target_link_libraries(tensor_cuda_metadata_test PRIVATE mini_infer)
-        add_test(NAME tensor_cuda_metadata_test COMMAND tensor_cuda_metadata_test)
-        set_tests_properties(tensor_cuda_metadata_test PROPERTIES SKIP_RETURN_CODE 77)
-
-        add_executable(tensor_cuda_test tests/tensor_cuda_test.cpp)
-        target_link_libraries(tensor_cuda_test PRIVATE mini_infer)
-        add_test(NAME tensor_cuda_test COMMAND tensor_cuda_test)
-        set_tests_properties(tensor_cuda_test PROPERTIES SKIP_RETURN_CODE 77)
-
-        add_executable(elementwise_cuda_test tests/elementwise_cuda_test.cpp)
-        target_link_libraries(elementwise_cuda_test PRIVATE mini_infer)
-        add_test(NAME elementwise_cuda_test COMMAND elementwise_cuda_test)
-        set_tests_properties(elementwise_cuda_test PROPERTIES SKIP_RETURN_CODE 77)
-    endif()
+    add_subdirectory(tests)
 endif()
