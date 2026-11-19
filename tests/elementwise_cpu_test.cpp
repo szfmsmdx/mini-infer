@@ -8,6 +8,7 @@
 
 #include "mini_infer/ops/elementwise.h"
 #include "mini_infer/tensor.h"
+#include "scalar_arithmetic.h"
 
 namespace {
 
@@ -768,6 +769,7 @@ void TestErrors() {
 
 int main() {
     try {
+        mtensor_test::TestScalarArithmetic(Device::kCPU);
         TestFloat32Add();
         TestFloat32Sub();
         TestFloat32Mul();

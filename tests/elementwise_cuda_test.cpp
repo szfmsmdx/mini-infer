@@ -11,6 +11,7 @@
 #include "mini_infer/autograd.h"
 #include "mini_infer/ops/elementwise.h"
 #include "mini_infer/tensor.h"
+#include "scalar_arithmetic.h"
 
 namespace {
 
@@ -332,6 +333,7 @@ int main() {
             return 77;
         }
         CheckCuda(status);
+        mtensor_test::TestScalarArithmetic(Device::kCUDA);
         mtensor::NogradNode guard;
         TestFloat32();
         TestIntegers();

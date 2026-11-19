@@ -95,12 +95,23 @@ public:
     Tensor operator-(const Tensor& other) const;
     Tensor operator*(const Tensor& other) const;
     Tensor operator/(const Tensor& other) const;
+    // 标量按当前 Tensor 的 dtype 转换，规则与 fill_ 相同。
+    Tensor operator+(const Scalar& value) const;
+    Tensor operator-(const Scalar& value) const;
+    Tensor operator*(const Scalar& value) const;
+    Tensor operator/(const Scalar& value) const;
     Tensor operator-() const;
+    Tensor sqrt() const;
+    Tensor rsqrt() const;
+    Tensor exp() const;
 
-    // Tensor 操作：求和归约。
-    Tensor sum() const;
     Tensor matmul(const Tensor& other) const;
+
+    // Tensor 操作：求和与均值归约。
+    Tensor sum() const;
     Tensor sum(int dim, bool keepdim = false) const;
+    Tensor mean() const;
+    Tensor mean(int dim, bool keepdim = false) const;
 
     // Tensor 操作：填充、复制与设备迁移。
     Tensor& fill_(const Scalar& value);
@@ -134,6 +145,11 @@ private:
 
     std::shared_ptr<AutogradMetadata> autograd_metadata_;
 };
+
+Tensor operator+(const Scalar& value, const Tensor& x);
+Tensor operator-(const Scalar& value, const Tensor& x);
+Tensor operator*(const Scalar& value, const Tensor& x);
+Tensor operator/(const Scalar& value, const Tensor& x);
 
 // 创建指定形状的 Tensor，并用普通数值或零维 Tensor 填充。
 Tensor full(const std::vector<int>& shape, const Scalar& value, Dtype dtype,

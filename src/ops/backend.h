@@ -7,6 +7,16 @@
 
 namespace mtensor {
 
+class Tensor;
+void RsqrtCPU(const Tensor& x, Tensor& out);
+void RsqrtCUDA(const Tensor& x, Tensor& out);
+
+// 输入按 stride 读取，输出连续；整数输入对应 Float32 输出。
+void SqrtCPU(const void* input, void* output, Dtype dtype, const std::vector<int>& shape,
+             const std::vector<std::size_t>& stride);
+void SqrtCUDA(const void* input, void* output, Dtype dtype, std::size_t numel,
+              const int* shape, const std::size_t* stride, int ndim);
+
 // Two-dimensional inputs with element strides and contiguous output.
 void MatmulCPU(const void* a, const void* b, void* output, Dtype dtype,
                int m, int k, int n, const std::vector<std::size_t>& a_stride,

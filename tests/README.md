@@ -14,6 +14,8 @@ ctest --test-dir build/tests -C Release --output-on-failure
 
 | 测试程序 | 覆盖内容 |
 | --- | --- |
+| `sqrt_cpu_test` / `sqrt_cuda_test` | sqrt、rsqrt 的 8 种输入 dtype、整数提升、跨步视图、特殊值、浮点梯度和原地修改检测 |
+| `linear_cpu_test` / `linear_cuda_test` | 二维 FP32 输入，有无 bias 的前向与反向；逐元素检查原始参数梯度及 bias 的 batch 求和；检查构造时拒绝错误的权重或偏置形状 |
 | `reduction_cpu_test` | sum 的 8 种 dtype、整数提升与回绕、非连续视图和端到端反向 |
 | `reduction_cuda_test` | sum 的 8 种 dtype、线程数边界、跨步循环、非连续视图和端到端反向 |
 | `layout_cpu_test` | `permute` 的维度排列、共享存储、非法输入、反向梯度位置和端到端传播 |
@@ -92,7 +94,9 @@ VS Code 安装 C/C++ 与 CMake Tools 后运行 `CMake: Configure`，由 CMake To
 
 ## Matmul 正确性与 CPU 性能对比
 
-`matmul_cpu_test` 和 `matmul_cuda_test` 通过 CTest 验证二维 matmul，覆盖 8 种 dtype、非连续输入、低精度累加和整数回绕。CUDA 用例还覆盖输出元素数超过一个 block 的线程数。用户在 Colab 完成 CPU/CUDA 回归，CTest 15/15 通过。
+`matmul_cpu_test` 和 `matmul_cuda_test` 共用二维 matmul 用例。前向覆盖 8 种 dtype、非连续输入、低精度累加和整数回绕；CUDA 用例还覆盖输出元素数超过一个 block 的线程数。此前的前向版本已在 Colab 通过 15/15 项 CTest。
+
+反向用例对 FP32、FP16、BF16 分别运行 `Y = X @ W.T`：X 为 [2,3]，原始权重 W 为 [4,3]，传入非均匀的上游梯度 G [2,4]。测试逐元素核对叶子梯度 `dX = G @ W` 和 `dW = G.T @ X`，并检查 shape、dtype、device。
 
 性能测试单独构建，唯一对照是 llama.cpp 的 ggml CPU 后端。
 

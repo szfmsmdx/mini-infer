@@ -2,6 +2,10 @@ add_executable(matmul_cpu_test matmul_test.cpp)
 target_link_libraries(matmul_cpu_test PRIVATE mini_infer)
 add_test(NAME matmul_cpu_test COMMAND matmul_cpu_test)
 
+add_executable(linear_cpu_test linear_test.cpp)
+target_link_libraries(linear_cpu_test PRIVATE mini_infer)
+add_test(NAME linear_cpu_test COMMAND linear_cpu_test)
+
 add_executable(reduction_cpu_test reduction_cpu_test.cpp)
 target_link_libraries(reduction_cpu_test PRIVATE mini_infer)
 add_test(NAME reduction_cpu_test COMMAND reduction_cpu_test)
@@ -36,7 +40,27 @@ add_executable(elementwise_cpu_test elementwise_cpu_test.cpp)
 target_link_libraries(elementwise_cpu_test PRIVATE mini_infer)
 add_test(NAME elementwise_cpu_test COMMAND elementwise_cpu_test)
 
+add_executable(sqrt_cpu_test sqrt_test.cpp)
+target_link_libraries(sqrt_cpu_test PRIVATE mini_infer)
+add_test(NAME sqrt_cpu_test COMMAND sqrt_cpu_test)
+
+add_executable(exp_cpu_test exp_test.cpp)
+target_link_libraries(exp_cpu_test PRIVATE mini_infer)
+add_test(NAME exp_cpu_test COMMAND exp_cpu_test)
+
 if(ENABLE_CUDA)
+    add_executable(sqrt_cuda_test sqrt_test.cpp)
+    target_compile_definitions(sqrt_cuda_test PRIVATE SQRT_TEST_CUDA)
+    target_link_libraries(sqrt_cuda_test PRIVATE mini_infer)
+    add_test(NAME sqrt_cuda_test COMMAND sqrt_cuda_test)
+    set_tests_properties(sqrt_cuda_test PROPERTIES SKIP_RETURN_CODE 77)
+
+    add_executable(linear_cuda_test linear_test.cpp)
+    target_compile_definitions(linear_cuda_test PRIVATE LINEAR_TEST_CUDA)
+    target_link_libraries(linear_cuda_test PRIVATE mini_infer)
+    add_test(NAME linear_cuda_test COMMAND linear_cuda_test)
+    set_tests_properties(linear_cuda_test PROPERTIES SKIP_RETURN_CODE 77)
+
     add_executable(matmul_cuda_test matmul_test.cpp)
     target_compile_definitions(matmul_cuda_test PRIVATE MATMUL_TEST_CUDA)
     target_link_libraries(matmul_cuda_test PRIVATE mini_infer)

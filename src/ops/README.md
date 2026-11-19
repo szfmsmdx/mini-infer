@@ -6,6 +6,8 @@
 
 其他算子将在开始实现时按需建立文件和接口。
 
+`mtensor::sqrt(x)` 逐元素开平方；`mtensor::rsqrt(x)` 直接计算平方根的倒数，不分配中间 Tensor。CPU 遍历一次输入，CUDA 调用一个使用 `rsqrtf` 的 kernel。包含 `mini_infer/ops.h` 即可使用。两者都保持 shape 和 device，支持跨步视图。整数输入先转 FP32 再计算，不建反向图；FP32、FP16 和 BF16 输出保持输入 dtype，以 FP32 计算后写回。
+
 `add()` / `sub()` / `mul()` / `div()` 支持自动广播：右对齐推导公共 shape，在设备分发前按需创建 `broadcast()` 视图，复用 stride kernel；反向节点保存广播后的输入，由 `BroadcastNode` 沿广播维度求和。相同 shape 不创建额外视图。输入仍须同 dtype、同 device。
 
 ## 文件结构
@@ -64,7 +66,7 @@ Tensor neg(const Tensor& a);
 
 `mul()` / `operator*` 表示对应位置逐元素相乘；矩阵乘法使用独立的 `matmul()` 接口。
 
-要求两个输入非空，且 shape、dtype、device 相同。输出保持相同的 shape、dtype、device。不做广播、隐式类型转换、跨设备计算或原地版本。
+两个 Tensor 的 dtype 和 device 必须相同，shape 按广播规则匹配。`x + eps`、`2 - x`、`x * 0.5f`、`1 / x` 等运算支持标量在任一侧。标量按 `fill_` 的规则转换为与 x 同 dtype、同 device 的零维 Tensor，再广播计算。因此整数 Tensor 与浮点标量混算时，先把标量转为整数，不会提升整个 Tensor。
 
 从一开始按多 dtype 组织计算：普通数值类型使用模板，FP16/BF16 使用专门的数值转换或 CUDA 浮点类型。实现尚未覆盖的 dtype/device 必须明确报错，不能统一按 `float*` 解释。
 
@@ -81,8 +83,10 @@ CPU 和 CUDA 逐元素运算支持不同 stride 的非连续输入；CUDA 输出
 | `mul(a, b)` | `MulNode` | `dA = G * b`, `dB = G * a` |
 | `div(a, b)` | `DivNode` | `dA = G / b`, `dB = -G * a / (b * b)` |
 | `neg(a)` | `NegNode` | `dA = -G` |
+| `sqrt(x)` | `SqrtNode` | `dX = G / (2 * sqrt(x))` |
+| `rsqrt(x)` | `RsqrtNode` | 正数输入：令 `y = 1 / sqrt(x)`，逐元素计算 `dX = -0.5 * G * y³` |
 
-所有 Node 都通过 `inputs` 保存前向输入以连接计算图；`MulNode` 和 `DivNode` 的反向公式还需读取输入数值。反向公式复用现有 CPU/CUDA 算子，在 `NogradNode` 下执行，不会继续建图。当前没有广播，输入输出 shape 相同，反向不需要归约。`G` 是上游梯度，由 autograd 引擎传入。
+表中的 `G` 是引擎传入的上游梯度。反向在 `NogradNode` 下执行，不会继续建图。`sqrt` 的反向复用已有算子；`rsqrt` 的专用反向 kernel 在 [autograd/cpu/rsqrt.cpp](../autograd/cpu/rsqrt.cpp) 和 [autograd/cuda/rsqrt.cu](../autograd/cuda/rsqrt.cu)。
 
 ## 分发流程
 
@@ -162,7 +166,8 @@ FP16/BF16 使用 16 位编码，不能直接将编码作为整数参与浮点运
 - [x] 将 `elementwise.cpp`、`src/ops/cpu/elementwise.cpp` 和 CPU 测试接入 CMake，覆盖各 dtype、标量、多维输入、索引视图、输入不变、输出独立和无效输入。
 - [x] 实现支持输入 stride 的 `AddCUDA()` / `SubCUDA()` / `MulCUDA()` / `DivCUDA()` / `NegCUDA()`；处理 dtype、线程越界和启动错误。
 - [x] 按 `ENABLE_CUDA` 条件接入 CUDA 测试；对照 CPU 结果，覆盖元素数不整除线程块大小的情况，读取结果时检查执行错误。
-- [ ] 后续独立设计广播、标量混合运算及 `add_()` / `operator+=` 等原地接口。
+- [x] 二元算子支持广播，四则运算符支持 Tensor 与标量混算。
+- [ ] 设计 `add_()` / `operator+=` 等原地接口。
 - [x] `AddNode` / `SubNode` / `NegNode` 反向规则。
 - [x] `MulNode` / `DivNode` 保存前向输入，并在 `NogradNode` 下复用现有算子计算梯度。
 - [x] 按建图开关和支持反向的 dtype 建图；设计见 [autograd/README.md](../autograd/README.md)。
@@ -172,7 +177,8 @@ FP16/BF16 使用 16 位编码，不能直接将编码作为整数参与浮点运
 - [ ] 按需建立扩展算子的接口和实现。
 - [ ] 新算子实现时同步补 Node 和反向公式。
 - [x] 实现二维 `matmul()` 的 CPU/CUDA 前向，支持 8 种 dtype 和非连续输入。Colab CPU/CUDA 回归 15/15 通过。
-- [ ] 实现 `matmul()` 反向及 `linear()`。
+- [x] 二维浮点 `matmul()` 接入反向：`grad_A = G @ Bᵀ`，`grad_B = Aᵀ @ G`，其中 G 为输出梯度。
+- [ ] 实现 `linear()`。
 - [ ] 实现 `rms_norm()` / `rms_norm_zero_centered()` / `rms_norm_gated()` / `layer_norm()`。
 - [ ] 实现 `silu()` / `sigmoid()` / `softplus()` / `exp()`。
 - [x] 实现全元素 `sum()` 的 CPU/CUDA 前向与反向，并在 Colab A100 验证 CUDA 测试。

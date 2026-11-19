@@ -101,4 +101,12 @@ Tensor mean(const Tensor& input, int dim, bool keepdim) {
     return mul(total, scale);
 }
 
+Tensor Tensor::mean() const {
+    return mtensor::mean(*this);
+}
+
+Tensor Tensor::mean(int dim, bool keepdim) const {
+    return mtensor::mean(*this, dim, keepdim);
+}
+
 }  // namespace mtensor

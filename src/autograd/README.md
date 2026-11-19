@@ -29,6 +29,9 @@ include/mini_infer/
 
 src/autograd/
     autograd.cpp    # 梯度开关与反向引擎
+    backend.h       # 专用反向 kernel 的内部入口
+    cpu/rsqrt.cpp   # rsqrt 的 CPU 反向
+    cuda/rsqrt.cu   # rsqrt 的 CUDA 反向
     backward_nodes/
         elementwise.h    # 逐元素反向节点声明
         elementwise.cpp  # 逐元素反向规则
@@ -171,7 +174,8 @@ Tensor 通过共享的 `version_` 记录存储修改次数。拷贝、共享视�
 - [x] 支持连续及非连续输入的 `reshape` 反向；非连续上游梯度先 clone，再恢复输入 shape。本地 CPU 及 Colab CPU/CUDA 回归已通过。
 - [x] 支持 `narrow` 反向和前向建图，本地 CPU 及 Colab CPU/CUDA 回归已通过。
 - [x] 支持 `operator[]` 的视图反向与前向建图，本地 CPU 及 Colab CPU/CUDA 回归已通过。
-- [ ] 支持指定维度归约、广播及矩阵乘的反向。
+- [x] 二维矩阵乘反向复用转置视图与现有 matmul；反向前检查两个输入的版本。
+- [x] 支持指定维度的 `sum` 及广播视图的反向。
 - [x] 支持非标量输出的 `backward(gradient)`；本地 CPU 回归 8/8 通过，用户在 Colab 完成 CPU/CUDA 回归，CTest 13/13 通过（2.30 秒）。
 - [x] Tensor::zero_grad() 保留梯度存储并清零；本地 CPU 及用户 Colab CPU/CUDA 回归已通过。
 - [x] 共享版本计数、原地写入更新及 mul/div 反向版本检查；本地 CPU 及用户 Colab CPU/CUDA 回归已通过。

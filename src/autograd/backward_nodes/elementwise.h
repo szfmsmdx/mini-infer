@@ -21,6 +21,18 @@ public:
     std::vector<Tensor> backward(const Tensor& output_grad) override;
 };
 
+class SqrtNode : public AutogradNode {
+public:
+    std::uint64_t input_version = 0;
+    std::vector<Tensor> backward(const Tensor& output_grad) override;
+};
+
+class RsqrtNode : public AutogradNode {
+public:
+    std::uint64_t input_version = 0;
+    std::vector<Tensor> backward(const Tensor& output_grad) override;
+};
+
 class MulNode : public AutogradNode {
 public:
     std::uint64_t input_versions[2] = {};

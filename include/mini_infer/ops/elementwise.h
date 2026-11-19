@@ -15,4 +15,11 @@ Tensor mul(const Tensor& a, const Tensor& b);
 Tensor div(const Tensor& a, const Tensor& b);
 Tensor neg(const Tensor& a);
 
+// 浮点输入保持 dtype；整数先转 Float32。负数的实平方根为 NaN。
+Tensor sqrt(const Tensor& x);
+Tensor rsqrt(const Tensor& x);
+
+// 逐元素计算自然指数；整数输入返回 Float32。
+Tensor exp(const Tensor& x);
+
 }  // namespace mtensor

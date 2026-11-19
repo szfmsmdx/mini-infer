@@ -171,8 +171,8 @@ void TestMeanAndBroadcast() {
     float data[] = {1, 2, 3, 4, 5, 6};
     Tensor input(data, {2, 3}, Dtype::kFloat32, device);
     input.requires_grad_(true);
-    Tensor reduced = mean(input, -1, true);
-    Tensor loss = mean(reduced);
+    Tensor reduced = input.mean(-1, true);
+    Tensor loss = reduced.mean();
     loss.backward();
     NogradNode guard;
     Tensor host = reduced.to(Device::kCPU);
