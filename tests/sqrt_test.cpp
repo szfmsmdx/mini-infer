@@ -88,6 +88,57 @@ void CheckRsqrtSingleRounding() {
                           {0.30078125f}, "BF16 rsqrt rounded twice");
 }
 
+template <typename T>
+void CheckRsqrtBackwardPrecision(Dtype dtype, float rtol) {
+    constexpr int count = 513;
+    const float values[] = {0.2445068359375f, 0.0004718303680419922f,
+                            1.7881393432617188e-7f, 0.000732421875f};
+    const float gradients[] = {-0.5f, -0.5f, 5.960464477539063e-8f, 5.960464477539063e-8f};
+    std::vector<T> input, upstream;
+    std::vector<float> expected;
+    for (int i = 0; i < count; ++i) {
+        // 最后一个 BF16 样本覆盖大输入、大上游梯度的失败案例。
+        const bool bf16_case = dtype == Dtype::kBFloat16 && i == count - 1;
+        input.emplace_back(bf16_case ? 1026497183744.0f : values[i % 4]);
+        upstream.emplace_back(bf16_case ? -4.863887597560136e18f : gradients[i % 4]);
+        const double x = static_cast<float>(input.back());
+        const double g = static_cast<float>(upstream.back());
+        expected.push_back(static_cast<float>(T(static_cast<float>(-0.5 * g / (x * std::sqrt(x))))));
+    }
+    Tensor xs(std::vector<int>{count, 2}, dtype, kDevice);
+    Tensor gs(std::vector<int>{count, 3}, dtype, kDevice);
+    Tensor x = xs.transpose(0, 1)[1];
+    Tensor g = gs.transpose(0, 1)[2];
+    x.copy_(Tensor(input.data(), {count}, dtype, kDevice));
+    g.copy_(Tensor(upstream.data(), {count}, dtype, kDevice));
+    x.requires_grad_(true);
+    Tensor y = rsqrt(x);
+    auto check = [&](const Tensor& dx) {
+        Require(dx.shape() == x.shape() && dx.dtype() == dtype && dx.device() == kDevice,
+                "rsqrt gradient metadata");
+        const Tensor host = dx.contiguous().to(Device::kCPU);
+        const auto* data = static_cast<const T*>(host.data_ptr());
+        for (int i = 0; i < count; ++i) {
+            Require(std::abs(static_cast<float>(data[i]) - expected[i]) <=
+                    1e-5f + rtol * std::abs(expected[i]), "rsqrt backward precision");
+        }
+    };
+    {
+        NogradNode guard;
+        // 直接传入不同 stride 的梯度，避免引擎 clone 掩盖索引错误。
+        const auto dx = y.grad_node()->backward(g);
+        Require(dx.size() == 1, "rsqrt gradient count");
+        check(dx[0]);
+    }
+    y.backward(g);
+    check(x.grad());
+    const T four(4), one(1);
+    Tensor scalar(&four, {}, dtype, kDevice);
+    scalar.requires_grad_(true);
+    rsqrt(scalar).backward(Tensor(&one, {}, dtype, kDevice));
+    CheckValues<T>(scalar.grad(), {}, dtype, {-0.0625f}, "rsqrt scalar backward");
+}
+
 void CheckSpecialValues() {
     const float data[] = {0.0f, -0.0f, -1, std::numeric_limits<float>::infinity()};
     const Tensor x(data, {4}, Dtype::kFloat32, kDevice);
@@ -122,6 +173,9 @@ int main() {
         CheckFloating<BFloat16>(Dtype::kBFloat16);
         CheckSpecialValues();
         CheckRsqrtSingleRounding();
+        CheckRsqrtBackwardPrecision<float>(Dtype::kFloat32, 1.3e-6f);
+        CheckRsqrtBackwardPrecision<Float16>(Dtype::kFloat16, 1e-3f);
+        CheckRsqrtBackwardPrecision<BFloat16>(Dtype::kBFloat16, 1.6e-2f);
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

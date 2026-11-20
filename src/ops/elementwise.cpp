@@ -1,7 +1,4 @@
-#include <cmath>
 #include <cstddef>
-#include <cstdint>
-#include <cstring>
 #include <memory>
 #include <stdexcept>
 #include <utility>
@@ -32,28 +29,6 @@ std::vector<int> BroadcastShape(const std::vector<int>& a, const std::vector<int
         shape[ndim - 1 - i] = a_size == 1 ? b_size : a_size;
     }
     return shape;
-}
-
-template <typename Input, typename Output>
-void ExpValues(const Tensor& x, Tensor& out) {
-    const auto* src = static_cast<const std::byte*>(x.data_ptr());
-    auto* dst = static_cast<std::byte*>(out.data_ptr());
-    const auto& shape = x.shape();
-    const auto& stride = x.stride();
-    auto visit = [&](auto&& self, std::size_t dim, std::size_t offset) -> void {
-        if (dim == shape.size()) {
-            Input value(0);
-            std::memcpy(&value, src + offset * sizeof(Input), sizeof(Input));
-            const Output result(std::exp(static_cast<float>(value)));
-            std::memcpy(dst, &result, sizeof(Output));
-            dst += sizeof(Output);
-            return;
-        }
-        for (int i = 0; i < shape[dim]; ++i) {
-            self(self, dim + 1, offset + i * stride[dim]);
-        }
-    };
-    visit(visit, 0, 0);
 }
 
 }  // namespace
@@ -268,18 +243,23 @@ Tensor rsqrt(const Tensor& x) {
 
 Tensor exp(const Tensor& x) {
     CheckNotEmpty(x, "exp: empty input");
-    if (x.device() != Device::kCPU) throw std::logic_error("exp: CUDA kernel not implemented");
-    Tensor out(x.shape(), CheckGradDtype(x.dtype()) ? x.dtype() : Dtype::kFloat32, x.device());
-    switch (x.dtype()) {
-        case Dtype::kFloat32: ExpValues<float, float>(x, out); break;
-        case Dtype::kFloat16: ExpValues<Float16, Float16>(x, out); break;
-        case Dtype::kBFloat16: ExpValues<BFloat16, BFloat16>(x, out); break;
-        case Dtype::kInt8: ExpValues<std::int8_t, float>(x, out); break;
-        case Dtype::kUInt8: ExpValues<std::uint8_t, float>(x, out); break;
-        case Dtype::kInt16: ExpValues<std::int16_t, float>(x, out); break;
-        case Dtype::kInt32: ExpValues<std::int32_t, float>(x, out); break;
-        case Dtype::kInt64: ExpValues<std::int64_t, float>(x, out); break;
-        default: throw std::invalid_argument("exp: unsupported dtype");
+    const bool floating = CheckGradDtype(x.dtype());
+    Tensor out(x.shape(), floating ? x.dtype() : Dtype::kFloat32, x.device());
+    if (x.device() == Device::kCPU) {
+        ExpCPU(x, out);
+#ifdef ENABLE_CUDA
+    } else if (x.device() == Device::kCUDA) {
+        ExpCUDA(x, out);
+#endif
+    } else {
+        throw std::logic_error("exp: no backend for this device");
+    }
+    if (EnableGrad() && floating) {
+        auto node = std::make_shared<ExpNode>();
+        node->inputs = {x};
+        node->y = out.detach();
+        node->output_version = out.version();
+        out.set_grad_node(std::move(node));
     }
     return out;
 }

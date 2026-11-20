@@ -1,0 +1,2 @@
+# Test oracle only; choose the CPU/CUDA wheel index when installing.
+torch

@@ -1,3 +1,4 @@
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -7,6 +8,7 @@
 #include <type_traits>
 
 #include "ops/backend.h"
+#include "mini_infer/tensor.h"
 
 namespace mtensor {
 namespace {
@@ -358,6 +360,132 @@ void NegHalfCPU(const void* a, void* output, const std::vector<int>& shape,
     };
     dfs(dfs, 0, 0, 0);
 }
+template <typename Input, typename Output>
+void SqrtTypedCPU(const void* input, void* output, const std::vector<int>& shape,
+                  const std::vector<std::size_t>& stride) {
+    const auto* src = static_cast<const std::byte*>(input);
+    auto* dst = static_cast<std::byte*>(output);
+    auto visit = [&](auto&& self, std::size_t dim, std::size_t offset) -> void {
+        if (dim == shape.size()) {
+            Input value(0);
+            std::memcpy(&value, src + offset * sizeof(Input), sizeof(Input));
+            const Output root(std::sqrt(static_cast<float>(value)));
+            std::memcpy(dst, &root, sizeof(Output));
+            dst += sizeof(Output);
+            return;
+        }
+        for (int i = 0; i < shape[dim]; ++i) {
+            self(self, dim + 1, offset + i * stride[dim]);
+        }
+    };
+    visit(visit, 0, 0);
+}
+
+template <typename In, typename Out>
+void RsqrtTypedCPU(const Tensor& x, Tensor& result) {
+    const auto* src = static_cast<const std::byte*>(x.data_ptr());
+    auto* dst = static_cast<std::byte*>(result.data_ptr());
+    auto write = [&](std::size_t dst_index, std::size_t x_index) {
+        In value(0);
+        std::memcpy(&value, src + x_index * sizeof(In), sizeof(In));
+        const float y = 1.0f / std::sqrt(static_cast<float>(value));
+        const Out out(y);
+        std::memcpy(dst + dst_index * sizeof(Out), &out, sizeof(Out));
+    };
+    if (x.is_contiguous()) {
+        const auto count = x.numel();
+        for (std::size_t i = 0; i < count; ++i) write(i, i);
+        return;
+    }
+    std::size_t index = 0;
+    auto visit = [&](auto&& self, int dim, std::size_t xi) -> void {
+        if (dim == x.dim()) {
+            write(index++, xi);
+            return;
+        }
+        const auto xs = x.stride()[dim];
+        for (int i = 0; i < x.size(dim); ++i) self(self, dim + 1, xi + i * xs);
+    };
+    visit(visit, 0, 0);
+}
+
+template <typename Input, typename Output>
+void ExpTypedCPU(const Tensor& x, Tensor& out) {
+    const auto* src = static_cast<const std::byte*>(x.data_ptr());
+    auto* dst = static_cast<std::byte*>(out.data_ptr());
+    const auto& shape = x.shape();
+    const auto& stride = x.stride();
+    auto visit = [&](auto&& self, std::size_t dim, std::size_t offset) -> void {
+        if (dim == shape.size()) {
+            Input value(0);
+            std::memcpy(&value, src + offset * sizeof(Input), sizeof(Input));
+            const Output result(std::exp(static_cast<float>(value)));
+            std::memcpy(dst, &result, sizeof(Output));
+            dst += sizeof(Output);
+            return;
+        }
+        for (int i = 0; i < shape[dim]; ++i) {
+            self(self, dim + 1, offset + i * stride[dim]);
+        }
+    };
+    visit(visit, 0, 0);
+}
+
+template <typename Input, typename Output>
+void SigmoidTypedCPU(const Tensor& x, Tensor& out) {
+    const auto* src = static_cast<const std::byte*>(x.data_ptr());
+    auto* dst = static_cast<std::byte*>(out.data_ptr());
+    const auto& shape = x.shape();
+    const auto& stride = x.stride();
+    auto visit = [&](auto&& self, std::size_t dim, std::size_t offset) -> void {
+        if (dim == shape.size()) {
+            Input value(0);
+            std::memcpy(&value, src + offset * sizeof(Input), sizeof(Input));
+            const float v = static_cast<float>(value);
+            const float t = std::exp(-std::abs(v));
+            const Output result(v >= 0.0f ? 1.0f / (1.0f + t) : t / (1.0f + t));
+            std::memcpy(dst, &result, sizeof(Output));
+            dst += sizeof(Output);
+            return;
+        }
+        for (int i = 0; i < shape[dim]; ++i) {
+            self(self, dim + 1, offset + i * stride[dim]);
+        }
+    };
+    visit(visit, 0, 0);
+}
+
+template <typename Input, typename Output>
+void SiluTypedCPU(const Tensor& x, Tensor& out) {
+    const auto* src = static_cast<const std::byte*>(x.data_ptr());
+    auto* dst = static_cast<std::byte*>(out.data_ptr());
+    const auto& shape = x.shape();
+    const auto& stride = x.stride();
+    auto visit = [&](auto&& self, std::size_t dim, std::size_t offset) -> void {
+        if (dim == shape.size()) {
+            Input value(0);
+            std::memcpy(&value, src + offset * sizeof(Input), sizeof(Input));
+            const float v = static_cast<float>(value);
+            float y;
+            if (v < -80.0f) {
+                // 负尾部用 double，避免 exp(x) 在乘 x 前下溢。
+                const double t = std::exp(static_cast<double>(v));
+                y = static_cast<float>(v * t / (1.0 + t));
+            } else {
+                const float t = std::exp(-std::abs(v));
+                y = v >= 0.0f ? v / (1.0f + t) : (v * t) / (1.0f + t);
+            }
+            const Output result(y);
+            std::memcpy(dst, &result, sizeof(Output));
+            dst += sizeof(Output);
+            return;
+        }
+        for (int i = 0; i < shape[dim]; ++i)
+            self(self, dim + 1, offset + i * stride[dim]);
+    };
+    visit(visit, 0, 0);
+}
+
 }  // namespace
 
 void AddCPU(const void* a, const void* b, void* output, Dtype dtype,
@@ -437,6 +565,77 @@ void NegCPU(const void* a, void* output, Dtype dtype,
         case Dtype::kInt32: NegTypedCPU(static_cast<const std::int32_t*>(a), static_cast<std::int32_t*>(output), shape, a_stride, output_stride); break;
         case Dtype::kInt64: NegTypedCPU(static_cast<const std::int64_t*>(a), static_cast<std::int64_t*>(output), shape, a_stride, output_stride); break;
         default: throw std::invalid_argument("unsupported dtype");
+    }
+}
+
+void SqrtCPU(const void* input, void* output, Dtype dtype, const std::vector<int>& shape,
+             const std::vector<std::size_t>& stride) {
+    switch (dtype) {
+        case Dtype::kFloat32: SqrtTypedCPU<float, float>(input, output, shape, stride); break;
+        case Dtype::kFloat16: SqrtTypedCPU<Float16, Float16>(input, output, shape, stride); break;
+        case Dtype::kBFloat16: SqrtTypedCPU<BFloat16, BFloat16>(input, output, shape, stride); break;
+        case Dtype::kInt8: SqrtTypedCPU<std::int8_t, float>(input, output, shape, stride); break;
+        case Dtype::kUInt8: SqrtTypedCPU<std::uint8_t, float>(input, output, shape, stride); break;
+        case Dtype::kInt16: SqrtTypedCPU<std::int16_t, float>(input, output, shape, stride); break;
+        case Dtype::kInt32: SqrtTypedCPU<std::int32_t, float>(input, output, shape, stride); break;
+        case Dtype::kInt64: SqrtTypedCPU<std::int64_t, float>(input, output, shape, stride); break;
+        default: throw std::invalid_argument("sqrt: unsupported dtype");
+    }
+}
+
+void RsqrtCPU(const Tensor& x, Tensor& out) {
+    switch (x.dtype()) {
+        case Dtype::kFloat32: RsqrtTypedCPU<float, float>(x, out); break;
+        case Dtype::kFloat16: RsqrtTypedCPU<Float16, Float16>(x, out); break;
+        case Dtype::kBFloat16: RsqrtTypedCPU<BFloat16, BFloat16>(x, out); break;
+        case Dtype::kInt8: RsqrtTypedCPU<std::int8_t, float>(x, out); break;
+        case Dtype::kUInt8: RsqrtTypedCPU<std::uint8_t, float>(x, out); break;
+        case Dtype::kInt16: RsqrtTypedCPU<std::int16_t, float>(x, out); break;
+        case Dtype::kInt32: RsqrtTypedCPU<std::int32_t, float>(x, out); break;
+        case Dtype::kInt64: RsqrtTypedCPU<std::int64_t, float>(x, out); break;
+        default: throw std::invalid_argument("rsqrt: unsupported dtype");
+    }
+}
+
+void ExpCPU(const Tensor& x, Tensor& out) {
+    switch (x.dtype()) {
+        case Dtype::kFloat32: ExpTypedCPU<float, float>(x, out); break;
+        case Dtype::kFloat16: ExpTypedCPU<Float16, Float16>(x, out); break;
+        case Dtype::kBFloat16: ExpTypedCPU<BFloat16, BFloat16>(x, out); break;
+        case Dtype::kInt8: ExpTypedCPU<std::int8_t, float>(x, out); break;
+        case Dtype::kUInt8: ExpTypedCPU<std::uint8_t, float>(x, out); break;
+        case Dtype::kInt16: ExpTypedCPU<std::int16_t, float>(x, out); break;
+        case Dtype::kInt32: ExpTypedCPU<std::int32_t, float>(x, out); break;
+        case Dtype::kInt64: ExpTypedCPU<std::int64_t, float>(x, out); break;
+        default: throw std::invalid_argument("exp: unsupported dtype");
+    }
+}
+
+void SigmoidCPU(const Tensor& x, Tensor& out) {
+    switch (x.dtype()) {
+        case Dtype::kFloat32: SigmoidTypedCPU<float, float>(x, out); break;
+        case Dtype::kFloat16: SigmoidTypedCPU<Float16, Float16>(x, out); break;
+        case Dtype::kBFloat16: SigmoidTypedCPU<BFloat16, BFloat16>(x, out); break;
+        case Dtype::kInt8: SigmoidTypedCPU<std::int8_t, float>(x, out); break;
+        case Dtype::kUInt8: SigmoidTypedCPU<std::uint8_t, float>(x, out); break;
+        case Dtype::kInt16: SigmoidTypedCPU<std::int16_t, float>(x, out); break;
+        case Dtype::kInt32: SigmoidTypedCPU<std::int32_t, float>(x, out); break;
+        case Dtype::kInt64: SigmoidTypedCPU<std::int64_t, float>(x, out); break;
+        default: throw std::invalid_argument("sigmoid: unsupported dtype");
+    }
+}
+
+void SiluCPU(const Tensor& x, Tensor& out) {
+    switch (x.dtype()) {
+        case Dtype::kFloat32: SiluTypedCPU<float, float>(x, out); break;
+        case Dtype::kFloat16: SiluTypedCPU<Float16, Float16>(x, out); break;
+        case Dtype::kBFloat16: SiluTypedCPU<BFloat16, BFloat16>(x, out); break;
+        case Dtype::kInt8: SiluTypedCPU<std::int8_t, float>(x, out); break;
+        case Dtype::kUInt8: SiluTypedCPU<std::uint8_t, float>(x, out); break;
+        case Dtype::kInt16: SiluTypedCPU<std::int16_t, float>(x, out); break;
+        case Dtype::kInt32: SiluTypedCPU<std::int32_t, float>(x, out); break;
+        case Dtype::kInt64: SiluTypedCPU<std::int64_t, float>(x, out); break;
+        default: throw std::invalid_argument("silu: unsupported dtype");
     }
 }
 

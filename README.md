@@ -11,7 +11,7 @@ mini_infer/
 │   ├── tensor/          # Tensor 存储所有权、元数据与内部校验
 │   ├── ops/             # 布局、填充、复制、数值算子与 CPU/CUDA kernel
 │   ├── modules/         # 使用现有算子组合网络模块，例如 Linear
-│   ├── autograd/        # 反向引擎、反向节点及专用 CPU/CUDA 反向 kernel
+│   ├── autograd/        # 反向引擎与反向节点
 │   └── utils/           # 内存分配与日志
 ├── tests/               # CPU/CUDA 正确性测试与独立 benchmark
 ├── 3rdparty/            # 按需构建 benchmark 使用的 ggml
@@ -23,6 +23,10 @@ mini_infer/
 链接 CMake 目标 `mini_infer` 后，可通过 `#include "mini_infer/tensor.h"` 使用 Tensor。算子后端与具体反向节点的头文件位于 `src/`，供库内部使用。
 
 模块说明见 [Tensor](src/tensor/README.md)、[算子](src/ops/README.md)、[网络模块](src/modules/README.md)、[Autograd](src/autograd/README.md) 和 [测试](tests/README.md)。
+
+逐元素精度测试采用双参考：逐元素与数学参考误差达标，或者与 PyTorch 对齐，满足其一即通过。基础、边界和特殊值样本必须全部通过；随机样本按算子、dtype、前向及各输入梯度分别要求至少 99.5% 通过。测试直接使用环境中已有的 PyTorch，不限制版本，并记录实际版本。本地 CPU 当前覆盖的 10 个逐元素算子、三种浮点 dtype 的前向与反向，884,818 次双参考比较全部通过。CUDA 尚未验证。安装、复跑和结果见[数值精度检查](tests/README.md#数值精度检查)。
+
+RMSNorm 已实现组合前向和自动反传，但新增 CPU 精度测试发现 FP16/BF16 共 84 个失败，结构测试通过，低精度问题待修复。结果见[测试说明](tests/README.md#rmsnorm-组合算子测试)；本轮排查过程记录在[算子精度问题](note/code/算子精度问题.md)。
 
 ## CUDA 开发基线
 

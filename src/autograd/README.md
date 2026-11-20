@@ -16,7 +16,7 @@ Tensor ──持有──→ AutogradMetadata
 - `AutogradMetadata` 保存一个 Tensor 的全部自动微分状态。
 - `Tensor` 用 `std::shared_ptr<AutogradMetadata>` 持有它；Tensor 拷贝共享同一个 meta，视图创建新的 meta。
 - `meta.grad_node` 指向**产生这个 Tensor 的 Node**；叶子张量的 `grad_node` 为空。
-- Node 只保存**输入 Tensor**，不保存输出；因此没有 `Node → 输出` 的强引用，不会形成环。
+- Node 用 `inputs` 连接前向输入。`ExpNode` 还保存 `y.detach()` 和输出版本号：它共享输出数据，但不持有指回节点的 meta。
 - 每个输入 Tensor 又有自己的 meta 和 `grad_node`，图按这个方向串联。
 
 一句话：**Meta 存状态，Tensor 持有 Meta，Meta 指向产生它的 Node，Node 持有输入 Tensor。**
@@ -29,19 +29,21 @@ include/mini_infer/
 
 src/autograd/
     autograd.cpp    # 梯度开关与反向引擎
-    backend.h       # 专用反向 kernel 的内部入口
-    cpu/rsqrt.cpp   # rsqrt 的 CPU 反向
-    cuda/rsqrt.cu   # rsqrt 的 CUDA 反向
     backward_nodes/
         elementwise.h    # 逐元素反向节点声明
-        elementwise.cpp  # 逐元素反向规则
+        elementwise.cpp  # 逐元素反向规则与 sigmoid/rsqrt/SiLU CPU 反向
+        elementwise.cu   # sigmoid/rsqrt/SiLU CUDA 反向
         reduction.h      # 归约反向节点声明
         reduction.cpp    # 归约反向节点（SumNode）
         tensor_ops.h     # 复制、迁移与视图节点声明
         tensor_ops.cpp   # 复制、迁移与视图的反向规则
 ```
 
-逐元素 Node 在 `src/autograd/backward_nodes/elementwise.h/.cpp`，前向入口在 `src/ops/elementwise.cpp` 中创建节点。反向规则按算子类别组织。
+逐元素 Node 在 `src/autograd/backward_nodes/elementwise.h/.cpp`，前向入口在 `src/ops/elementwise.cpp` 中创建节点。反向规则按算子类别组织。sigmoid 的 CPU 反向放在同一个 `.cpp`，CUDA kernel 放在相邻的 `elementwise.cu`。两者从输入重新计算 `t = exp(-abs(x))`，在 FP32 中计算 `(G * t) / ((1 + t) * (1 + t))`，最后写回原 dtype；不使用已舍入的前向输出计算导数。原有输入、输出版本检查保留。
+
+rsqrt 也在这两个文件中逐元素计算反向：从输入在 FP32 中重新计算 `y = 1 / sqrt(x)`，依次计算 `((-0.5 * y) * G) * y * y`，最后才写回原 dtype。保留输入版本检查，CPU/CUDA 均按各自 stride 读取输入和上游梯度。
+
+SiLU 反向也在这两个文件中执行，采用 Torch 的运算顺序：FP32 计算 `s = 1 / (1 + exp(-x))`，然后计算 `(G * s) * (1 + x * (1 - s))`，最后写回原 dtype。不分 x 区间、不使用 double，保留输入版本检查。
 
 ## 数据结构
 
@@ -69,7 +71,7 @@ public:
 
 - `grad` 用 `std::optional<Tensor>`：默认不构造 Tensor，避免“Tensor 构造 meta、meta 再构造 Tensor”的递归；`has_value()` 直接表示梯度是否存在。
 - 每个 Tensor 构造时创建一个空 meta；拷贝共享同一个 `shared_ptr`，视图各自新建。这样先拷贝再 `requires_grad_` 也能共享状态。代价是每个 Tensor 多一次小分配；以后若改成共享 `TensorImpl`，把 `AutogradMetadata` 移进去即可，名字和字段不变。
-- Node 不保存输出或输出梯度。引擎遍历时临时持有输出 Tensor 句柄，并从本次反向的临时梯度表读取梯度。
+- 引擎遍历时临时持有输出 Tensor 句柄，并从本次反向的临时梯度表读取输出梯度。
 
 ## Tensor 接口
 
@@ -89,7 +91,7 @@ void set_grad_node(std::shared_ptr<AutogradNode> node);
 void accumulate_grad(const Tensor& grad);
 ```
 
-`set_grad_node()` 只设置 `meta->grad_node`，不修改 `requires_grad`；叶子和非叶子都可以设置是否保存梯度。Node 不保存输出，也不保存输出梯度。
+`set_grad_node()` 只设置 `meta->grad_node`，不修改 `requires_grad`；叶子和非叶子都可以设置是否保存梯度。
 
 `accumulate_grad()` 第一次执行 `meta->grad.emplace(grad.clone())`，之后用 `add(*meta->grad, grad)` 累加，避免多个输入共享同一块梯度存储。
 

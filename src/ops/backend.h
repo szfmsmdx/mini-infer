@@ -8,6 +8,12 @@
 namespace mtensor {
 
 class Tensor;
+void SiluCPU(const Tensor& x, Tensor& out);
+void SiluCUDA(const Tensor& x, Tensor& out);
+void SigmoidCPU(const Tensor& x, Tensor& out);
+void SigmoidCUDA(const Tensor& x, Tensor& out);
+void ExpCPU(const Tensor& x, Tensor& out);
+void ExpCUDA(const Tensor& x, Tensor& out);
 void RsqrtCPU(const Tensor& x, Tensor& out);
 void RsqrtCUDA(const Tensor& x, Tensor& out);
 

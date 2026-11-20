@@ -8,6 +8,8 @@
 
 `mtensor::sqrt(x)` 逐元素开平方；`mtensor::rsqrt(x)` 直接计算平方根的倒数，不分配中间 Tensor。CPU 遍历一次输入，CUDA 调用一个使用 `rsqrtf` 的 kernel。包含 `mini_infer/ops.h` 即可使用。两者都保持 shape 和 device，支持跨步视图。整数输入先转 FP32 再计算，不建反向图；FP32、FP16 和 BF16 输出保持输入 dtype，以 FP32 计算后写回。
 
+`silu(x)` 在 `activation.cpp` 分发到 CPU/CUDA 的 `elementwise` 文件，逐元素计算完整公式，不再分配 sigmoid 中间 Tensor。通常使用 FP32 计算；`x < -80` 的负尾部用 double 计算 `x * exp(x) / (1 + exp(x))`，避免 exp 在乘 x 前下溢，最后写回输出 dtype。浮点保持 dtype，整数输入提升到 FP32。`SiluNode` 在 `autograd/backward_nodes/elementwise.cpp/.cu` 中逐元素执行反向，采用 Torch 的 FP32 运算顺序，最后写回原 dtype；不使用 double，输入版本检查不变。CPU 双参考精度测试通过，CUDA 待验证，结果见 `tests/README.md`。
+
 `add()` / `sub()` / `mul()` / `div()` 支持自动广播：右对齐推导公共 shape，在设备分发前按需创建 `broadcast()` 视图，复用 stride kernel；反向节点保存广播后的输入，由 `BroadcastNode` 沿广播维度求和。相同 shape 不创建额外视图。输入仍须同 dtype、同 device。
 
 ## 文件结构
@@ -84,9 +86,12 @@ CPU 和 CUDA 逐元素运算支持不同 stride 的非连续输入；CUDA 输出
 | `div(a, b)` | `DivNode` | `dA = G / b`, `dB = -G * a / (b * b)` |
 | `neg(a)` | `NegNode` | `dA = -G` |
 | `sqrt(x)` | `SqrtNode` | `dX = G / (2 * sqrt(x))` |
+| `exp(x)` | `ExpNode` | `dX = G * y`，复用前向输出 `y = exp(x)`，按所在设备执行逐元素乘法 |
+| `sigmoid(x)` | `SigmoidNode` | 令 `t = exp(-abs(x))`，在 FP32 中计算 `dX = (G * t) / ((1 + t) * (1 + t))`，最后写回原 dtype |
+| `silu(x)` | `SiluNode` | FP32 计算 `s = 1 / (1 + exp(-x))`，再计算 `(G * s) * (1 + x * (1 - s))`，最后写回原 dtype |
 | `rsqrt(x)` | `RsqrtNode` | 正数输入：令 `y = 1 / sqrt(x)`，逐元素计算 `dX = -0.5 * G * y³` |
 
-表中的 `G` 是引擎传入的上游梯度。反向在 `NogradNode` 下执行，不会继续建图。`sqrt` 的反向复用已有算子；`rsqrt` 的专用反向 kernel 在 [autograd/cpu/rsqrt.cpp](../autograd/cpu/rsqrt.cpp) 和 [autograd/cuda/rsqrt.cu](../autograd/cuda/rsqrt.cu)。
+表中的 `G` 是引擎传入的上游梯度。反向在 `NogradNode` 下执行，不会继续建图。`rsqrt` 的反向在 `autograd/backward_nodes/elementwise.cpp/.cu` 中逐元素执行：`y` 和 `((-0.5 * y) * G) * y * y` 的中间结果保持 FP32，最后一次写回原 dtype，避免低精度中间 Tensor 反复舍入。
 
 ## 分发流程
 
@@ -180,7 +185,9 @@ FP16/BF16 使用 16 位编码，不能直接将编码作为整数参与浮点运
 - [x] 二维浮点 `matmul()` 接入反向：`grad_A = G @ Bᵀ`，`grad_B = Aᵀ @ G`，其中 G 为输出梯度。
 - [ ] 实现 `linear()`。
 - [ ] 实现 `rms_norm()` / `rms_norm_zero_centered()` / `rms_norm_gated()` / `layer_norm()`。
-- [ ] 实现 `silu()` / `sigmoid()` / `softplus()` / `exp()`。
+- [x] 实现 `exp()` 的 CPU/CUDA 前向与基于输出的反向。
+- [x] `sigmoid()` 和 `silu()` 对整数输入返回 FP32，对浮点输入保持 dtype；SiLU 使用独立逐元素 CPU/CUDA 前向，避免 sigmoid 中间 Tensor 提前舍入。
+- [ ] 实现 `softplus()`。
 - [x] 实现全元素 `sum()` 的 CPU/CUDA 前向与反向，并在 Colab A100 验证 CUDA 测试。
 - [ ] 实现指定维度的 `sum()`，以及 `mean()` / `max()` / `softmax()` / `argmax()` / `topk()`。
 - [ ] 实现 `embedding()` / `index_select()` / `gather()` / `scatter_add()`。

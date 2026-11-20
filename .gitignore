@@ -26,6 +26,9 @@ CMakeUserPresets.json
 *.ilk
 *.exp
 
+# Python test bytecode
+__pycache__/
+
 # Operating system files
 .DS_Store
 Thumbs.db

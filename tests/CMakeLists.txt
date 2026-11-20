@@ -6,6 +6,10 @@ add_executable(linear_cpu_test linear_test.cpp)
 target_link_libraries(linear_cpu_test PRIVATE mini_infer)
 add_test(NAME linear_cpu_test COMMAND linear_cpu_test)
 
+add_executable(rmsnorm_cpu_test rmsnorm_test.cpp)
+target_link_libraries(rmsnorm_cpu_test PRIVATE mini_infer)
+add_test(NAME rmsnorm_cpu_test COMMAND rmsnorm_cpu_test)
+
 add_executable(reduction_cpu_test reduction_cpu_test.cpp)
 target_link_libraries(reduction_cpu_test PRIVATE mini_infer)
 add_test(NAME reduction_cpu_test COMMAND reduction_cpu_test)
@@ -48,7 +52,81 @@ add_executable(exp_cpu_test exp_test.cpp)
 target_link_libraries(exp_cpu_test PRIVATE mini_infer)
 add_test(NAME exp_cpu_test COMMAND exp_cpu_test)
 
+add_executable(activation_cpu_test activation_test.cpp)
+target_link_libraries(activation_cpu_test PRIVATE mini_infer)
+add_test(NAME activation_cpu_test COMMAND activation_cpu_test)
+
+add_executable(precision_cpu_test precision_test.cpp)
+target_link_libraries(precision_cpu_test PRIVATE mini_infer)
+
+# Python is a test-only dependency. Prefer the documented local environment.
+if(NOT Python3_EXECUTABLE)
+    if(WIN32 AND EXISTS "${PROJECT_SOURCE_DIR}/build/torch-env/Scripts/python.exe")
+        set(Python3_EXECUTABLE "${PROJECT_SOURCE_DIR}/build/torch-env/Scripts/python.exe")
+    elseif(EXISTS "${PROJECT_SOURCE_DIR}/build/torch-env/bin/python")
+        set(Python3_EXECUTABLE "${PROJECT_SOURCE_DIR}/build/torch-env/bin/python")
+    endif()
+endif()
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME precision_cpu_test
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/compare_torch.py"
+        --executable $<TARGET_FILE:precision_cpu_test> --device cpu
+        --report-dir "${CMAKE_CURRENT_BINARY_DIR}/torch-cpu")
+    add_test(NAME torch_comparator_test
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_compare_torch.py")
+    add_test(NAME rmsnorm_precision_cpu_test
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/compare_rmsnorm.py"
+        --executable $<TARGET_FILE:rmsnorm_cpu_test> --device cpu
+        --report-dir "${CMAKE_CURRENT_BINARY_DIR}/rmsnorm-cpu")
+    set_tests_properties(rmsnorm_precision_cpu_test PROPERTIES SKIP_RETURN_CODE 77)
+    add_test(NAME rmsnorm_reference_test
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_compare_rmsnorm.py")
+else()
+    message(WARNING "Python unavailable: PyTorch precision tests will be SKIPPED. See tests/README.md.")
+    add_test(NAME precision_cpu_test COMMAND precision_cpu_test)
+endif()
+set_tests_properties(precision_cpu_test PROPERTIES SKIP_RETURN_CODE 77)
+
 if(ENABLE_CUDA)
+    add_executable(rmsnorm_cuda_test rmsnorm_test.cpp)
+    target_compile_definitions(rmsnorm_cuda_test PRIVATE RMSNORM_TEST_CUDA)
+    target_link_libraries(rmsnorm_cuda_test PRIVATE mini_infer)
+    add_test(NAME rmsnorm_cuda_test COMMAND rmsnorm_cuda_test)
+    set_tests_properties(rmsnorm_cuda_test PROPERTIES SKIP_RETURN_CODE 77)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME rmsnorm_precision_cuda_test
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/compare_rmsnorm.py"
+            --executable $<TARGET_FILE:rmsnorm_cuda_test> --device cuda
+            --report-dir "${CMAKE_CURRENT_BINARY_DIR}/rmsnorm-cuda")
+        set_tests_properties(rmsnorm_precision_cuda_test PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
+
+    add_executable(precision_cuda_test precision_test.cpp)
+    target_compile_definitions(precision_cuda_test PRIVATE PRECISION_TEST_CUDA)
+    target_link_libraries(precision_cuda_test PRIVATE mini_infer)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME precision_cuda_test
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/compare_torch.py"
+            --executable $<TARGET_FILE:precision_cuda_test> --device cuda
+            --report-dir "${CMAKE_CURRENT_BINARY_DIR}/torch-cuda")
+    else()
+        add_test(NAME precision_cuda_test COMMAND precision_cuda_test)
+    endif()
+    set_tests_properties(precision_cuda_test PROPERTIES SKIP_RETURN_CODE 77)
+
+    add_executable(activation_cuda_test activation_test.cpp)
+    target_compile_definitions(activation_cuda_test PRIVATE ACTIVATION_TEST_CUDA)
+    target_link_libraries(activation_cuda_test PRIVATE mini_infer)
+    add_test(NAME activation_cuda_test COMMAND activation_cuda_test)
+    set_tests_properties(activation_cuda_test PROPERTIES SKIP_RETURN_CODE 77)
+
+    add_executable(exp_cuda_test exp_test.cpp)
+    target_compile_definitions(exp_cuda_test PRIVATE EXP_TEST_CUDA)
+    target_link_libraries(exp_cuda_test PRIVATE mini_infer)
+    add_test(NAME exp_cuda_test COMMAND exp_cuda_test)
+    set_tests_properties(exp_cuda_test PROPERTIES SKIP_RETURN_CODE 77)
+
     add_executable(sqrt_cuda_test sqrt_test.cpp)
     target_compile_definitions(sqrt_cuda_test PRIVATE SQRT_TEST_CUDA)
     target_link_libraries(sqrt_cuda_test PRIVATE mini_infer)

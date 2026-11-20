@@ -26,7 +26,6 @@ endif()
 
 add_library(mini_infer STATIC
     src/autograd/autograd.cpp
-    src/autograd/cpu/rsqrt.cpp
     src/autograd/backward_nodes/elementwise.cpp
     src/autograd/backward_nodes/matmul.cpp
     src/autograd/backward_nodes/reduction.cpp
@@ -43,8 +42,6 @@ add_library(mini_infer STATIC
     src/ops/reduction.cpp
     src/ops/cpu/copy.cpp
     src/ops/cpu/elementwise.cpp
-    src/ops/cpu/sqrt.cpp
-    src/ops/cpu/rsqrt.cpp
     src/ops/cpu/fill.cpp
     src/ops/cpu/matmul.cpp
     src/ops/cpu/reduction.cpp
@@ -62,11 +59,9 @@ target_include_directories(mini_infer
 
 if(ENABLE_CUDA)
     target_sources(mini_infer PRIVATE
-        src/autograd/cuda/rsqrt.cu
+        src/autograd/backward_nodes/elementwise.cu
         src/ops/cuda/copy.cu
         src/ops/cuda/elementwise.cu
-        src/ops/cuda/sqrt.cu
-        src/ops/cuda/rsqrt.cu
         src/ops/cuda/fill.cu
         src/ops/cuda/matmul.cu
         src/ops/cuda/reduction.cu

@@ -144,7 +144,7 @@ Autograd 的数据结构、反向节点和引擎见 [autograd/README.md](../auto
 | `backward()` | 单元素反向入口 | 上游梯度默认为 1，要求 `numel() == 1` |
 | `backward(gradient)` | 指定上游梯度 | 支持非标量输出；gradient 须与输出同 shape/dtype/device，输出须有 grad_node |
 | `detach()` | 断开图和梯度 | 共享 `storage_`，创建新的空 meta |
-| `grad_node()` / `set_grad_node()` | 图的连边 | 读写 `meta->grad_node`；Node 只保存输入，不保存输出 |
+| `grad_node()` / `set_grad_node()` | 图的连边 | 读写 `meta->grad_node`，它指向产生当前 Tensor 的节点 |
 | `accumulate_grad()` | 梯度累加 | 首次 `grad.emplace(g.clone())`，之后 `add()` |
 | `version()` / `update_version()` | 查询版本 / 版本加一 | 共享存储的 Tensor 共用计数；原地写入自动更新，通过 data_ptr 写入须手动通知 |
 
