@@ -48,9 +48,11 @@ void LaunchRMSNorm(const Tensor& x, const Tensor& weight, float eps, Tensor& out
     const std::size_t rows = x.numel() / x.size(x.dim() - 1);
     constexpr unsigned int threads = 256;
     const auto blocks = static_cast<unsigned int>((rows - 1) / threads + 1);
+    const auto* input = static_cast<const T*>(x.data_ptr());
+    const auto* scale = static_cast<const T*>(weight.data_ptr());
+    auto* result = static_cast<T*>(output.data_ptr());
     RMSNormKernel<T><<<blocks, threads>>>(
-        static_cast<const T*>(x.data_ptr()), static_cast<const T*>(weight.data_ptr()),
-        static_cast<T*>(output.data_ptr()), x.shape_cuda(), x.stride_cuda(),
+        input, scale, result, x.shape_cuda(), x.stride_cuda(),
         weight.stride()[0], x.dim(), rows, eps);
     CUDA_CHECK(cudaGetLastError());
 }
@@ -143,18 +145,21 @@ void LaunchRMSNormBackward(const Tensor& x, const Tensor& weight, const Tensor& 
     const auto row_blocks = static_cast<unsigned int>((rows - 1) / threads + 1);
     const auto feature_blocks = static_cast<unsigned int>((features - 1) / threads + 1);
 
+    const auto* input = static_cast<const T*>(x.data_ptr());
+    const auto* scale = static_cast<const T*>(weight.data_ptr());
+    const auto* grad = static_cast<const T*>(output_grad.data_ptr());
+    auto* input_grad = static_cast<T*>(dx.data_ptr());
+    auto* inv_rms = static_cast<float*>(row_inv_rms.data_ptr());
     RMSNormInputBackwardKernel<T><<<row_blocks, threads>>>(
-        static_cast<const T*>(x.data_ptr()), static_cast<const T*>(weight.data_ptr()),
-        static_cast<const T*>(output_grad.data_ptr()), static_cast<T*>(dx.data_ptr()),
-        static_cast<float*>(row_inv_rms.data_ptr()), x.shape_cuda(), x.stride_cuda(),
+        input, scale, grad, input_grad, inv_rms, x.shape_cuda(), x.stride_cuda(),
         output_grad.stride_cuda(), weight.stride()[0], x.dim(), rows, eps);
     CUDA_CHECK(cudaGetLastError());
 
     // 同一 stream 按序执行，第二个 kernel 读取第一个 kernel 写入的 inv_rms。
+    auto* weight_grad = static_cast<T*>(dw.data_ptr());
     RMSNormWeightBackwardKernel<T><<<feature_blocks, threads>>>(
-        static_cast<const T*>(x.data_ptr()), static_cast<const T*>(output_grad.data_ptr()),
-        static_cast<const float*>(row_inv_rms.data_ptr()), static_cast<T*>(dw.data_ptr()),
-        x.shape_cuda(), x.stride_cuda(), output_grad.stride_cuda(), x.dim(), rows);
+        input, grad, inv_rms, weight_grad, x.shape_cuda(), x.stride_cuda(),
+        output_grad.stride_cuda(), x.dim(), rows);
     CUDA_CHECK(cudaGetLastError());
 }
 

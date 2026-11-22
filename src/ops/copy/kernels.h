@@ -20,4 +20,7 @@ void CopyHostToCUDA(void* destination, const void* source, std::size_t bytes);
 
 void CopyCUDAToHost(void* destination, const void* source, std::size_t bytes);
 
+void CastCPU(const Tensor& input, Tensor& output);
+void CastCUDA(const Tensor& input, Tensor& output);
+
 }  // namespace mtensor

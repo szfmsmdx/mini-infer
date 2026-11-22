@@ -46,8 +46,8 @@ Tensor::Tensor(const Scalar& value)
     : Tensor(/*shape=*/std::vector<int>{},
              /*dtype=*/value.is_floating_point() ? Dtype::kFloat32 : Dtype::kInt64,
              /*device=*/Device::kCPU) {
-    if (value.is_unsigned_integer() &&
-        value.to<std::uint64_t>() > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+    constexpr std::uint64_t max_int64 = std::numeric_limits<std::int64_t>::max();
+    if (value.is_unsigned_integer() && value.to<std::uint64_t>() > max_int64) {
         throw std::out_of_range("Tensor: integer value is out of Int64 range");
     }
     fill_(value);
@@ -243,7 +243,6 @@ Tensor Tensor::detach() const {
     result.dtype_ = dtype_;
     result.shape_cuda_ = shape_cuda_;
     result.stride_cuda_ = stride_cuda_;
-    result.autograd_metadata_ = std::make_shared<AutogradMetadata>();
 
     return result;
 }

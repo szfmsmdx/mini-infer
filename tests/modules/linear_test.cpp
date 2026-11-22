@@ -40,11 +40,18 @@ void CheckLinear(bool with_bias) {
     Tensor b(b_data, {2}, Dtype::kFloat32, kDevice);
     const Tensor g(g_data, {2, 2}, Dtype::kFloat32, kDevice);
     x.requires_grad_(true);
-    w.requires_grad_(true);
-    b.requires_grad_(true);
 
     Linear affine = with_bias ? Linear(w, b) : Linear(w);
     Module& module = affine;
+    const auto parameters = module.parameters();
+    if (parameters.size() != (with_bias ? 2u : 1u) ||
+        parameters[0].data_ptr() != w.data_ptr() || parameters[0].requires_grad() ||
+        (with_bias && (parameters[1].data_ptr() != b.data_ptr() || parameters[1].requires_grad()))) {
+        throw std::runtime_error("Linear must register injected parameters without changing them");
+    }
+    w.requires_grad_(true);
+    b.requires_grad_(true);
+
     Tensor y = module(x);
     if (with_bias) Check(y, {2, 2}, {17, -1, 26, 5}, "linear with bias");
     else Check(y, {2, 2}, {7, 1, 16, 7}, "linear without bias");
@@ -52,6 +59,37 @@ void CheckLinear(bool with_bias) {
     Check(x.grad(), {2, 3}, {8, 3, 1, 19, 7, 3}, "linear input gradient");
     Check(w.grad(), {2, 3}, {22, 29, 36, 31, 41, 51}, "linear weight gradient");
     if (with_bias) Check(b.grad(), {2}, {7, 10}, "linear bias gradient");
+}
+
+void CheckSizedLinear(bool with_bias) {
+    constexpr int in_features = 128;
+    constexpr int out_features = 256;
+    Linear layer(in_features, out_features, with_bias, kDevice);
+    auto parameters = layer.parameters();
+    if (parameters.size() != (with_bias ? 2u : 1u) ||
+        !std::all_of(parameters.begin(), parameters.end(), [](const Tensor& parameter) {
+            return parameter.requires_grad();
+        })) {
+        throw std::runtime_error("Linear must register its trainable parameters");
+    }
+    if (with_bias) {
+        Check(parameters[1], {out_features}, std::vector<float>(out_features, 0.0f),
+              "Linear bias must start at zero");
+        parameters[1].fill_(3.0f);
+    }
+    parameters[0].fill_(1.0f);
+
+    const Tensor x = full({1, in_features}, 2.0f, Dtype::kFloat32, kDevice);
+    Tensor y = layer(x);
+    Check(y, {1, out_features}, std::vector<float>(out_features, with_bias ? 259.0f : 256.0f),
+          "Linear forward must use the registered parameters");
+    y.sum().backward();
+    Check(parameters[0].grad(), {out_features, in_features},
+          std::vector<float>(out_features * in_features, 2.0f), "registered Linear weight gradient");
+    if (with_bias) {
+        Check(parameters[1].grad(), {out_features}, std::vector<float>(out_features, 1.0f),
+              "registered Linear bias gradient");
+    }
 }
 
 void CheckInvalidParameters() {
@@ -88,6 +126,8 @@ int main() {
 #endif
         CheckLinear(false);
         CheckLinear(true);
+        CheckSizedLinear(false);
+        CheckSizedLinear(true);
         CheckInvalidParameters();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

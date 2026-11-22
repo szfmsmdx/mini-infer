@@ -14,4 +14,10 @@ Tensor sum(const Tensor& input, int dim, bool keepdim = false);
 Tensor mean(const Tensor& input);
 Tensor mean(const Tensor& input, int dim, bool keepdim = false);
 
+// 只返回极值，不返回索引。保留 dtype 和 device；并列极值平分梯度。
+Tensor max(const Tensor& input);
+Tensor max(const Tensor& input, int dim, bool keepdim = false);
+Tensor min(const Tensor& input);
+Tensor min(const Tensor& input, int dim, bool keepdim = false);
+
 }  // namespace mtensor

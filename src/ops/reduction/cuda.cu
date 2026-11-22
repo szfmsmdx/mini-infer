@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -6,6 +7,7 @@
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
 
+#include "mini_infer/tensor.h"
 #include "ops/reduction/kernels.h"
 #include "ops/common/cuda_index.cuh"
 #include "device/memory.h"
@@ -133,6 +135,129 @@ __global__ void SumKernel(const void* input, void* output, Dtype dtype,
     }
 }
 
+constexpr int kExtremaThreads = 256;
+
+template <typename T>
+__device__ T ReadExtrema(const void* input, Dtype dtype, std::size_t offset) {
+    if constexpr (std::is_same_v<T, float>) {
+        return ReadFloat(input, dtype, offset);
+    } else {
+        switch (dtype) {
+            case Dtype::kInt8: return static_cast<const std::int8_t*>(input)[offset];
+            case Dtype::kUInt8: return static_cast<const std::uint8_t*>(input)[offset];
+            case Dtype::kInt16: return static_cast<const std::int16_t*>(input)[offset];
+            case Dtype::kInt32: return static_cast<const std::int32_t*>(input)[offset];
+            case Dtype::kInt64: return static_cast<const std::int64_t*>(input)[offset];
+            default: return 0;
+        }
+    }
+}
+
+template <typename T>
+__device__ bool PreferExtrema(T value, std::size_t index, T best, std::size_t best_index, bool maximum) {
+    if constexpr (std::is_same_v<T, float>) {
+        const bool nan = isnan(value);
+        const bool best_nan = isnan(best);
+        if (nan != best_nan) return nan;
+        if (nan) return index < best_index;
+    }
+    if (value == best) return index < best_index;
+    return maximum ? value > best : value < best;
+}
+
+__device__ std::size_t GroupStart(std::size_t group, std::size_t count, std::size_t inner_size) {
+    return group / inner_size * count * inner_size + group % inner_size;
+}
+
+// 一个 block 合作归约一组，等值时保留最早元素的原始编码。
+template <typename T>
+__global__ void ExtremaKernel(const void* input, void* output, Dtype dtype,
+                              const int* shape, const std::size_t* stride, int ndim, bool contiguous,
+                              std::size_t groups, std::size_t count, std::size_t inner_size,
+                              std::size_t element_size, bool maximum) {
+    __shared__ T best_values[kExtremaThreads];
+    __shared__ std::size_t best_indices[kExtremaThreads];
+    const unsigned int tid = threadIdx.x;
+    for (std::size_t group = blockIdx.x; group < groups; group += gridDim.x) {
+        const std::size_t start = GroupStart(group, count, inner_size);
+        std::size_t best = count;
+        T best_value{};
+        for (std::size_t j = tid; j < count; j += kExtremaThreads) {
+            const std::size_t i = start + j * inner_size;
+            const std::size_t offset = contiguous ? i : GetNumelIndex(i, shape, stride, ndim);
+            const T value = ReadExtrema<T>(input, dtype, offset);
+            if (best == count || PreferExtrema(value, j, best_value, best, maximum)) {
+                best = j;
+                best_value = value;
+            }
+        }
+        best_values[tid] = best_value;
+        best_indices[tid] = best;
+        __syncthreads();
+        for (unsigned int step = kExtremaThreads / 2; step > 0; step /= 2) {
+            if (tid < step) {
+                const auto other = best_indices[tid + step];
+                const auto value = best_values[tid + step];
+                if (other != count && (best_indices[tid] == count ||
+                    PreferExtrema(value, other, best_values[tid], best_indices[tid], maximum))) {
+                    best_indices[tid] = other;
+                    best_values[tid] = value;
+                }
+            }
+            __syncthreads();
+        }
+        if (tid == 0) {
+            const std::size_t i = start + best_indices[0] * inner_size;
+            const std::size_t offset = contiguous ? i : GetNumelIndex(i, shape, stride, ndim);
+            const auto* bytes = static_cast<const std::byte*>(input);
+            auto* result = static_cast<std::byte*>(output);
+            memcpy(result + group * element_size, bytes + offset * element_size, element_size);
+        }
+        __syncthreads();
+    }
+}
+
+__device__ bool MatchesExtrema(const void* input, Dtype dtype, std::size_t i, float best,
+                                const int* shape, const std::size_t* stride, int ndim, bool contiguous) {
+    const float value = ReadFloat(input, dtype, contiguous ? i : GetNumelIndex(i, shape, stride, ndim));
+    return value == best || (isnan(value) && isnan(best));
+}
+
+__device__ void WriteFloat(void* output, Dtype dtype, std::size_t i, float value) {
+    if (dtype == Dtype::kFloat32) static_cast<float*>(output)[i] = value;
+    else if (dtype == Dtype::kFloat16) static_cast<__half*>(output)[i] = __float2half_rn(value);
+    else static_cast<__nv_bfloat16*>(output)[i] = __float2bfloat16_rn(value);
+}
+
+__global__ void ExtremaGradKernel(const void* input, const void* extrema, const void* grad, void* input_grad,
+                                  Dtype dtype, const int* shape, const std::size_t* stride,
+                                  int ndim, bool contiguous, std::size_t groups, std::size_t count,
+                                  std::size_t inner_size) {
+    __shared__ std::size_t tie_counts[kExtremaThreads];
+    const unsigned int tid = threadIdx.x;
+    for (std::size_t group = blockIdx.x; group < groups; group += gridDim.x) {
+        const std::size_t start = GroupStart(group, count, inner_size);
+        const float best = ReadFloat(extrema, dtype, group);
+        std::size_t ties = 0;
+        for (std::size_t j = tid; j < count; j += kExtremaThreads) {
+            ties += MatchesExtrema(input, dtype, start + j * inner_size, best, shape, stride, ndim, contiguous);
+        }
+        tie_counts[tid] = ties;
+        __syncthreads();
+        for (unsigned int step = kExtremaThreads / 2; step > 0; step /= 2) {
+            if (tid < step) tie_counts[tid] += tie_counts[tid + step];
+            __syncthreads();
+        }
+        const float share = ReadFloat(grad, dtype, group) / static_cast<float>(tie_counts[0]);
+        for (std::size_t j = tid; j < count; j += kExtremaThreads) {
+            const std::size_t i = start + j * inner_size;
+            const bool matches = MatchesExtrema(input, dtype, i, best, shape, stride, ndim, contiguous);
+            WriteFloat(input_grad, dtype, i, matches ? share : 0.0f);
+        }
+        __syncthreads();
+    }
+}
+
 }  // namespace
 
 void SumCUDA(const void* input, void* output, Dtype dtype, const int* shape,
@@ -160,6 +285,34 @@ void SumCUDA(const void* input, void* output, Dtype dtype, const int* shape,
         SumKernel<unsigned long long><<<blocks, threads>>>(
             input, output, dtype, shape, stride, ndim, output_numel, dim);
     }
+    CUDA_CHECK(cudaGetLastError());
+}
+
+void ExtremaCUDA(const Tensor& input, Tensor& output, std::size_t inner_size, bool maximum) {
+    const Dtype dtype = input.dtype();
+    const std::size_t groups = output.numel();
+    const std::size_t count = input.numel() / groups;
+    const auto blocks = static_cast<unsigned int>(std::min<std::size_t>(groups, 65535));
+    if (dtype == Dtype::kFloat32 || dtype == Dtype::kFloat16 || dtype == Dtype::kBFloat16) {
+        ExtremaKernel<float><<<blocks, kExtremaThreads>>>(
+            input.data_ptr(), output.data_ptr(), dtype, input.shape_cuda(), input.stride_cuda(),
+            input.dim(), input.is_contiguous(), groups, count, inner_size, input.element_size(), maximum);
+    } else {
+        ExtremaKernel<std::int64_t><<<blocks, kExtremaThreads>>>(
+            input.data_ptr(), output.data_ptr(), dtype, input.shape_cuda(), input.stride_cuda(),
+            input.dim(), input.is_contiguous(), groups, count, inner_size, input.element_size(), maximum);
+    }
+    CUDA_CHECK(cudaGetLastError());
+}
+
+void ExtremaGradCUDA(const Tensor& input, const Tensor& extrema, const Tensor& grad,
+                     Tensor& input_grad, std::size_t inner_size) {
+    const std::size_t groups = extrema.numel();
+    const auto blocks = static_cast<unsigned int>(std::min<std::size_t>(groups, 65535));
+    ExtremaGradKernel<<<blocks, kExtremaThreads>>>(
+        input.data_ptr(), extrema.data_ptr(), grad.data_ptr(), input_grad.data_ptr(), input.dtype(),
+        input.shape_cuda(), input.stride_cuda(), input.dim(), input.is_contiguous(), groups,
+        input.numel() / groups, inner_size);
     CUDA_CHECK(cudaGetLastError());
 }
 

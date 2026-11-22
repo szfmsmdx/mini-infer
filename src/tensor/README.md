@@ -4,36 +4,16 @@
 
 构造、clone、copy_、to、fill_、zero_ 和 print 按 device 分流；未检测到可用 CUDA 编译环境时，CUDA 构造或迁移会抛出异常。
 
-## 文件结构与分发
+## 文件和字段
 
-```text
-include/mini_infer/
-    tensor.h         # Tensor 公共接口和状态
-    scalar.h         # 标量的有符号、无符号与浮点表示及转换
-    dtype.h          # dtype/device、类型信息和 FP16/BF16 编解码
+| 位置 | 内容 |
+| --- | --- |
+| `include/mini_infer/` | `tensor.h`、`scalar.h`、`dtype.h` |
+| `src/tensor/` | 构造、元数据、校验和打印 |
+| `src/ops/` | `layout/` 管视图，`copy/` 管复制和迁移，`fill/` 管填充和清零 |
+| `src/device/` | CPU/CUDA 内存分配与释放 |
 
-src/tensor/
-    tensor.cpp       # 构造、所有权、基础查询和梯度状态
-    check.h/.cpp     # 内部输入和布局检查
-    print.cpp        # CPU 格式化和 CUDA 数据回传
-```
-
-索引和视图实现在 `src/ops/layout/layout.cpp`，复制和迁移实现在 `src/ops/copy/copy.cpp`，填充和清零实现在 `src/ops/fill/fill.cpp`。这些成员仍可访问 Tensor 的私有存储和元数据。CPU/CUDA 实现与后端声明见 [算子目录说明](../ops/README.md)。分配和释放由 `src/device/memory.*` 负责。
-
-`fill_(const Scalar&)` 在 `src/ops/fill/fill.cpp` 中按目标 dtype 转换，再由私有的 `FillValue()` 按设备分流。`Scalar` 分别保存有符号整数、无符号整数和浮点数，避免 int64 先经过浮点数而丢失精度。整数转换遵循 C++ `static_cast`；浮点数转整数先向零截断，若结果超出目标范围或输入为 NaN/Inf 则抛 `std::out_of_range`，填充前不会修改 Tensor。支持不宽于 64 位的整数和不宽于 double 的浮点输入；不隐式支持更宽的扩展类型。`print()` 在 `src/tensor/print.cpp` 中按设备分流，CUDA 数据复制到主机后由 CPU 格式化。
-
-CUDA shape/stride 副本仍由 Tensor 的共享指针持有，视图创建时重新初始化；后续设备资源层需继续保持这些生命周期语义。
-
-`Tensor(1.5f)` 和 `Tensor(42)` 可直接创建 CPU 零维标量，浮点数默认 Float32，整数默认 Int64。超出 Int64 范围的无符号数会抛出 `std::out_of_range`；无参 `Tensor()` 仍创建空对象。
-
-`is_scalar()` 只对有数据的零维 Tensor 返回 true；shape 为 `{1}` 的 Tensor 和默认空对象都不是标量。`fill_(const Tensor&)` 接收零维标量 Tensor，要求填充值与目标的 dtype 和 device 相同；当两者共享存储时，会先保存填充值。它与现有 `fill_(Scalar)` 一样不建图。`full()` 在 `mini_infer/tensor.h` 中声明、`src/ops/fill/fill.cpp` 中实现，支持用普通数值或零维 Tensor 创建并填充新 Tensor。
-tensor 要解决的问题是：
-
-1. 我多大？
-2. 第一个维度的第 i 块数据在哪？
-3. 多个 Tensor 共享数据时，谁负责释放？
-
-所以我们可以思考这几个问题：
+CUDA Tensor 持有 shape 和 stride 的设备副本。新视图创建自己的布局副本，拷贝共享原副本。[算子文件结构](../ops/README.md#文件结构)
 
 | 子问题 | 字段 | 当前做法 |
 | --- | --- | --- |
@@ -66,8 +46,6 @@ a[1]     shape {3}，data_ptr_ 指向第二行 ───┘
 
 ## 关键函数设计
 
-public：
-
 | 函数 | 作用 | 要点 |
 | --- | --- | --- |
 | `Tensor()` | 创建默认空对象 | 数据指针为空，`numel() == 0` |
@@ -80,6 +58,7 @@ public：
 | `data_ptr()` | 获取当前数据起点 | 返回 `void*`；读写时由调用方按 dtype 转换类型 |
 | `clone()` | 复制出独立数据 | 非连续视图复制为连续结果 |
 | `to(device)` | 返回指定设备上的 Tensor | 同设备共享存储；跨设备分配并复制，保持 shape 和 dtype，源 Tensor 不变 |
+| `to(dtype)` | 在原设备上转换 dtype | 同 dtype 共享存储；转换时按源 stride 读取，返回连续结果 |
 | `copy_(src)` | 把元素写入已有 Tensor | CPU 和 CUDA 支持不同 stride；共享存储的重叠或无法判定安全的非连续视图暂时拒绝 |
 | `fill_(value)` | 原地填充数值 | 按 dtype 转换输入；FP16/BF16 先编码一次，再填充 16 位编码 |
 | `zero_()` | 原地清零 | CPU 和 CUDA 按 stride 清零逻辑元素 |
@@ -88,7 +67,7 @@ public：
 | `reshape` / `transpose` / `permute` | 形状与布局操作 | reshape 支持一个 -1 推导；连续输入共享存储，非连续输入先复制；transpose、permute 返回共享视图 |
 | `contiguous` / `squeeze` / `unsqueeze` | 形状与布局操作 | 已实现；squeeze/unsqueeze 支持非连续视图及反向，目前只接受非负维度 |
 
-`shape()` 和 `stride()` 返回形状与跨度的只读引用，`size(dim)` 返回指定维度长度，`dim()` 返回维数，`numel()` 返回元素总数，`nbytes()` 返回字节数。`element_size()`、`dtype()`、`device()` 提供对应的元数据。原无参 `size()` 已改为 `shape()`；成员变量使用 `shape_`。
+`shape()` 和 `stride()` 返回形状与跨度的只读引用，`size(dim)` 返回指定维度长度，`dim()` 返回维数，`numel()` 返回元素总数，`nbytes()` 返回字节数。`element_size()`、`dtype()`、`device()` 提供对应的元数据。
 
 ### 空对象与标量
 
@@ -100,6 +79,13 @@ public：
 | 标量 / 标量视图 | 非空 | `false` | 1 | 如 `tensor(6)` |
 
 `a[1][2]` 从二维 Tensor 取到一个零维标量 Tensor，继续对标量使用整数索引会报错。也可以用一个变量的地址和 shape `{}` 构造标量，构造函数会复制该变量的内容。
+
+`Tensor(1.5f)` 创建 CPU Float32 标量，`Tensor(42)` 创建 CPU Int64 标量。超出 Int64 范围的无符号值会抛 `std::out_of_range`。
+
+### 填充
+
+- `fill_(Scalar)` 按目标 dtype 转换数值。浮点转整数向零截断，超出范围或收到 NaN/Inf 时抛 `std::out_of_range`。`Scalar` 分别保存有符号整数、无符号整数和浮点，避免大整数经过浮点舍入。
+- `fill_(Tensor)` 接收同 dtype、同设备的零维标量。若两者共享存储，先保存填充值。`full()` 支持用普通数值或零维标量创建并填充 Tensor。[填充实现](../ops/fill/fill.cpp)
 
 ### 共享与复制的区别
 
@@ -127,9 +113,13 @@ Tensor alias = gpu.to(Device::kCUDA);  // 同设备，返回共享存储的句�
 a = a.to(Device::kCUDA);  // 完成复制后，通过移动赋值让 a 接管结果。
 ```
 
-`.to()` 本身不改变源对象。赋值时，原 `storage_` 减少一个引用；如果还有其他 Tensor 或视图持有它，原存储继续有效，否则立即调用原设备的释放函数。迁移失败时不会执行赋值，源对象仍持有原数据。
+`a = a.to(...)` 在迁移成功后才替换句柄。原存储由其余 Tensor 或视图继续持有，最后一个引用释放时调用原设备的释放函数。
 
-跨设备迁移支持非连续视图，先在源设备上整理成连续副本，再迁移；空对象迁移保持空状态与目标 device，不分配数据。未启用 CUDA 时迁移到 CUDA 会报错。当前 `to()` 仅接收 device，不转换 dtype；`copy_()` 仍只支持同设备复制，`clone()` 在当前设备上深拷贝。
+跨设备迁移先在源设备上整理非连续视图，再复制到目标设备并保留 dtype。空对象迁移只更新 device 元数据。CUDA 迁移要求构建时启用 CUDA。`copy_()` 用于同设备复制，`clone()` 在当前设备上深拷贝。
+
+### dtype 转换
+
+`x.to(Dtype::kFloat32)` 保留设备和 shape。当前支持 FP16/BF16 与 FP32 双向转换，以及 Int8、UInt8、Int16、Int32、Int64 转 FP32。浮点转换的反向把梯度转回输入 dtype；整数转 FP32 不建图。
 
 ## 自动微分
 
@@ -145,10 +135,10 @@ Autograd 的数据结构、反向节点和引擎见 [autograd/README.md](../auto
 | `backward(gradient)` | 指定上游梯度 | 支持非标量输出；gradient 须与输出同 shape/dtype/device，输出须有 grad_node |
 | `detach()` | 断开图和梯度 | 共享 `storage_`，创建新的空 meta |
 | `grad_node()` / `set_grad_node()` | 图的连边 | 读写 `meta->grad_node`，它指向产生当前 Tensor 的节点 |
-| `accumulate_grad()` | 梯度累加 | 首次 `grad.emplace(g.clone())`，之后 `add()` |
+| `accumulate_grad()` | 梯度累加 | 首次克隆梯度，之后用 `add()` 累加 |
 | `version()` / `update_version()` | 查询版本 / 版本加一 | 共享存储的 Tensor 共用计数；原地写入自动更新，通过 data_ptr 写入须手动通知 |
 
-拷贝共享 `storage_`、`version_` 和 `autograd_metadata_`；移动后由目标接管这些句柄。共享视图和 `detach()` 新建 meta，但继续共享版本；独立存储有独立版本。当前 `operator[]`、`reshape()`、`narrow()`、`clone()` 和跨设备 `to()` 已接入反向节点。`detach()` 和同设备 `to()` 保持原有语义。
+拷贝共享 `storage_`、`version_` 和 `autograd_metadata_`。视图和 `detach()` 使用独立的梯度元数据，共享存储的写入版本。
 
 ## dtype
 
@@ -158,57 +148,4 @@ Autograd 的数据结构、反向节点和引擎见 [autograd/README.md](../auto
 
 `Float16` / `BFloat16` 保存 `uint16_t` 原始编码，支持从 `float` 编码、通过 `from_bits()` 保存已有编码，以及转换回 `float`。编码采用最近值、恰好居中时取偶数的舍入规则；打印仍可直接使用公共解码函数。运行时类型由各调用处的 `switch` 分发。
 
-## todo
-
-### dtype.h
-
-- [x] `Dtype` / `Device` 枚举
-- [x] `DtypeInfo` 与 `dtype_size()` / `dtype_name()`
-- [x] 普通数值类型分发
-- [x] `Float16` / `BFloat16` 存储类型、编码与舍入
-- [x] FP16 / BF16 解码整理为公共 inline 工具
-
-### tensor.h / tensor.cpp
-
-- [x] CPU 分配、共享所有权与默认析构
-- [x] 拷贝与移动语义
-- [x] 元数据查询、默认空对象与标量
-- [x] 第一维整数索引与多级索引视图
-- [x] `clone()` / `copy_()` / `fill_()` / `zero_()`
-- [x] 按 shape、dtype、device 只分配输出的构造函数
-- [x] `narrow` 共享视图与 stride 索引
-- [x] `transpose` / `permute` 的视图和反向规则
-- [x] 实现 `contiguous` / `squeeze` / `unsqueeze`（squeeze/unsqueeze 本地 CPU 及 Colab CPU/CUDA 回归已通过）
-- [x] 非连续输入的 `reshape` 和单个 -1 推导（本地 CPU 及 Colab CPU/CUDA 回归已通过）
-- [x] `to(device)`、同设备共享和 CPU/CUDA 双向迁移
-- [x] 嵌套打印与 FP16 / BF16 解码
-- [x] CUDA 内存分配、释放、数据复制和 fill kernel 已写入源码
-- [x] 在 Colab A100 验证 CUDA 构建及 Tensor 测试
-- [x] 拆分公共入口、CPU 后端和 CUDA 后端，保持已有接口语义
-- [x] `requires_grad_` / `grad()` / `has_grad()` 接口
-- [x] `detach()` 接口
-- [x] `AutogradMetadata` 与 `autograd_metadata_` 的构造、拷贝/移动和 `reshape` 重置
-- [x] `grad_node()` / `set_grad_node()` / `accumulate_grad()`
-- [x] `backward()` 单元素入口（参数检查、拓扑排序及梯度传递已实现）
-- [x] 视图的临时保护
-- [x] `CloneNode`、`ToDeviceNode` 和全元素 `sum` 的反向节点
-- [x] 连续及非连续输入的 `reshape` 反向（本地 CPU 及 Colab CPU/CUDA 回归已通过）
-- [x] `narrow` 反向（本地 CPU 及 Colab CPU/CUDA 回归已通过）
-- [x] `operator[]` 的视图反向（本地 CPU 及 Colab CPU/CUDA 回归已通过）
-- [ ] 矩阵乘反向
-
-### 测试
-
-- [x] CPU Tensor 接口、共享内存和视图生命周期
-- [x] FP16 / BF16 编码、舍入边界和打印解码
-- [x] CMake / CTest 接入
-- [x] `autograd_cpu_test`：建图开关、守卫嵌套与异常恢复、梯度状态共享和移动（助手负责）
-- [x] `autograd_cpu_test`：反向规则、梯度累加、链式/菱形图和有限差分（助手负责）
-
 构建与测试命令见 [tests/README.md](../../tests/README.md)。
-
-## stride 工作进度
-
-CPU 和 CUDA 的 `zero_`、`fill_`、`print`、`copy_`、`clone`、跨设备迁移及逐元素算子支持非连续视图。共享存储下无法确定安全的非连续复制仍拒绝。
-
-CUDA Tensor 持有 shape 和 stride 的设备副本；视图创建独立的布局副本，拷贝可共享相同布局。连续快速路径和性能优化可按测量结果推进。

@@ -104,22 +104,28 @@ public:
     Tensor sqrt() const;
     Tensor rsqrt() const;
     Tensor exp() const;
+    Tensor log() const;
 
     Tensor matmul(const Tensor& other) const;
 
-    // Tensor 操作：求和与均值归约。
+    // Tensor 操作：求和、均值与极值归约。
     Tensor sum() const;
     Tensor sum(int dim, bool keepdim = false) const;
     Tensor mean() const;
     Tensor mean(int dim, bool keepdim = false) const;
+    Tensor max() const;
+    Tensor max(int dim, bool keepdim = false) const;
+    Tensor min() const;
+    Tensor min(int dim, bool keepdim = false) const;
 
-    // Tensor 操作：填充、复制与设备迁移。
+    // Tensor 操作：填充、复制、设备迁移与 dtype 转换。
     Tensor& fill_(const Scalar& value);
     Tensor& fill_(const Tensor& value);
     Tensor& zero_();
     Tensor& copy_(const Tensor& src);
     Tensor clone() const;
     Tensor to(Device device) const;
+    Tensor to(Dtype dtype) const;
 
 private:
     friend struct TensorMetadataTestAccess;

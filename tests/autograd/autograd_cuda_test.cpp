@@ -167,9 +167,8 @@ void TestZeroGrad() {
     for (Dtype dtype : {Dtype::kFloat32, Dtype::kFloat16, Dtype::kBFloat16}) {
         auto read = [dtype](const Tensor& tensor, int i) {
             if (dtype == Dtype::kFloat32) return static_cast<const float*>(tensor.data_ptr())[i];
-            const auto bits = static_cast<const std::uint16_t*>(tensor.data_ptr())[i];
-            return dtype == Dtype::kFloat16 ? static_cast<float>(Float16::from_bits(bits))
-                                            : static_cast<float>(BFloat16::from_bits(bits));
+            const auto* bits = static_cast<const std::uint16_t*>(tensor.data_ptr()) + i;
+            return dtype == Dtype::kFloat16 ? DecodeFloat16(bits) : DecodeBFloat16(bits);
         };
         auto check_values = [&require, &read](const Tensor& tensor, float expected) {
             NogradNode guard;
@@ -259,9 +258,8 @@ void TestExplicitBackwardGradient() {
             const float weights[] = {1, 3, 5, 2, 4, 6};
             auto read = [dtype](const Tensor& tensor, int i) {
                 if (dtype == Dtype::kFloat32) return static_cast<const float*>(tensor.data_ptr())[i];
-                const auto bits = static_cast<const std::uint16_t*>(tensor.data_ptr())[i];
-                return dtype == Dtype::kFloat16 ? static_cast<float>(Float16::from_bits(bits))
-                                                : static_cast<float>(BFloat16::from_bits(bits));
+                const auto* bits = static_cast<const std::uint16_t*>(tensor.data_ptr()) + i;
+                return dtype == Dtype::kFloat16 ? DecodeFloat16(bits) : DecodeBFloat16(bits);
             };
             require(grad.shape() == x.shape() && grad.dtype() == dtype && x.grad().device() == x.device(),
                     "explicit backward gradient metadata");
@@ -552,9 +550,8 @@ void TestReshapeBackward() {
                 float value;
                 if (dtype == Dtype::kFloat32) value = static_cast<const float*>(grad.data_ptr())[i];
                 else {
-                    const auto bits = static_cast<const std::uint16_t*>(grad.data_ptr())[i];
-                    value = dtype == Dtype::kFloat16 ? static_cast<float>(Float16::from_bits(bits))
-                                                    : static_cast<float>(BFloat16::from_bits(bits));
+                    const auto* bits = static_cast<const std::uint16_t*>(grad.data_ptr()) + i;
+                    value = dtype == Dtype::kFloat16 ? DecodeFloat16(bits) : DecodeBFloat16(bits);
                 }
                 require(value == expected[i], "non-contiguous reshape gradient value");
             }

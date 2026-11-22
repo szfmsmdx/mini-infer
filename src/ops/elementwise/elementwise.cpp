@@ -9,7 +9,7 @@
 
 #include "mini_infer/ops/elementwise.h"
 #include "ops/elementwise/kernels.h"
-#include "ops/elementwise/cpu_iteration.h"
+#include "ops/common/cpu_iteration.h"
 #include "tensor/check.h"
 #include "mini_infer/autograd.h"
 #include "mini_infer/ops/activation.h"
@@ -47,6 +47,12 @@ class ExpNode : public AutogradNode {
 public:
     Tensor y;
     std::uint64_t output_version = 0;
+    std::vector<Tensor> backward(const Tensor& output_grad) override;
+};
+
+class LogNode : public AutogradNode {
+public:
+    std::uint64_t input_version = 0;
     std::vector<Tensor> backward(const Tensor& output_grad) override;
 };
 
@@ -104,7 +110,6 @@ std::pair<Tensor, Tensor> PrepareBinaryInputs(const Tensor& a, const Tensor& b) 
     Tensor rhs = b.shape() == shape ? b : b.broadcast(shape);
     CheckSameDevice(lhs, rhs, "Tensor must be same device");
     CheckSameDtype(lhs, rhs, "Tensor must be same dtype");
-    CheckSameShape(lhs, rhs, "Tensor must be same size");
     return {lhs, rhs};
 }
 
@@ -317,9 +322,32 @@ Tensor exp(const Tensor& x) {
     return out;
 }
 
+Tensor log(const Tensor& x) {
+    CheckNotEmpty(x, "log: empty input");
+    const bool floating = CheckGradDtype(x.dtype());
+    Tensor out(x.shape(), floating ? x.dtype() : Dtype::kFloat32, x.device());
+    if (x.device() == Device::kCPU) {
+        LogCPU(x, out);
+#ifdef ENABLE_CUDA
+    } else if (x.device() == Device::kCUDA) {
+        LogCUDA(x, out);
+#endif
+    } else {
+        throw std::logic_error("log: no backend for this device");
+    }
+    if (EnableGrad() && floating) {
+        auto node = std::make_shared<LogNode>();
+        node->inputs = {x};
+        node->input_version = x.version();
+        out.set_grad_node(std::move(node));
+    }
+    return out;
+}
+
 Tensor Tensor::sqrt() const { return mtensor::sqrt(*this); }
 Tensor Tensor::rsqrt() const { return mtensor::rsqrt(*this); }
 Tensor Tensor::exp() const { return mtensor::exp(*this); }
+Tensor Tensor::log() const { return mtensor::log(*this); }
 
 Tensor Tensor::operator+(const Tensor& other) const { return add(*this, other); }
 
@@ -514,6 +542,11 @@ std::vector<Tensor> RsqrtNode::backward(const Tensor& output_grad) {
 std::vector<Tensor> ExpNode::backward(const Tensor& output_grad) {
     CheckVersion(y, output_version, "ExpNode::backward: output modified after forward");
     return {output_grad * y};
+}
+
+std::vector<Tensor> LogNode::backward(const Tensor& output_grad) {
+    CheckVersion(inputs[0], input_version, "LogNode::backward: input modified after forward");
+    return {output_grad / inputs[0]};
 }
 
 std::vector<Tensor> SigmoidNode::backward(const Tensor& output_grad) {

@@ -22,4 +22,7 @@ Tensor rsqrt(const Tensor& x);
 // 逐元素计算自然指数；整数输入返回 Float32。
 Tensor exp(const Tensor& x);
 
+// 逐元素计算自然对数；整数输入返回 Float32。零返回 -Inf，负数返回 NaN。
+Tensor log(const Tensor& x);
+
 }  // namespace mtensor

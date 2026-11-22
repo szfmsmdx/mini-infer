@@ -424,6 +424,50 @@ void TestToCPU() {
 #endif
 }
 
+void TestToDtype() {
+    for (Dtype dtype : {Dtype::kFloat16, Dtype::kBFloat16}) {
+        const float half_step = dtype == Dtype::kFloat16 ? 1.0f / 2048 : 1.0f / 256;
+        const float values[] = {1.0f + half_step, -2, 3, 4, 5, 6};
+        Tensor source(values, {2, 3}, Dtype::kFloat32);
+        source.requires_grad_(true);
+        Tensor view = source.transpose(0, 1);
+        Tensor same = view.to(Dtype::kFloat32);
+        Check(same.data_ptr() == view.data_ptr() && same.stride() == view.stride() &&
+              same.grad_node() == view.grad_node(), "Same-dtype to must preserve the view");
+
+        Tensor result = view.to(dtype);
+        Check(result.dtype() == dtype && result.device() == Device::kCPU &&
+              result.shape() == view.shape() && result.is_contiguous() &&
+              result.data_ptr() != view.data_ptr(), "Dtype conversion lost Tensor metadata");
+        Tensor round_trip = result.to(Dtype::kFloat32);
+        CheckValues<float>(round_trip, {1, 4, -2, 5, 3, 6});
+        CheckValues<float>(source, {values[0], -2, 3, 4, 5, 6});
+
+        round_trip.backward(mtensor::full({3, 2}, 2.0f, Dtype::kFloat32));
+        Tensor grad = source.grad();
+        Check(grad.dtype() == Dtype::kFloat32 && grad.shape() == source.shape(),
+              "Dtype conversion backward lost source metadata");
+        CheckValues<float>(grad, {2, 2, 2, 2, 2, 2});
+    }
+
+    const std::int32_t value = -7;
+    Tensor integer(&value, {}, Dtype::kInt32);
+    Tensor scalar = integer.to(Dtype::kFloat32);
+    Check(scalar.is_scalar() && !scalar.grad_node(), "Integer cast must not build a grad node");
+    CheckValues<float>(scalar, {-7});
+
+    Tensor empty = Tensor().to(Dtype::kFloat16);
+    Check(empty.empty() && empty.dtype() == Dtype::kFloat16, "Dtype cast must keep an empty Tensor empty");
+
+    bool threw = false;
+    try {
+        scalar.to(Dtype::kInt32);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Check(threw, "Unsupported dtype conversion must throw std::invalid_argument");
+}
+
 void CheckPrinted16(Dtype dtype, std::uint16_t bits, double expected) {
     Tensor scalar(&bits, {}, dtype);
     // 用 double 解析，避免 BF16 很小的数在 stof 中触发下溢错误。
@@ -534,6 +578,7 @@ int main() {
         TestFillAndZero();
         TestErrors();
         TestToCPU();
+        TestToDtype();
         TestPrintAndDecode();
         TestNarrow();
         std::cout << "Tensor CPU tests passed\n";

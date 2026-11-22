@@ -103,7 +103,9 @@ void CheckRsqrtBackwardPrecision(Dtype dtype, float rtol) {
         upstream.emplace_back(bf16_case ? -4.863887597560136e18f : gradients[i % 4]);
         const double x = static_cast<float>(input.back());
         const double g = static_cast<float>(upstream.back());
-        expected.push_back(static_cast<float>(T(static_cast<float>(-0.5 * g / (x * std::sqrt(x))))));
+        const double exact = -0.5 * g / (x * std::sqrt(x));
+        const T rounded(static_cast<float>(exact));
+        expected.push_back(static_cast<float>(rounded));
     }
     Tensor xs(std::vector<int>{count, 2}, dtype, kDevice);
     Tensor gs(std::vector<int>{count, 3}, dtype, kDevice);

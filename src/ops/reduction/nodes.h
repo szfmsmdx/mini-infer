@@ -11,7 +11,6 @@ class SumNode : public AutogradNode {
 public:
     std::vector<Tensor> backward(const Tensor& output_grad) override;
     int dim = -1;
-    std::vector<int> input_shape;
 };
 
 }  // namespace mtensor

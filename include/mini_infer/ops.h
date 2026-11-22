@@ -5,3 +5,4 @@
 #include "mini_infer/ops/matmul.h"
 #include "mini_infer/ops/norm.h"
 #include "mini_infer/ops/reduction.h"
+#include "mini_infer/ops/transformer.h"

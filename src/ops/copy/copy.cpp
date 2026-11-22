@@ -44,8 +44,10 @@ Tensor& Tensor::copy_(const Tensor& src) {
             throw std::invalid_argument("Tensor::copy_: shared non-contiguous storage is not supported");
         }
         const auto* storage_ptr = static_cast<const std::byte*>(storage_.get());
-        const auto dst_offset = static_cast<std::size_t>(static_cast<const std::byte*>(data_ptr_) - storage_ptr);
-        const auto src_offset = static_cast<std::size_t>(static_cast<const std::byte*>(src.data_ptr_) - storage_ptr);
+        const auto* dst_bytes = static_cast<const std::byte*>(data_ptr_);
+        const auto* src_bytes = static_cast<const std::byte*>(src.data_ptr_);
+        const auto dst_offset = static_cast<std::size_t>(dst_bytes - storage_ptr);
+        const auto src_offset = static_cast<std::size_t>(src_bytes - storage_ptr);
         const std::size_t distance = dst_offset > src_offset ? dst_offset - src_offset : src_offset - dst_offset;
         if (distance < nbytes()) {
             throw std::invalid_argument("Tensor::copy_: overlapping storage is not supported");
@@ -114,6 +116,43 @@ Tensor Tensor::to(Device device) const {
 #endif
 }
 
+Tensor Tensor::to(Dtype dtype) const {
+    if (dtype == dtype_) return *this;
+
+    const bool to_float32 = dtype == Dtype::kFloat32 && dtype_size(dtype_) != 0;
+    const bool from_float32 = dtype_ == Dtype::kFloat32 && CheckGradDtype(dtype);
+    if (!to_float32 && !from_float32) {
+        throw std::invalid_argument("Tensor::to: unsupported dtype conversion");
+    }
+
+    if (empty()) {
+        Tensor result;
+        result.dtype_ = dtype;
+        result.device_ = device_;
+        return result;
+    }
+
+    Tensor result(shape_, dtype, device_);
+    if (device_ == Device::kCPU) {
+        CastCPU(*this, result);
+    } else if (device_ == Device::kCUDA) {
+#ifdef ENABLE_CUDA
+        CastCUDA(*this, result);
+#else
+        throw std::logic_error("Tensor::to: CUDA support is disabled");
+#endif
+    } else {
+        throw std::invalid_argument("Tensor::to: unsupported device");
+    }
+
+    if (EnableGrad() && CheckGradDtype(dtype_)) {
+        auto node = std::make_shared<ToDtypeNode>();
+        node->inputs = {*this};
+        result.set_grad_node(node);
+    }
+    return result;
+}
+
 Tensor Tensor::clone() const {
     /*
     使用示例:
@@ -165,6 +204,10 @@ std::vector<Tensor> CloneNode::backward(const Tensor& output_grad) {
 std::vector<Tensor> ToDeviceNode::backward(const Tensor& output_grad) {
     // auto_grad 引擎确保不会循环建图
     return {output_grad.to(input_device)};
+}
+
+std::vector<Tensor> ToDtypeNode::backward(const Tensor& output_grad) {
+    return {output_grad.to(inputs[0].dtype())};
 }
 
 }  // namespace mtensor

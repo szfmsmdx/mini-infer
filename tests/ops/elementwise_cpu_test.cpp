@@ -486,12 +486,12 @@ void TestFloatSpecialValues() {
     Tensor zero_b(&zero, {}, Dtype::kFloat32);
     Tensor negative_one_b(&negative_one, {}, Dtype::kFloat32);
     Tensor div_inf = one_b / zero_b;
-    Check(std::isinf(*static_cast<const float*>(div_inf.data_ptr())) &&
-              *static_cast<const float*>(div_inf.data_ptr()) > 0,
+    const auto* div_inf_value = static_cast<const float*>(div_inf.data_ptr());
+    Check(std::isinf(*div_inf_value) && *div_inf_value > 0,
           "Float32 division by zero must produce positive infinity");
     Tensor div_negative_inf = negative_one_b / zero_b;
-    Check(std::isinf(*static_cast<const float*>(div_negative_inf.data_ptr())) &&
-              *static_cast<const float*>(div_negative_inf.data_ptr()) < 0,
+    const auto* div_negative_inf_value = static_cast<const float*>(div_negative_inf.data_ptr());
+    Check(std::isinf(*div_negative_inf_value) && *div_negative_inf_value < 0,
           "Float32 negative division by zero must produce negative infinity");
 
     Tensor zero_div_zero = zero_b / zero_b;

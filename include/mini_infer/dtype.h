@@ -131,8 +131,8 @@ namespace mtensor{
             ++half_exponent;
         }
         // half_exponent 进位到 31 时，小数已清零，拼出的编码就是无穷。
-        return static_cast<std::uint16_t>(
-            sign | (static_cast<std::uint32_t>(half_exponent) << 10) | retained);
+        const auto exponent_bits = static_cast<std::uint32_t>(half_exponent) << 10;
+        return static_cast<std::uint16_t>(sign | exponent_bits | retained);
     }
 
 inline float DecodeFloat16(const void* element) {

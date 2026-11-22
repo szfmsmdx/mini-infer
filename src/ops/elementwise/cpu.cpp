@@ -8,7 +8,7 @@
 #include <type_traits>
 
 #include "ops/elementwise/kernels.h"
-#include "ops/elementwise/cpu_iteration.h"
+#include "ops/common/cpu_iteration.h"
 #include "mini_infer/tensor.h"
 
 namespace mtensor {
@@ -18,7 +18,9 @@ namespace {
 template <typename T>
 T AddWrap(T a, T b) {
     using U = std::make_unsigned_t<T>;
-    const U sum = static_cast<U>(a) + static_cast<U>(b);
+    const U lhs = static_cast<U>(a);
+    const U rhs = static_cast<U>(b);
+    const U sum = lhs + rhs;
 
     T result;
     std::memcpy(&result, &sum, sizeof(result));
@@ -28,7 +30,9 @@ T AddWrap(T a, T b) {
 template <typename T>
 T SubWrap(T a, T b) {
     using U = std::make_unsigned_t<T>;
-    const U diff = static_cast<U>(a) - static_cast<U>(b);
+    const U lhs = static_cast<U>(a);
+    const U rhs = static_cast<U>(b);
+    const U diff = lhs - rhs;
 
     T result;
     std::memcpy(&result, &diff, sizeof(result));
@@ -38,16 +42,10 @@ T SubWrap(T a, T b) {
 template <typename T>
 T MulWrap(T a, T b) {
     using U = std::make_unsigned_t<T>;
-    U product;
-    if constexpr (sizeof(U) < sizeof(std::uint64_t)) {
-        // 8/16 位乘法会先提升为 int，先转成 uint64_t 避免中间结果溢出。
-        product = static_cast<U>(
-            static_cast<std::uint64_t>(static_cast<U>(a)) *
-            static_cast<std::uint64_t>(static_cast<U>(b)));
-    } else {
-        // uint64_t 乘法本身按模 2^64 回绕。
-        product = static_cast<U>(a) * static_cast<U>(b);
-    }
+    // 无符号乘法保留低位，也避免 8/16 位运算提升为 int 后溢出。
+    const auto lhs = static_cast<std::uint64_t>(a);
+    const auto rhs = static_cast<std::uint64_t>(b);
+    const U product = static_cast<U>(lhs * rhs);
 
     T result;
     std::memcpy(&result, &product, sizeof(result));
@@ -88,155 +86,157 @@ T NegValue(T value) {
 
 template <typename T>
 void AddTypedCPU(
-    const T* a, const T* b, T* output,
+    const void* a, const void* b, void* output,
     const std::vector<int>& shape,
     const std::vector<std::size_t>& a_stride,
     const std::vector<std::size_t>& b_stride,
     const std::vector<std::size_t>& output_stride
 ) {
+    const auto* lhs = static_cast<const T*>(a);
+    const auto* rhs = static_cast<const T*>(b);
+    auto* result = static_cast<T*>(output);
     ForEachOffset(shape, a_stride, b_stride, output_stride,
         [&](std::size_t a_offset, std::size_t b_offset, std::size_t output_offset) {
             if constexpr (std::is_integral<T>::value){
-                *(output + output_offset) = AddWrap(*(a + a_offset), *(b + b_offset));
+                result[output_offset] = AddWrap(lhs[a_offset], rhs[b_offset]);
             }else{
-                *(output + output_offset) = *(a + a_offset) + *(b + b_offset);
+                result[output_offset] = lhs[a_offset] + rhs[b_offset];
             }
         });
 }
 
-template <typename Half>
+template <float (*Decode)(const void*), std::uint16_t (*Encode)(float)>
 void AddHalfCPU(const void* a, const void* b, void* output,
                 const std::vector<int>& shape, const std::vector<std::size_t>& a_stride,
                 const std::vector<std::size_t>& b_stride, const std::vector<std::size_t>& output_stride) {
-    const auto* a_bytes = static_cast<const std::byte*>(a);
-    const auto* b_bytes = static_cast<const std::byte*>(b);
-    auto* output_bytes = static_cast<std::byte*>(output);
+    const auto* lhs = static_cast<const std::uint16_t*>(a);
+    const auto* rhs = static_cast<const std::uint16_t*>(b);
+    auto* result = static_cast<std::uint16_t*>(output);
     ForEachOffset(shape, a_stride, b_stride, output_stride,
         [&](std::size_t a_offset, std::size_t b_offset, std::size_t output_offset) {
-            std::uint16_t a_bits, b_bits;
-            std::memcpy(&a_bits, a_bytes + a_offset * sizeof(a_bits), sizeof(a_bits));
-            std::memcpy(&b_bits, b_bytes + b_offset * sizeof(b_bits), sizeof(b_bits));
-            const Half result(static_cast<float>(Half::from_bits(a_bits)) +
-                              static_cast<float>(Half::from_bits(b_bits)));
-            std::memcpy(output_bytes + output_offset * sizeof(result.bits), &result.bits, sizeof(result.bits));
+            const float a_value = Decode(lhs + a_offset);
+            const float b_value = Decode(rhs + b_offset);
+            result[output_offset] = Encode(a_value + b_value);
         });
 }
 
 template <typename T>
 void SubTypedCPU(
-    const T* a, const T* b, T* output,
+    const void* a, const void* b, void* output,
     const std::vector<int>& shape,
     const std::vector<std::size_t>& a_stride,
     const std::vector<std::size_t>& b_stride,
     const std::vector<std::size_t>& output_stride
 ) {
+    const auto* lhs = static_cast<const T*>(a);
+    const auto* rhs = static_cast<const T*>(b);
+    auto* result = static_cast<T*>(output);
     ForEachOffset(shape, a_stride, b_stride, output_stride,
         [&](std::size_t a_offset, std::size_t b_offset, std::size_t output_offset) {
             if constexpr (std::is_integral<T>::value){
-                *(output + output_offset) = SubWrap(*(a + a_offset), *(b + b_offset));
+                result[output_offset] = SubWrap(lhs[a_offset], rhs[b_offset]);
             }else{
-                *(output + output_offset) = *(a + a_offset) - *(b + b_offset);
+                result[output_offset] = lhs[a_offset] - rhs[b_offset];
             }
         });
 }
 
-template <typename Half>
+template <float (*Decode)(const void*), std::uint16_t (*Encode)(float)>
 void SubHalfCPU(const void* a, const void* b, void* output,
                 const std::vector<int>& shape, const std::vector<std::size_t>& a_stride,
                 const std::vector<std::size_t>& b_stride, const std::vector<std::size_t>& output_stride) {
-    const auto* a_bytes = static_cast<const std::byte*>(a);
-    const auto* b_bytes = static_cast<const std::byte*>(b);
-    auto* output_bytes = static_cast<std::byte*>(output);
+    const auto* lhs = static_cast<const std::uint16_t*>(a);
+    const auto* rhs = static_cast<const std::uint16_t*>(b);
+    auto* result = static_cast<std::uint16_t*>(output);
     ForEachOffset(shape, a_stride, b_stride, output_stride,
         [&](std::size_t a_offset, std::size_t b_offset, std::size_t output_offset) {
-            std::uint16_t a_bits, b_bits;
-            std::memcpy(&a_bits, a_bytes + a_offset * sizeof(a_bits), sizeof(a_bits));
-            std::memcpy(&b_bits, b_bytes + b_offset * sizeof(b_bits), sizeof(b_bits));
-            const Half result(static_cast<float>(Half::from_bits(a_bits)) -
-                              static_cast<float>(Half::from_bits(b_bits)));
-            std::memcpy(output_bytes + output_offset * sizeof(result.bits), &result.bits, sizeof(result.bits));
+            const float a_value = Decode(lhs + a_offset);
+            const float b_value = Decode(rhs + b_offset);
+            result[output_offset] = Encode(a_value - b_value);
         });
 }
 
 template <typename T>
 void MulTypedCPU(
-    const T* a, const T* b, T* output,
+    const void* a, const void* b, void* output,
     const std::vector<int>& shape,
     const std::vector<std::size_t>& a_stride,
     const std::vector<std::size_t>& b_stride,
     const std::vector<std::size_t>& output_stride
 ) {
+    const auto* lhs = static_cast<const T*>(a);
+    const auto* rhs = static_cast<const T*>(b);
+    auto* result = static_cast<T*>(output);
     ForEachOffset(shape, a_stride, b_stride, output_stride,
         [&](std::size_t a_offset, std::size_t b_offset, std::size_t output_offset) {
             if constexpr (std::is_integral<T>::value){
-                *(output + output_offset) = MulWrap(*(a + a_offset), *(b + b_offset));
+                result[output_offset] = MulWrap(lhs[a_offset], rhs[b_offset]);
             }else{
-                *(output + output_offset) = *(a + a_offset) * *(b + b_offset);
+                result[output_offset] = lhs[a_offset] * rhs[b_offset];
             }
         });
 }
 
-template <typename Half>
+template <float (*Decode)(const void*), std::uint16_t (*Encode)(float)>
 void MulHalfCPU(const void* a, const void* b, void* output,
                 const std::vector<int>& shape, const std::vector<std::size_t>& a_stride,
                 const std::vector<std::size_t>& b_stride, const std::vector<std::size_t>& output_stride) {
-    const auto* a_bytes = static_cast<const std::byte*>(a);
-    const auto* b_bytes = static_cast<const std::byte*>(b);
-    auto* output_bytes = static_cast<std::byte*>(output);
+    const auto* lhs = static_cast<const std::uint16_t*>(a);
+    const auto* rhs = static_cast<const std::uint16_t*>(b);
+    auto* result = static_cast<std::uint16_t*>(output);
     ForEachOffset(shape, a_stride, b_stride, output_stride,
         [&](std::size_t a_offset, std::size_t b_offset, std::size_t output_offset) {
-            std::uint16_t a_bits, b_bits;
-            std::memcpy(&a_bits, a_bytes + a_offset * sizeof(a_bits), sizeof(a_bits));
-            std::memcpy(&b_bits, b_bytes + b_offset * sizeof(b_bits), sizeof(b_bits));
-            const Half result(static_cast<float>(Half::from_bits(a_bits)) *
-                              static_cast<float>(Half::from_bits(b_bits)));
-            std::memcpy(output_bytes + output_offset * sizeof(result.bits), &result.bits, sizeof(result.bits));
+            const float a_value = Decode(lhs + a_offset);
+            const float b_value = Decode(rhs + b_offset);
+            result[output_offset] = Encode(a_value * b_value);
         });
 }
 
 template <typename T>
 void DivTypedCPU(
-    const T* a, const T* b, T* output,
+    const void* a, const void* b, void* output,
     const std::vector<int>& shape,
     const std::vector<std::size_t>& a_stride,
     const std::vector<std::size_t>& b_stride,
     const std::vector<std::size_t>& output_stride
 ) {
+    const auto* lhs = static_cast<const T*>(a);
+    const auto* rhs = static_cast<const T*>(b);
+    auto* result = static_cast<T*>(output);
     ForEachOffset(shape, a_stride, b_stride, output_stride,
         [&](std::size_t a_offset, std::size_t b_offset, std::size_t output_offset) {
             if constexpr (std::is_integral<T>::value){
-                *(output + output_offset) = DivValue(*(a + a_offset), *(b + b_offset));
+                result[output_offset] = DivValue(lhs[a_offset], rhs[b_offset]);
             }else{
-                *(output + output_offset) = *(a + a_offset) / *(b + b_offset);
+                result[output_offset] = lhs[a_offset] / rhs[b_offset];
             }
         });
 }
 
-template <typename Half>
+template <float (*Decode)(const void*), std::uint16_t (*Encode)(float)>
 void DivHalfCPU(const void* a, const void* b, void* output,
                 const std::vector<int>& shape, const std::vector<std::size_t>& a_stride,
                 const std::vector<std::size_t>& b_stride, const std::vector<std::size_t>& output_stride) {
-    const auto* a_bytes = static_cast<const std::byte*>(a);
-    const auto* b_bytes = static_cast<const std::byte*>(b);
-    auto* output_bytes = static_cast<std::byte*>(output);
+    const auto* lhs = static_cast<const std::uint16_t*>(a);
+    const auto* rhs = static_cast<const std::uint16_t*>(b);
+    auto* result = static_cast<std::uint16_t*>(output);
     ForEachOffset(shape, a_stride, b_stride, output_stride,
         [&](std::size_t a_offset, std::size_t b_offset, std::size_t output_offset) {
-            std::uint16_t a_bits, b_bits;
-            std::memcpy(&a_bits, a_bytes + a_offset * sizeof(a_bits), sizeof(a_bits));
-            std::memcpy(&b_bits, b_bytes + b_offset * sizeof(b_bits), sizeof(b_bits));
-            const Half result(static_cast<float>(Half::from_bits(a_bits)) /
-                              static_cast<float>(Half::from_bits(b_bits)));
-            std::memcpy(output_bytes + output_offset * sizeof(result.bits), &result.bits, sizeof(result.bits));
+            const float a_value = Decode(lhs + a_offset);
+            const float b_value = Decode(rhs + b_offset);
+            result[output_offset] = Encode(a_value / b_value);
         });
 }
 
 template <typename T>
-void NegTypedCPU(const T* a, T* output, const std::vector<int>& shape,
+void NegTypedCPU(const void* a, void* output, const std::vector<int>& shape,
                  const std::vector<std::size_t>& a_stride,
                  const std::vector<std::size_t>& output_stride) {
+    const auto* input = static_cast<const T*>(a);
+    auto* result = static_cast<T*>(output);
     ForEachOffset(shape, a_stride, output_stride,
         [&](std::size_t a_offset, std::size_t output_offset) {
-            output[output_offset] = NegValue(a[a_offset]);
+            result[output_offset] = NegValue(input[a_offset]);
         });
 }
 
@@ -291,8 +291,8 @@ void RsqrtTypedCPU(const Tensor& x, Tensor& result) {
         });
 }
 
-template <typename Input, typename Output>
-void ExpTypedCPU(const Tensor& x, Tensor& out) {
+template <typename Input, typename Output, bool Log>
+void ExpLogTypedCPU(const Tensor& x, Tensor& out) {
     const auto* src = static_cast<const std::byte*>(x.data_ptr());
     auto* dst = static_cast<std::byte*>(out.data_ptr());
     const auto& shape = x.shape();
@@ -301,7 +301,8 @@ void ExpTypedCPU(const Tensor& x, Tensor& out) {
         [&](std::size_t offset) {
             Input value(0);
             std::memcpy(&value, src + offset * sizeof(Input), sizeof(Input));
-            const Output result(std::exp(static_cast<float>(value)));
+            const float v = static_cast<float>(value);
+            const Output result(Log ? std::log(v) : std::exp(v));
             std::memcpy(dst, &result, sizeof(Output));
             dst += sizeof(Output);
         });
@@ -357,14 +358,30 @@ void AddCPU(const void* a, const void* b, void* output, Dtype dtype,
             const std::vector<int>& shape, const std::vector<std::size_t>& a_stride,
             const std::vector<std::size_t>& b_stride, const std::vector<std::size_t>& output_stride) {
     switch (dtype) {
-        case Dtype::kFloat16: AddHalfCPU<Float16>(a, b, output, shape, a_stride, b_stride, output_stride); break;
-        case Dtype::kBFloat16: AddHalfCPU<BFloat16>(a, b, output, shape, a_stride, b_stride, output_stride); break;
-        case Dtype::kFloat32: AddTypedCPU(static_cast<const float*>(a), static_cast<const float*>(b), static_cast<float*>(output), shape, a_stride, b_stride, output_stride); break;
-        case Dtype::kInt8: AddTypedCPU(static_cast<const std::int8_t*>(a), static_cast<const std::int8_t*>(b), static_cast<std::int8_t*>(output), shape, a_stride, b_stride, output_stride); break;
-        case Dtype::kUInt8: AddTypedCPU(static_cast<const std::uint8_t*>(a), static_cast<const std::uint8_t*>(b), static_cast<std::uint8_t*>(output), shape, a_stride, b_stride, output_stride); break;
-        case Dtype::kInt16: AddTypedCPU(static_cast<const std::int16_t*>(a), static_cast<const std::int16_t*>(b), static_cast<std::int16_t*>(output), shape, a_stride, b_stride, output_stride); break;
-        case Dtype::kInt32: AddTypedCPU(static_cast<const std::int32_t*>(a), static_cast<const std::int32_t*>(b), static_cast<std::int32_t*>(output), shape, a_stride, b_stride, output_stride); break;
-        case Dtype::kInt64: AddTypedCPU(static_cast<const std::int64_t*>(a), static_cast<const std::int64_t*>(b), static_cast<std::int64_t*>(output), shape, a_stride, b_stride, output_stride); break;
+        case Dtype::kFloat16:
+            AddHalfCPU<DecodeFloat16, EncodeFloat16>(a, b, output, shape, a_stride, b_stride, output_stride);
+            break;
+        case Dtype::kBFloat16:
+            AddHalfCPU<DecodeBFloat16, EncodeBFloat16>(a, b, output, shape, a_stride, b_stride, output_stride);
+            break;
+        case Dtype::kFloat32:
+            AddTypedCPU<float>(a, b, output, shape, a_stride, b_stride, output_stride);
+            break;
+        case Dtype::kInt8:
+            AddTypedCPU<std::int8_t>(a, b, output, shape, a_stride, b_stride, output_stride);
+            break;
+        case Dtype::kUInt8:
+            AddTypedCPU<std::uint8_t>(a, b, output, shape, a_stride, b_stride, output_stride);
+            break;
+        case Dtype::kInt16:
+            AddTypedCPU<std::int16_t>(a, b, output, shape, a_stride, b_stride, output_stride);
+            break;
+        case Dtype::kInt32:
+            AddTypedCPU<std::int32_t>(a, b, output, shape, a_stride, b_stride, output_stride);
+            break;
+        case Dtype::kInt64:
+            AddTypedCPU<std::int64_t>(a, b, output, shape, a_stride, b_stride, output_stride);
+            break;
         default: throw std::invalid_argument("unsupported dtype");
     }
 }
@@ -373,14 +390,30 @@ void SubCPU(const void* a, const void* b, void* output, Dtype dtype,
             const std::vector<int>& shape, const std::vector<std::size_t>& a_stride,
             const std::vector<std::size_t>& b_stride, const std::vector<std::size_t>& output_stride) {
     switch (dtype) {
-        case Dtype::kFloat16: SubHalfCPU<Float16>(a, b, output, shape, a_stride, b_stride, output_stride); break;
-        case Dtype::kBFloat16: SubHalfCPU<BFloat16>(a, b, output, shape, a_stride, b_stride, output_stride); break;
-        case Dtype::kFloat32: SubTypedCPU(static_cast<const float*>(a), static_cast<const float*>(b), static_cast<float*>(output), shape, a_stride, b_stride, output_stride); break;
-        case Dtype::kInt8: SubTypedCPU(static_cast<const std::int8_t*>(a), static_cast<const std::int8_t*>(b), static_cast<std::int8_t*>(output), shape, a_stride, b_stride, output_stride); break;
-        case Dtype::kUInt8: SubTypedCPU(static_cast<const std::uint8_t*>(a), static_cast<const std::uint8_t*>(b), static_cast<std::uint8_t*>(output), shape, a_stride, b_stride, output_stride); break;
-        case Dtype::kInt16: SubTypedCPU(static_cast<const std::int16_t*>(a), static_cast<const std::int16_t*>(b), static_cast<std::int16_t*>(output), shape, a_stride, b_stride, output_stride); break;
-        case Dtype::kInt32: SubTypedCPU(static_cast<const std::int32_t*>(a), static_cast<const std::int32_t*>(b), static_cast<std::int32_t*>(output), shape, a_stride, b_stride, output_stride); break;
-        case Dtype::kInt64: SubTypedCPU(static_cast<const std::int64_t*>(a), static_cast<const std::int64_t*>(b), static_cast<std::int64_t*>(output), shape, a_stride, b_stride, output_stride); break;
+        case Dtype::kFloat16:
+            SubHalfCPU<DecodeFloat16, EncodeFloat16>(a, b, output, shape, a_stride, b_stride, output_stride);
+            break;
+        case Dtype::kBFloat16:
+            SubHalfCPU<DecodeBFloat16, EncodeBFloat16>(a, b, output, shape, a_stride, b_stride, output_stride);
+            break;
+        case Dtype::kFloat32:
+            SubTypedCPU<float>(a, b, output, shape, a_stride, b_stride, output_stride);
+            break;
+        case Dtype::kInt8:
+            SubTypedCPU<std::int8_t>(a, b, output, shape, a_stride, b_stride, output_stride);
+            break;
+        case Dtype::kUInt8:
+            SubTypedCPU<std::uint8_t>(a, b, output, shape, a_stride, b_stride, output_stride);
+            break;
+        case Dtype::kInt16:
+            SubTypedCPU<std::int16_t>(a, b, output, shape, a_stride, b_stride, output_stride);
+            break;
+        case Dtype::kInt32:
+            SubTypedCPU<std::int32_t>(a, b, output, shape, a_stride, b_stride, output_stride);
+            break;
+        case Dtype::kInt64:
+            SubTypedCPU<std::int64_t>(a, b, output, shape, a_stride, b_stride, output_stride);
+            break;
         default: throw std::invalid_argument("unsupported dtype");
     }
 }
@@ -389,14 +422,30 @@ void MulCPU(const void* a, const void* b, void* output, Dtype dtype,
             const std::vector<int>& shape, const std::vector<std::size_t>& a_stride,
             const std::vector<std::size_t>& b_stride, const std::vector<std::size_t>& output_stride) {
     switch (dtype) {
-        case Dtype::kFloat16: MulHalfCPU<Float16>(a, b, output, shape, a_stride, b_stride, output_stride); break;
-        case Dtype::kBFloat16: MulHalfCPU<BFloat16>(a, b, output, shape, a_stride, b_stride, output_stride); break;
-        case Dtype::kFloat32: MulTypedCPU(static_cast<const float*>(a), static_cast<const float*>(b), static_cast<float*>(output), shape, a_stride, b_stride, output_stride); break;
-        case Dtype::kInt8: MulTypedCPU(static_cast<const std::int8_t*>(a), static_cast<const std::int8_t*>(b), static_cast<std::int8_t*>(output), shape, a_stride, b_stride, output_stride); break;
-        case Dtype::kUInt8: MulTypedCPU(static_cast<const std::uint8_t*>(a), static_cast<const std::uint8_t*>(b), static_cast<std::uint8_t*>(output), shape, a_stride, b_stride, output_stride); break;
-        case Dtype::kInt16: MulTypedCPU(static_cast<const std::int16_t*>(a), static_cast<const std::int16_t*>(b), static_cast<std::int16_t*>(output), shape, a_stride, b_stride, output_stride); break;
-        case Dtype::kInt32: MulTypedCPU(static_cast<const std::int32_t*>(a), static_cast<const std::int32_t*>(b), static_cast<std::int32_t*>(output), shape, a_stride, b_stride, output_stride); break;
-        case Dtype::kInt64: MulTypedCPU(static_cast<const std::int64_t*>(a), static_cast<const std::int64_t*>(b), static_cast<std::int64_t*>(output), shape, a_stride, b_stride, output_stride); break;
+        case Dtype::kFloat16:
+            MulHalfCPU<DecodeFloat16, EncodeFloat16>(a, b, output, shape, a_stride, b_stride, output_stride);
+            break;
+        case Dtype::kBFloat16:
+            MulHalfCPU<DecodeBFloat16, EncodeBFloat16>(a, b, output, shape, a_stride, b_stride, output_stride);
+            break;
+        case Dtype::kFloat32:
+            MulTypedCPU<float>(a, b, output, shape, a_stride, b_stride, output_stride);
+            break;
+        case Dtype::kInt8:
+            MulTypedCPU<std::int8_t>(a, b, output, shape, a_stride, b_stride, output_stride);
+            break;
+        case Dtype::kUInt8:
+            MulTypedCPU<std::uint8_t>(a, b, output, shape, a_stride, b_stride, output_stride);
+            break;
+        case Dtype::kInt16:
+            MulTypedCPU<std::int16_t>(a, b, output, shape, a_stride, b_stride, output_stride);
+            break;
+        case Dtype::kInt32:
+            MulTypedCPU<std::int32_t>(a, b, output, shape, a_stride, b_stride, output_stride);
+            break;
+        case Dtype::kInt64:
+            MulTypedCPU<std::int64_t>(a, b, output, shape, a_stride, b_stride, output_stride);
+            break;
         default: throw std::invalid_argument("unsupported dtype");
     }
 }
@@ -405,14 +454,30 @@ void DivCPU(const void* a, const void* b, void* output, Dtype dtype,
             const std::vector<int>& shape, const std::vector<std::size_t>& a_stride,
             const std::vector<std::size_t>& b_stride, const std::vector<std::size_t>& output_stride) {
     switch (dtype) {
-        case Dtype::kFloat16: DivHalfCPU<Float16>(a, b, output, shape, a_stride, b_stride, output_stride); break;
-        case Dtype::kBFloat16: DivHalfCPU<BFloat16>(a, b, output, shape, a_stride, b_stride, output_stride); break;
-        case Dtype::kFloat32: DivTypedCPU(static_cast<const float*>(a), static_cast<const float*>(b), static_cast<float*>(output), shape, a_stride, b_stride, output_stride); break;
-        case Dtype::kInt8: DivTypedCPU(static_cast<const std::int8_t*>(a), static_cast<const std::int8_t*>(b), static_cast<std::int8_t*>(output), shape, a_stride, b_stride, output_stride); break;
-        case Dtype::kUInt8: DivTypedCPU(static_cast<const std::uint8_t*>(a), static_cast<const std::uint8_t*>(b), static_cast<std::uint8_t*>(output), shape, a_stride, b_stride, output_stride); break;
-        case Dtype::kInt16: DivTypedCPU(static_cast<const std::int16_t*>(a), static_cast<const std::int16_t*>(b), static_cast<std::int16_t*>(output), shape, a_stride, b_stride, output_stride); break;
-        case Dtype::kInt32: DivTypedCPU(static_cast<const std::int32_t*>(a), static_cast<const std::int32_t*>(b), static_cast<std::int32_t*>(output), shape, a_stride, b_stride, output_stride); break;
-        case Dtype::kInt64: DivTypedCPU(static_cast<const std::int64_t*>(a), static_cast<const std::int64_t*>(b), static_cast<std::int64_t*>(output), shape, a_stride, b_stride, output_stride); break;
+        case Dtype::kFloat16:
+            DivHalfCPU<DecodeFloat16, EncodeFloat16>(a, b, output, shape, a_stride, b_stride, output_stride);
+            break;
+        case Dtype::kBFloat16:
+            DivHalfCPU<DecodeBFloat16, EncodeBFloat16>(a, b, output, shape, a_stride, b_stride, output_stride);
+            break;
+        case Dtype::kFloat32:
+            DivTypedCPU<float>(a, b, output, shape, a_stride, b_stride, output_stride);
+            break;
+        case Dtype::kInt8:
+            DivTypedCPU<std::int8_t>(a, b, output, shape, a_stride, b_stride, output_stride);
+            break;
+        case Dtype::kUInt8:
+            DivTypedCPU<std::uint8_t>(a, b, output, shape, a_stride, b_stride, output_stride);
+            break;
+        case Dtype::kInt16:
+            DivTypedCPU<std::int16_t>(a, b, output, shape, a_stride, b_stride, output_stride);
+            break;
+        case Dtype::kInt32:
+            DivTypedCPU<std::int32_t>(a, b, output, shape, a_stride, b_stride, output_stride);
+            break;
+        case Dtype::kInt64:
+            DivTypedCPU<std::int64_t>(a, b, output, shape, a_stride, b_stride, output_stride);
+            break;
         default: throw std::invalid_argument("unsupported dtype");
     }
 }
@@ -423,12 +488,24 @@ void NegCPU(const void* a, void* output, Dtype dtype,
     switch (dtype) {
         case Dtype::kFloat16:
         case Dtype::kBFloat16: NegHalfCPU(a, output, shape, a_stride, output_stride); break;
-        case Dtype::kFloat32: NegTypedCPU(static_cast<const float*>(a), static_cast<float*>(output), shape, a_stride, output_stride); break;
-        case Dtype::kInt8: NegTypedCPU(static_cast<const std::int8_t*>(a), static_cast<std::int8_t*>(output), shape, a_stride, output_stride); break;
-        case Dtype::kUInt8: NegTypedCPU(static_cast<const std::uint8_t*>(a), static_cast<std::uint8_t*>(output), shape, a_stride, output_stride); break;
-        case Dtype::kInt16: NegTypedCPU(static_cast<const std::int16_t*>(a), static_cast<std::int16_t*>(output), shape, a_stride, output_stride); break;
-        case Dtype::kInt32: NegTypedCPU(static_cast<const std::int32_t*>(a), static_cast<std::int32_t*>(output), shape, a_stride, output_stride); break;
-        case Dtype::kInt64: NegTypedCPU(static_cast<const std::int64_t*>(a), static_cast<std::int64_t*>(output), shape, a_stride, output_stride); break;
+        case Dtype::kFloat32:
+            NegTypedCPU<float>(a, output, shape, a_stride, output_stride);
+            break;
+        case Dtype::kInt8:
+            NegTypedCPU<std::int8_t>(a, output, shape, a_stride, output_stride);
+            break;
+        case Dtype::kUInt8:
+            NegTypedCPU<std::uint8_t>(a, output, shape, a_stride, output_stride);
+            break;
+        case Dtype::kInt16:
+            NegTypedCPU<std::int16_t>(a, output, shape, a_stride, output_stride);
+            break;
+        case Dtype::kInt32:
+            NegTypedCPU<std::int32_t>(a, output, shape, a_stride, output_stride);
+            break;
+        case Dtype::kInt64:
+            NegTypedCPU<std::int64_t>(a, output, shape, a_stride, output_stride);
+            break;
         default: throw std::invalid_argument("unsupported dtype");
     }
 }
@@ -462,18 +539,27 @@ void RsqrtCPU(const Tensor& x, Tensor& out) {
     }
 }
 
-void ExpCPU(const Tensor& x, Tensor& out) {
+template <bool Log>
+static void ExpLogCPU(const Tensor& x, Tensor& out) {
     switch (x.dtype()) {
-        case Dtype::kFloat32: ExpTypedCPU<float, float>(x, out); break;
-        case Dtype::kFloat16: ExpTypedCPU<Float16, Float16>(x, out); break;
-        case Dtype::kBFloat16: ExpTypedCPU<BFloat16, BFloat16>(x, out); break;
-        case Dtype::kInt8: ExpTypedCPU<std::int8_t, float>(x, out); break;
-        case Dtype::kUInt8: ExpTypedCPU<std::uint8_t, float>(x, out); break;
-        case Dtype::kInt16: ExpTypedCPU<std::int16_t, float>(x, out); break;
-        case Dtype::kInt32: ExpTypedCPU<std::int32_t, float>(x, out); break;
-        case Dtype::kInt64: ExpTypedCPU<std::int64_t, float>(x, out); break;
-        default: throw std::invalid_argument("exp: unsupported dtype");
+        case Dtype::kFloat32: ExpLogTypedCPU<float, float, Log>(x, out); break;
+        case Dtype::kFloat16: ExpLogTypedCPU<Float16, Float16, Log>(x, out); break;
+        case Dtype::kBFloat16: ExpLogTypedCPU<BFloat16, BFloat16, Log>(x, out); break;
+        case Dtype::kInt8: ExpLogTypedCPU<std::int8_t, float, Log>(x, out); break;
+        case Dtype::kUInt8: ExpLogTypedCPU<std::uint8_t, float, Log>(x, out); break;
+        case Dtype::kInt16: ExpLogTypedCPU<std::int16_t, float, Log>(x, out); break;
+        case Dtype::kInt32: ExpLogTypedCPU<std::int32_t, float, Log>(x, out); break;
+        case Dtype::kInt64: ExpLogTypedCPU<std::int64_t, float, Log>(x, out); break;
+        default: throw std::invalid_argument(Log ? "log: unsupported dtype" : "exp: unsupported dtype");
     }
+}
+
+void ExpCPU(const Tensor& x, Tensor& out) {
+    ExpLogCPU<false>(x, out);
+}
+
+void LogCPU(const Tensor& x, Tensor& out) {
+    ExpLogCPU<true>(x, out);
 }
 
 void SigmoidCPU(const Tensor& x, Tensor& out) {

@@ -16,11 +16,9 @@ void TopoSort(
     std::vector<Tensor>& topo_order
 ){
     auto node = output.grad_node();
-    if(!node) return ;
-    if(visited.find(node.get()) != visited.end()){
-        return ;
+    if (!node || !visited.insert(node.get()).second) {
+        return;
     }
-    visited.insert(node.get());
 
     // 遍历输入
     for(const auto &input : node->inputs){
@@ -61,7 +59,6 @@ void RunBackward(const Tensor& loss_tensor) {
         throw std::logic_error("RunBackward: loss_tensor does not have a grad node"); 
     }
 
-    NogradNode guard;
     Tensor gradient = full(loss_tensor.shape(), 1, loss_tensor.dtype(), loss_tensor.device());
     RunBackward(loss_tensor, gradient);
 }
@@ -73,7 +70,8 @@ void RunBackward(const Tensor& root, const Tensor& gradient) {
     CheckSameShape(root, gradient, "RunBackward: gradient shape must match root");
     CheckSameDtype(root, gradient, "RunBackward: gradient dtype must match root");
     CheckSameDevice(root, gradient, "RunBackward: gradient device must match root");
-    if (!root.grad_node()) {
+    const auto root_node = root.grad_node();
+    if (!root_node) {
         throw std::logic_error("RunBackward: root does not have a grad node");
     }
 
@@ -92,7 +90,7 @@ void RunBackward(const Tensor& root, const Tensor& gradient) {
     std::unordered_map<const AutogradNode*, Tensor> pending_grads;
 
     // 独立保存调用方传入的上游梯度，不与外部梯度存储共享。
-    pending_grads.emplace(root.grad_node().get(), gradient.clone());
+    pending_grads.emplace(root_node.get(), gradient.clone());
 
     // 反向遍历每个节点
     for(auto& output : topo_order){ // 第一个遍历的是 root

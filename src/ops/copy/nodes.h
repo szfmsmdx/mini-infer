@@ -17,4 +17,9 @@ public:
     std::vector<Tensor> backward(const Tensor& output_grad) override;
 };
 
+class ToDtypeNode : public AutogradNode {
+public:
+    std::vector<Tensor> backward(const Tensor& output_grad) override;
+};
+
 }  // namespace mtensor

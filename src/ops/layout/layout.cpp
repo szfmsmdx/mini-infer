@@ -133,7 +133,7 @@ Tensor Tensor::MakeView(std::vector<int> shape, std::vector<std::size_t> stride,
 }
 
 Tensor Tensor::operator[](int index) const {
-    if(shape_.empty() || index < 0 || index >= size(0)){
+    if(shape_.empty() || index < 0 || index >= shape_[0]){
         throw std::out_of_range("Tensor::operator[]: index out of range");
     }
     CheckDataPointer(*this, "Tensor::operator[]: null data pointer");
@@ -296,7 +296,7 @@ Tensor Tensor::reshape(std::vector<int> shape) const {
 
 Tensor Tensor::narrow(int dim, int start, int length) const{
     CheckDim(dim, shape_.size(), "Tensor::narrow: dimension index out of range");
-    const int dimension = size(static_cast<std::size_t>(dim));
+    const int dimension = shape_[dim];
     if (start < 0 || start >= dimension) {
         throw std::out_of_range("Tensor::narrow: start index out of range");
     }

@@ -37,7 +37,10 @@ __device__ T Calculate(T a, T b) {
                 const U ub = static_cast<U>(b);
                 if constexpr (op == Op::Add) bits = static_cast<U>(ua + ub);
                 if constexpr (op == Op::Sub) bits = static_cast<U>(ua - ub);
-                if constexpr (op == Op::Mul) bits = static_cast<U>(static_cast<unsigned long long>(ua) * ub);
+                if constexpr (op == Op::Mul) {
+                    const auto product = static_cast<unsigned long long>(ua) * ub;
+                    bits = static_cast<U>(product);
+                }
             }
             T result;
             memcpy(&result, &bits, sizeof(T));
@@ -164,19 +167,20 @@ void LaunchRsqrt(const Tensor& x, Tensor& out) {
 }
 
 // 连续输入直接用 i；视图按各自的 stride 定位。输出总是连续。
-template <typename In, typename Out>
-__global__ void ExpKernel(const In* x, Out* out, std::size_t count, const int* shape,
+template <typename In, typename Out, bool Log>
+__global__ void ExpLogKernel(const In* x, Out* out, std::size_t count, const int* shape,
                             const std::size_t* xs, int ndim) {
     const auto i = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i >= count) return;
     const auto xi = xs ? GetNumelIndex(i, shape, xs, ndim) : i;
-    const float y = expf(static_cast<float>(x[xi]));
+    const float v = static_cast<float>(x[xi]);
+    const float y = Log ? logf(v) : expf(v);
     out[i] = static_cast<Out>(y);
 }
 
-template <typename In, typename Out>
-void LaunchExp(const Tensor& x, Tensor& out) {
-    LaunchUnary<In, Out, ExpKernel<In, Out>>(x, out);
+template <typename In, typename Out, bool Log>
+void LaunchExpLog(const Tensor& x, Tensor& out) {
+    LaunchUnary<In, Out, ExpLogKernel<In, Out, Log>>(x, out);
 }
 
 
@@ -275,18 +279,27 @@ void RsqrtCUDA(const Tensor& x, Tensor& out) {
     }
 }
 
-void ExpCUDA(const Tensor& x, Tensor& out) {
+template <bool Log>
+static void ExpLogCUDA(const Tensor& x, Tensor& out) {
     switch (x.dtype()) {
-        case Dtype::kFloat32: LaunchExp<float, float>(x, out); break;
-        case Dtype::kFloat16: LaunchExp<__half, __half>(x, out); break;
-        case Dtype::kBFloat16: LaunchExp<__nv_bfloat16, __nv_bfloat16>(x, out); break;
-        case Dtype::kInt8: LaunchExp<std::int8_t, float>(x, out); break;
-        case Dtype::kUInt8: LaunchExp<std::uint8_t, float>(x, out); break;
-        case Dtype::kInt16: LaunchExp<std::int16_t, float>(x, out); break;
-        case Dtype::kInt32: LaunchExp<std::int32_t, float>(x, out); break;
-        case Dtype::kInt64: LaunchExp<std::int64_t, float>(x, out); break;
-        default: throw std::invalid_argument("exp: unsupported dtype");
+        case Dtype::kFloat32: LaunchExpLog<float, float, Log>(x, out); break;
+        case Dtype::kFloat16: LaunchExpLog<__half, __half, Log>(x, out); break;
+        case Dtype::kBFloat16: LaunchExpLog<__nv_bfloat16, __nv_bfloat16, Log>(x, out); break;
+        case Dtype::kInt8: LaunchExpLog<std::int8_t, float, Log>(x, out); break;
+        case Dtype::kUInt8: LaunchExpLog<std::uint8_t, float, Log>(x, out); break;
+        case Dtype::kInt16: LaunchExpLog<std::int16_t, float, Log>(x, out); break;
+        case Dtype::kInt32: LaunchExpLog<std::int32_t, float, Log>(x, out); break;
+        case Dtype::kInt64: LaunchExpLog<std::int64_t, float, Log>(x, out); break;
+        default: throw std::invalid_argument(Log ? "log: unsupported dtype" : "exp: unsupported dtype");
     }
+}
+
+void ExpCUDA(const Tensor& x, Tensor& out) {
+    ExpLogCUDA<false>(x, out);
+}
+
+void LogCUDA(const Tensor& x, Tensor& out) {
+    ExpLogCUDA<true>(x, out);
 }
 
 void SigmoidCUDA(const Tensor& x, Tensor& out) {
@@ -342,9 +355,11 @@ void LaunchBackward(const Tensor& x, const Tensor& output_grad, Tensor& dx) {
     if (count == 0) return;
     constexpr unsigned threads = 256;
     const unsigned blocks = static_cast<unsigned>((count - 1) / threads + 1);
+    const auto* input = static_cast<const T*>(x.data_ptr());
+    const auto* grad = static_cast<const T*>(output_grad.data_ptr());
+    auto* input_grad = static_cast<T*>(dx.data_ptr());
     Kernel<<<blocks, threads>>>(
-        static_cast<const T*>(x.data_ptr()), static_cast<const T*>(output_grad.data_ptr()),
-        static_cast<T*>(dx.data_ptr()), count, x.shape_cuda(),
+        input, grad, input_grad, count, x.shape_cuda(),
         x.is_contiguous() ? nullptr : x.stride_cuda(),
         output_grad.is_contiguous() ? nullptr : output_grad.stride_cuda(), x.dim());
     CUDA_CHECK(cudaGetLastError());

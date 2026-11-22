@@ -491,6 +491,31 @@ void TestToRawValues() {
           "to must preserve Int64 values without floating-point conversion");
 }
 
+void TestToDtype() {
+    const float values[] = {1, -2, 3, 4, 5, 6};
+    Tensor source(values, {2, 3}, Dtype::kFloat32, Device::kCUDA);
+    Tensor view = source.transpose(0, 1);
+    for (Dtype dtype : {Dtype::kFloat16, Dtype::kBFloat16}) {
+        Tensor result = view.to(dtype);
+        Check(result.dtype() == dtype && result.device() == Device::kCUDA &&
+              result.shape() == view.shape() && result.is_contiguous() &&
+              result.data_ptr() != view.data_ptr(), "CUDA dtype conversion lost Tensor metadata");
+        Tensor restored = result.to(Dtype::kFloat32);
+        CheckValues<float>(restored, {1, 4, -2, 5, 3, 6});
+
+        Tensor scalar = result[1][0].to(Dtype::kFloat32);
+        Check(scalar.is_scalar() && scalar.device() == Device::kCUDA,
+              "CUDA dtype conversion lost scalar metadata");
+        CheckValues<float>(scalar, {-2});
+    }
+
+    const std::int64_t ids[] = {1, -2, 3, 4, -5, 6};
+    Tensor integers(ids, {2, 3}, Dtype::kInt64, Device::kCUDA);
+    Tensor floats = integers.narrow(1, 1, 2).to(Dtype::kFloat32);
+    Check(floats.device() == Device::kCUDA, "CUDA integer cast must stay on the device");
+    CheckValues<float>(floats, {-2, 3, -5, 6});
+}
+
 void TestInvalidInputs() {
     float input[] = {1, 2, 3, 4};
     bool threw = false;
@@ -591,6 +616,7 @@ int main() {
         TestToViewsAndLifetime();
         TestToEmptyMetadata();
         TestToRawValues();
+        TestToDtype();
         TestInvalidInputs();
         CheckCuda(cudaDeviceSynchronize());
         std::cout << "Tensor CUDA tests passed\n";

@@ -1,9 +1,12 @@
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
+#include <type_traits>
 #include <vector>
 
+#include "mini_infer/tensor.h"
 #include "ops/reduction/kernels.h"
 
 namespace mtensor {
@@ -19,6 +22,78 @@ std::size_t ElementOffset(std::size_t index, const std::vector<int>& shape,
         index /= dimension;
     }
     return offset;
+}
+
+float ReadFloat(const void* input, Dtype dtype, std::size_t offset) {
+    switch (dtype) {
+        case Dtype::kFloat32: return static_cast<const float*>(input)[offset];
+        case Dtype::kFloat16: return DecodeFloat16(static_cast<const std::uint16_t*>(input) + offset);
+        case Dtype::kBFloat16: return DecodeBFloat16(static_cast<const std::uint16_t*>(input) + offset);
+        default: throw std::invalid_argument("extrema: unsupported floating dtype");
+    }
+}
+
+std::int64_t ReadSigned(const void* input, Dtype dtype, std::size_t offset) {
+    switch (dtype) {
+        case Dtype::kInt8: return static_cast<const std::int8_t*>(input)[offset];
+        case Dtype::kUInt8: return static_cast<const std::uint8_t*>(input)[offset];
+        case Dtype::kInt16: return static_cast<const std::int16_t*>(input)[offset];
+        case Dtype::kInt32: return static_cast<const std::int32_t*>(input)[offset];
+        case Dtype::kInt64: return static_cast<const std::int64_t*>(input)[offset];
+        default: throw std::invalid_argument("extrema: unsupported integer dtype");
+    }
+}
+
+template <typename T>
+T ReadExtrema(const void* input, Dtype dtype, std::size_t offset) {
+    if constexpr (std::is_same_v<T, float>) return ReadFloat(input, dtype, offset);
+    else return ReadSigned(input, dtype, offset);
+}
+
+// 将归约组的下标映射到输入的逻辑下标；组内以 inner_size 为步长。
+std::size_t GroupStart(std::size_t group, std::size_t count, std::size_t inner_size) {
+    return group / inner_size * count * inner_size + group % inner_size;
+}
+
+template <typename T>
+void ExtremaTypedCPU(const Tensor& input, Tensor& output, std::size_t inner_size, bool maximum) {
+    const auto* bytes = static_cast<const std::byte*>(input.data_ptr());
+    auto* result = static_cast<std::byte*>(output.data_ptr());
+    const std::size_t element_size = input.element_size();
+    const std::size_t groups = output.numel();
+    const std::size_t count = input.numel() / groups;
+    const bool contiguous = input.is_contiguous();
+    const auto offset_for = [&](std::size_t i) {
+        return contiguous ? i : ElementOffset(i, input.shape(), input.stride());
+    };
+    for (std::size_t group = 0; group < groups; ++group) {
+        const std::size_t start = GroupStart(group, count, inner_size);
+        std::size_t best_offset = offset_for(start);
+        T best = ReadExtrema<T>(bytes, input.dtype(), best_offset);
+        for (std::size_t j = 1; j < count; ++j) {
+            if constexpr (std::is_same_v<T, float>) {
+                if (std::isnan(best)) break;
+            }
+            const std::size_t offset = offset_for(start + j * inner_size);
+            const T candidate = ReadExtrema<T>(bytes, input.dtype(), offset);
+            bool better = maximum ? candidate > best : candidate < best;
+            if constexpr (std::is_same_v<T, float>) better = better || std::isnan(candidate);
+            if (better) {
+                best = candidate;
+                best_offset = offset;
+            }
+        }
+        std::memcpy(result + group * element_size, bytes + best_offset * element_size, element_size);
+    }
+}
+
+void WriteFloat(void* output, Dtype dtype, std::size_t offset, float value) {
+    if (dtype == Dtype::kFloat32) {
+        static_cast<float*>(output)[offset] = value;
+    } else {
+        const auto bits = dtype == Dtype::kFloat16 ? EncodeFloat16(value) : EncodeBFloat16(value);
+        std::memcpy(static_cast<std::byte*>(output) + offset * sizeof(bits), &bits, sizeof(bits));
+    }
 }
 
 }  // namespace
@@ -92,6 +167,43 @@ void SumCPU(const void* input, void* output, Dtype dtype, const std::vector<int>
         // 每组是一个带 stride 的一维归约，复用已有 dtype 分发和累加规则。
         SumCPU(input_bytes + offset * input_size, output_bytes + i * output_size,
                dtype, reduction_shape, reduction_stride, reduction_shape[0]);
+    }
+}
+
+void ExtremaCPU(const Tensor& input, Tensor& output, std::size_t inner_size, bool maximum) {
+    const Dtype dtype = input.dtype();
+    if (dtype == Dtype::kFloat32 || dtype == Dtype::kFloat16 || dtype == Dtype::kBFloat16) {
+        ExtremaTypedCPU<float>(input, output, inner_size, maximum);
+    } else {
+        ExtremaTypedCPU<std::int64_t>(input, output, inner_size, maximum);
+    }
+}
+
+void ExtremaGradCPU(const Tensor& input, const Tensor& extrema, const Tensor& grad,
+                    Tensor& input_grad, std::size_t inner_size) {
+    const Dtype dtype = input.dtype();
+    const auto* data = input.data_ptr();
+    auto* output = input_grad.data_ptr();
+    const std::size_t groups = extrema.numel();
+    const std::size_t count = input.numel() / groups;
+    const bool contiguous = input.is_contiguous();
+    for (std::size_t group = 0; group < groups; ++group) {
+        const std::size_t start = GroupStart(group, count, inner_size);
+        const float best = ReadFloat(extrema.data_ptr(), dtype, group);
+        const auto matches = [&](std::size_t i) {
+            const auto offset = contiguous ? i : ElementOffset(i, input.shape(), input.stride());
+            const float value = ReadFloat(data, dtype, offset);
+            return value == best || (std::isnan(value) && std::isnan(best));
+        };
+        std::size_t ties = 0;
+        for (std::size_t j = 0; j < count; ++j) {
+            ties += matches(start + j * inner_size);
+        }
+        const float share = ReadFloat(grad.data_ptr(), dtype, group) / static_cast<float>(ties);
+        for (std::size_t j = 0; j < count; ++j) {
+            const std::size_t i = start + j * inner_size;
+            WriteFloat(output, dtype, i, matches(i) ? share : 0.0f);
+        }
     }
 }
 

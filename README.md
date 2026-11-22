@@ -10,14 +10,19 @@ mini_infer/
 ├── src/
 │   ├── tensor/          # Tensor 存储所有权、元数据与内部校验
 │   ├── ops/             # 按算子类别组织入口、反向节点与 CPU/CUDA 实现
-│   ├── modules/         # 使用现有算子组合网络模块，例如 Linear
+│   ├── modules/         # Module、Linear 和 RMSNorm
+│   ├── layers/          # Embedding 和 SimpleDecoderLayer
+│   ├── init/            # 参数初始化所用的随机采样
+│   ├── models/          # GPT 和 checkpoint
+│   ├── tokenizer/       # 字节 tokenizer 和 BPE
 │   ├── optim/           # SGD、Adam 的参数更新与优化器状态
 │   ├── autograd/        # 建图开关与反向引擎
 │   ├── device/          # 内存分配与释放
 │   └── utils/           # 日志
 ├── tests/               # CPU/CUDA 正确性测试与独立 benchmark
-├── examples/            # CUDA 训练示例
-├── 3rdparty/            # 按需构建 benchmark 使用的 ggml
+├── examples/            # 线性回归和字符级 GPT 的训练示例
+├── scripts/             # 下载训练语料
+├── 3rdparty/            # benchmark 使用的 ggml
 ├── CMakeLists.txt       # C++17 库目标与构建选项
 ├── setup.ipynb          # Colab 构建、测试和 benchmark
 └── README.md
@@ -27,19 +32,19 @@ mini_infer/
 
 模块说明见 [Tensor](src/tensor/README.md)、[算子](src/ops/README.md)、[网络模块](src/modules/README.md)、[Autograd](src/autograd/README.md) 和 [测试](tests/README.md)。
 
-逐元素精度测试采用双参考。每个元素与数学参考的误差达标，或与 PyTorch 对齐，即可通过。基础、边界和特殊值样本必须全部通过，随机样本按算子、dtype、前向及各输入梯度分别要求至少 99.5% 通过。测试使用环境中已有的 PyTorch 并记录版本。10 个逐元素算子覆盖三种浮点 dtype 的前向与反向，CPU 和 CUDA 各完成 884,818 次比较，均为零失败。安装、复跑和结果见[数值精度检查](tests/README.md#数值精度检查)。
+正确性测试覆盖 CPU 和 CUDA。逐元素和 RMSNorm 精度测试对比 FP64 数学参考及 PyTorch。[测试说明](tests/README.md#数值精度检查) · [精度排查记录](note/code/算子精度问题.md)
 
-RMSNorm 的 FP16/BF16 前向和反向使用 FP32 中间量，CPU 和 CUDA 的结构测试均通过，每个设备的 5,166 次精度比较也全部通过。[测试说明](tests/README.md#rmsnorm-测试) · [精度排查记录](note/code/算子精度问题.md)
-
-SGD 和 Adam 支持 CPU/CUDA 的 FP32 参数。`SGD({weight, bias}, learning_rate, momentum)` 提供普通 SGD 和可选动量，`Adam({weight, bias}, learning_rate)` 使用默认的 beta1=0.9、beta2=0.999、eps=1e-8。头文件位于 `include/mini_infer/optim/`。训练循环按 `zero_grad()`、前向与 loss、`backward()`、`step()` 执行，参数通过共享 Tensor 句柄原地更新。用法和验证见 [优化器测试](tests/README.md#优化器测试)。
+SGD 和 Adam 支持 CPU/CUDA 的 FP32 参数。模型和优化器共享权重 Tensor，`step()` 原地更新权重。训练循环依次调用 `zero_grad()`、前向与 loss、`backward()`、`step()`。[优化器用法](tests/README.md#优化器测试)
 
 ## CUDA 开发基线
 
 - GPU：Ampere 及更新架构（SM80 起）。
-- CUDA Toolkit：最低 12.4；CMake 自动检测可用 CUDA 编译环境，无需手动切换开关。默认编译 SM80 并保留 PTX，支持更新架构 GPU。
+- CUDA Toolkit 最低版本为 12.4。CMake 自动检测 CUDA 编译环境，默认编译 SM80 并保留 PTX，支持更新架构的 GPU。
 - 构建与测试命令见 [tests/README.md](tests/README.md)。
 
 ## CUDA 训练示例
+
+字符级 GPT 的语料准备、CUDA 训练和 checkpoint 加载命令见 [训练和加载字符级 GPT](examples/README.md)。
 
 `train_cuda_demo` 在 GPU 上用 `Linear` 和 Adam 拟合 `y = 2*x1 - 3*x2 + 0.5`。每步的 loss 和耗时会显示在终端，并由 `Logger` 追加到工作目录下的 `train_cuda_demo.log`。loss 是本次参数更新前的均方误差，耗时包含前向、反向、参数更新和等待 GPU 完成。训练结束后会记录最终权重、偏置和一条新输入的预测。
 
@@ -54,18 +59,18 @@ Set-Location build/train-demo
 
 使用 Linux 上的单配置生成器时，可执行文件位于 `build/train-demo/train_cuda_demo`。
 
-## Roadmap
+## 项目进度
 
-- [x] **Tensor 基础**：存储与共享视图、标量、dtype、填充、复制和设备迁移。
-- [x] **CPU 计算与反向**：逐元素算子、全元素 `sum`、反向引擎及对应 CPU 测试。
-- [x] **布局操作**：`transpose`、`permute` 的前向和反向。
-- [x] **CUDA 计算与反向**：设备迁移、逐元素算子和全元素 `sum` 的测试在 Colab A100 上通过。
-- [x] **视图反向**：`operator[]`、`reshape`、`narrow` 已实现，本地 CPU 及 Colab CPU/CUDA 回归已通过。
-- [ ] **基础算子**：广播、指定维度归约、`mean`、矩阵乘和 Softmax。
-- [ ] **Module / Layer**：组织参数、子模块和 forward，实现 Linear、Embedding、Norm、激活等基础层。
-- [ ] **模型前向**：组合 Attention、位置编码和 FFN，接入模型配置与权重加载，跑通一个小型 Decoder-only 模型。
-- [ ] **单请求生成**：接入 tokenizer、采样和停止条件，区分 prefill / decode，加入基础 KV Cache，完成文本到文本的生成。
-- [ ] **推理运行时**：管理请求、调度 prefill / decode、实现 continuous batching，并完善 KV Cache 的分配与回收。
-- [ ] **性能与扩展**：测量延迟、吞吐和显存占用，再选择算子融合、分页 KV Cache、量化或并行等优化方向。
+| 已实现 | 内容 |
+| --- | --- |
+| Tensor | 共享存储、stride 视图、复制、设备迁移和常用视图的反向 |
+| 算子 | 逐元素、广播、`sum`、`mean`、矩阵乘、RMSNorm、词嵌入、RoPE、因果注意力和交叉熵 |
+| 训练 | Autograd、SGD、Adam、Tiny Shakespeare 上的小型 GPT 训练 |
+| 生成 | 最终 checkpoint 保存和加载，字节级 GPT 续写 |
+| Tokenizer | 字节 tokenizer 用于 GPT，BPE 已独立实现 |
 
-Layer、Block 和 Model 可以通过 Module 统一组织：算子负责计算，Module 负责参数和组合关系。
+### 待办
+
+- [ ] 补独立的 Softmax 等基础算子，将 BPE 接入 GPT。
+- [ ] 推理区分 prefill 和 decode，加入 KV Cache，再实现请求调度和 continuous batching。
+- [ ] 测量延迟、吞吐和显存占用，再按结果做算子融合、量化和并行。

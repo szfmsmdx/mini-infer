@@ -26,6 +26,25 @@ void Require(bool value, const char* message) {
     if (!value) throw std::runtime_error(message);
 }
 
+void CheckSizedRMSNorm() {
+    RMSNorm layer(2, 3.0f, kDevice);
+    const auto parameters = layer.parameters();
+    Require(parameters.size() == 1 && parameters[0].shape() == std::vector<int>{2} &&
+                parameters[0].requires_grad(),
+            "RMSNorm must register its trainable scale");
+    const Tensor host = parameters[0].to(Device::kCPU);
+    const auto* scale = static_cast<const float*>(host.data_ptr());
+    Require(scale[0] == 1.0f && scale[1] == 1.0f, "RMSNorm scale must start at one");
+
+    const float values[] = {1.0f, -1.0f};
+    const Tensor x(values, {1, 2}, Dtype::kFloat32, kDevice);
+    layer(x).sum().backward();
+    const Tensor gradient = parameters[0].grad().to(Device::kCPU);
+    Require(gradient.shape() == std::vector<int>{2}, "RMSNorm registered scale gradient shape");
+    const auto* data = static_cast<const float*>(gradient.data_ptr());
+    Require(data[0] == 0.5f && data[1] == -0.5f, "RMSNorm registered scale gradient values");
+}
+
 template <typename T>
 void CheckStructure(Dtype dtype) {
     const T xv[] = {T(1), T(-1), T(1), T(-1)};
@@ -55,8 +74,9 @@ void CheckStructure(Dtype dtype) {
     y.backward(Tensor(gv, {2, 2}, dtype, kDevice));
     const Tensor accumulated = w.grad().to(Device::kCPU);
     const auto* dw = static_cast<const T*>(accumulated.data_ptr());
-    Require(static_cast<float>(dw[0]) == 4 && static_cast<float>(dw[1]) == -6,
-            "RMSNorm gradient accumulation");
+    const float first_grad = static_cast<float>(dw[0]);
+    const float second_grad = static_cast<float>(dw[1]);
+    Require(first_grad == 4 && second_grad == -6, "RMSNorm gradient accumulation");
     {
         NogradNode guard;
         Require(!module(x).grad_node() && !rms_norm(x, w, 3).grad_node(),
@@ -78,7 +98,9 @@ void CheckStructure(Dtype dtype) {
             const Tensor host = results[k].to(Device::kCPU);
             const auto* data = static_cast<const T*>(host.data_ptr());
             for (std::size_t i = 0; i < host.numel(); ++i) {
-                Require(static_cast<float>(data[i]) == static_cast<float>(expected[k]),
+                const float actual_value = static_cast<float>(data[i]);
+                const float expected_value = static_cast<float>(expected[k]);
+                Require(actual_value == expected_value,
                         "RMSNorm multi-block forward/input/weight gradient");
             }
         }
@@ -164,12 +186,11 @@ void ExportCases(std::ostream& out, Dtype dtype) {
             auto shape = c.shape;
             shape.push_back(2);
             Tensor xs(shape, dtype, kDevice);
-            x = xs.narrow(static_cast<int>(shape.size()) - 1, 1, 1)
-                  .squeeze(static_cast<int>(shape.size()) - 1);
+            const int last_dim = xs.dim() - 1;
+            x = xs.narrow(last_dim, 1, 1).squeeze(last_dim);
             shape.back() = 3;
             Tensor gs(shape, dtype, kDevice);
-            g = gs.narrow(static_cast<int>(shape.size()) - 1, 2, 1)
-                  .squeeze(static_cast<int>(shape.size()) - 1);
+            g = gs.narrow(last_dim, 2, 1).squeeze(last_dim);
             Tensor ws(std::vector<int>{h, 2}, dtype, kDevice);
             w = ws.transpose(0, 1)[1];
             x.copy_(Tensor(xv.data(), c.shape, dtype, kDevice));
@@ -215,6 +236,7 @@ int main(int argc, char** argv) {
         if (status != cudaSuccess) throw std::runtime_error(cudaGetErrorString(status));
 #endif
         if (argc == 1) {
+            CheckSizedRMSNorm();
             CheckStructure<float>(Dtype::kFloat32);
             CheckStructure<Float16>(Dtype::kFloat16);
             CheckStructure<BFloat16>(Dtype::kBFloat16);

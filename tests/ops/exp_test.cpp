@@ -23,7 +23,9 @@ void Check(Dtype input_dtype, Dtype output_dtype, Device device, int first) {
     const auto* actual = static_cast<const Out*>(host.data_ptr());
     const int exponents[] = {first, 2, 0, 1};
     for (int i = 0; i < 4; ++i) {
-        float expected = static_cast<float>(Out(std::exp(static_cast<float>(exponents[i]))));
+        const float exponent = static_cast<float>(exponents[i]);
+        const Out rounded(std::exp(exponent));
+        const float expected = static_cast<float>(rounded);
         if (!(std::abs(static_cast<float>(actual[i]) - expected) <= 1e-6f * expected))
             throw std::runtime_error("exp: incorrect value for transposed input");
     }

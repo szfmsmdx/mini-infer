@@ -11,6 +11,7 @@
 #include "mini_infer/ops/elementwise.h"
 #include "mini_infer/ops/reduction.h"
 #include "mini_infer/tensor.h"
+#include "reduction_extrema.h"
 
 namespace {
 using namespace mtensor;
@@ -142,9 +143,11 @@ void TestBroadcastDtypesAndRanks() {
                 const void* data = tensor.data_ptr();
                 if (dtype == Dtype::kFloat32)
                     Check(static_cast<const float*>(data)[index] == value, "float broadcast value");
-                else if (dtype == Dtype::kInt32)
-                    Check(static_cast<const std::int32_t*>(data)[index] == static_cast<int>(value), "integer broadcast value");
-                else {
+                else if (dtype == Dtype::kInt32) {
+                    const auto* actual = static_cast<const std::int32_t*>(data);
+                    const int expected = static_cast<int>(value);
+                    Check(actual[index] == expected, "integer broadcast value");
+                } else {
                     const auto bits = static_cast<const std::uint16_t*>(data)[index];
                     const auto expected_bits = dtype == Dtype::kFloat16 ? EncodeFloat16(value) : EncodeBFloat16(value);
                     Check(bits == expected_bits, "half broadcast value");
@@ -298,6 +301,7 @@ int main() {
         TestBroadcastBackward();
         TestBlockBoundaries();
         TestDimensionSum();
+        mtensor::test::CheckExtrema(mtensor::Device::kCUDA);
         TestViewsAndBackward();
         Check(cudaDeviceSynchronize() == cudaSuccess, "CUDA synchronization failed");
         std::cout << "CUDA reduction tests passed\n";

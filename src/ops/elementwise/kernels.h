@@ -21,6 +21,10 @@ void ExpCPU(const Tensor& x, Tensor& out);
 
 void ExpCUDA(const Tensor& x, Tensor& out);
 
+void LogCPU(const Tensor& x, Tensor& out);
+
+void LogCUDA(const Tensor& x, Tensor& out);
+
 void RsqrtCPU(const Tensor& x, Tensor& out);
 
 void RsqrtCUDA(const Tensor& x, Tensor& out);

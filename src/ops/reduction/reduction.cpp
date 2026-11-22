@@ -1,4 +1,7 @@
+#include <cstddef>
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <vector>
 
@@ -65,11 +68,10 @@ Tensor sum(const Tensor& input, int dim, bool keepdim) {
         throw std::invalid_argument("sum: unsupported device");
     }
     
-    if(EnableGrad() && CheckGradDtype(input.dtype())) {
+    if (EnableGrad() && floating) {
         auto node = std::make_shared<SumNode>();
         node->inputs = {input};
         node->dim = dim;
-        node->input_shape = input.shape();
         result.set_grad_node(node);
     }
     
@@ -109,6 +111,96 @@ Tensor Tensor::mean(int dim, bool keepdim) const {
     return mtensor::mean(*this, dim, keepdim);
 }
 
+namespace {
+
+class ExtremaNode : public AutogradNode {
+public:
+    Tensor extrema;
+    std::size_t inner_size = 1;
+    std::uint64_t input_version = 0;
+    std::uint64_t output_version = 0;
+
+    std::vector<Tensor> backward(const Tensor& output_grad) override {
+        const Tensor& input = inputs[0];
+        CheckVersion(input, input_version, "extrema: input modified after forward");
+        CheckVersion(extrema, output_version, "extrema: output modified after forward");
+        const Tensor grad = output_grad.contiguous();
+        Tensor input_grad(input.shape(), input.dtype(), input.device());
+        if (input.device() == Device::kCPU) {
+            ExtremaGradCPU(input, extrema, grad, input_grad, inner_size);
+        } else {
+#ifdef ENABLE_CUDA
+            ExtremaGradCUDA(input, extrema, grad, input_grad, inner_size);
+#else
+            throw std::logic_error("extrema: CUDA support is disabled");
+#endif
+        }
+        return {input_grad};
+    }
+};
+
+Tensor ReduceExtrema(const Tensor& input, std::optional<int> dim, bool keepdim, bool maximum) {
+    CheckNotEmpty(input, "max/min: input must not be empty");
+    std::vector<int> output_shape;
+    std::size_t inner_size = 1;
+    if (dim) {
+        int axis = *dim;
+        if (axis < 0) axis += input.dim();
+        CheckDim(axis, input.shape().size(), "max/min: dim out of range");
+        for (int i = axis + 1; i < input.dim(); ++i) inner_size *= input.size(i);
+
+        output_shape = input.shape();
+        if (keepdim) output_shape[axis] = 1;
+        else output_shape.erase(output_shape.begin() + axis);
+    }
+
+    Tensor output(output_shape, input.dtype(), input.device());
+    if (input.device() == Device::kCPU) {
+        ExtremaCPU(input, output, inner_size, maximum);
+    } else if (input.device() == Device::kCUDA) {
+#ifdef ENABLE_CUDA
+        ExtremaCUDA(input, output, inner_size, maximum);
+#else
+        throw std::logic_error("max/min: CUDA support is disabled");
+#endif
+    } else {
+        throw std::invalid_argument("max/min: unsupported device");
+    }
+
+    if (EnableGrad() && CheckGradDtype(input.dtype())) {
+        auto node = std::make_shared<ExtremaNode>();
+        node->inputs = {input};
+        node->extrema = output.detach();
+        node->inner_size = inner_size;
+        node->input_version = input.version();
+        node->output_version = output.version();
+        output.set_grad_node(node);
+    }
+    return output;
+}
+
+}  // namespace
+
+Tensor max(const Tensor& input) {
+    return ReduceExtrema(input, std::nullopt, false, true);
+}
+
+Tensor max(const Tensor& input, int dim, bool keepdim) {
+    return ReduceExtrema(input, dim, keepdim, true);
+}
+
+Tensor min(const Tensor& input) {
+    return ReduceExtrema(input, std::nullopt, false, false);
+}
+
+Tensor min(const Tensor& input, int dim, bool keepdim) {
+    return ReduceExtrema(input, dim, keepdim, false);
+}
+
+Tensor Tensor::max() const { return mtensor::max(*this); }
+Tensor Tensor::max(int dim, bool keepdim) const { return mtensor::max(*this, dim, keepdim); }
+Tensor Tensor::min() const { return mtensor::min(*this); }
+Tensor Tensor::min(int dim, bool keepdim) const { return mtensor::min(*this, dim, keepdim); }
 
 std::vector<Tensor> SumNode::backward(const Tensor& output_grad) {
     const auto& input_shape = inputs[0].shape();

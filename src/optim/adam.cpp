@@ -38,10 +38,9 @@ void Adam::step() {
         Tensor next_first = first * beta1_ + gradient * (1.0f - beta1_);
         Tensor next_second = second * beta2_ + (gradient * gradient) * (1.0f - beta2_);
         const std::uint64_t next_step = state.step + 1;
-        const float first_correction = static_cast<float>(
-            1.0 - std::pow(static_cast<double>(beta1_), static_cast<double>(next_step)));
-        const float second_correction = static_cast<float>(
-            1.0 - std::pow(static_cast<double>(beta2_), static_cast<double>(next_step)));
+        const double step = static_cast<double>(next_step);
+        const float first_correction = static_cast<float>(1.0 - std::pow(beta1_, step));
+        const float second_correction = static_cast<float>(1.0 - std::pow(beta2_, step));
         const Tensor denominator = (next_second / second_correction).sqrt() + eps_;
         const Tensor updated =
             parameter - ((next_first / first_correction) / denominator) * learning_rate_;

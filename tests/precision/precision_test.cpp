@@ -260,11 +260,13 @@ void CheckBinary(Device device, const Precision& precision, const std::string& o
     }
     std::vector<T> a, b, g;
     for (std::size_t i = 0; i < av.size(); ++i) {
-        a.emplace_back(static_cast<float>(av[i])); b.emplace_back(static_cast<float>(bv[i]));
+        a.emplace_back(static_cast<float>(av[i]));
+        b.emplace_back(static_cast<float>(bv[i]));
         g.emplace_back(static_cast<float>(gv[i]));
-        if (!std::isfinite(static_cast<float>(a.back())) ||
-            !std::isfinite(static_cast<float>(b.back())) ||
-            !std::isfinite(static_cast<float>(g.back())) || static_cast<float>(b.back()) == 0)
+        const float lhs = static_cast<float>(a.back());
+        const float rhs = static_cast<float>(b.back());
+        const float grad = static_cast<float>(g.back());
+        if (!std::isfinite(lhs) || !std::isfinite(rhs) || !std::isfinite(grad) || rhs == 0)
             throw std::runtime_error("binary precision samples must be finite with nonzero b");
     }
     const int count = static_cast<int>(a.size());

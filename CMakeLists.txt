@@ -26,13 +26,25 @@ endif()
 
 add_library(mini_infer STATIC
     src/autograd/autograd.cpp
+    src/ops/activation/softmax.cpp
     src/ops/elementwise/elementwise.cpp
     src/ops/matmul/matmul.cpp
     src/ops/norm/norm.cpp
     src/ops/reduction/reduction.cpp
     src/ops/layout/layout.cpp
+    src/init/weight_init.cpp
     src/modules/linear.cpp
     src/modules/rmsnorm.cpp
+    src/layers/embedding.cpp
+    src/layers/SimpleDecoderLayer.cpp
+    src/models/gpt.cpp
+    src/models/gpt_checkpoint.cpp
+    src/ops/attention/causal_attention.cpp
+    src/ops/embedding/embedding.cpp
+    src/ops/loss_fn/cross_entropy.cpp
+    src/ops/position_embedding/rope.cpp
+    src/tokenizer/tokenizer.cpp
+    src/tokenizer/bpe_tokenizer.cpp
     src/optim/optimizer.cpp
     src/optim/sgd.cpp
     src/optim/adam.cpp
@@ -63,6 +75,10 @@ if(ENABLE_CUDA)
         src/ops/fill/cuda.cu
         src/ops/matmul/cuda.cu
         src/ops/reduction/cuda.cu
+        src/ops/position_embedding/rope.cu
+        src/ops/attention/causal_attention.cu
+        src/ops/loss_fn/cross_entropy.cu
+        src/ops/embedding/embedding.cu
     )
     set_target_properties(mini_infer PROPERTIES CUDA_STANDARD 17 CUDA_STANDARD_REQUIRED ON)
     target_link_libraries(mini_infer PUBLIC CUDA::cudart)
@@ -74,6 +90,11 @@ if(ENABLE_CUDA)
 endif()
 
 target_compile_features(mini_infer PUBLIC cxx_std_17)
+add_executable(train_gpt EXCLUDE_FROM_ALL examples/train_gpt.cpp)
+target_include_directories(train_gpt PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(train_gpt PRIVATE mini_infer)
+add_executable(chat_gpt EXCLUDE_FROM_ALL examples/chat_gpt.cpp)
+target_link_libraries(chat_gpt PRIVATE mini_infer)
 if(MSVC)
     target_compile_options(mini_infer PUBLIC
         "$<$<COMPILE_LANGUAGE:CXX>:/utf-8>"

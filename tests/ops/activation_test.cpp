@@ -89,7 +89,8 @@ void CheckSiluForward(Device device, Dtype dtype, double rtol) {
         const double v = static_cast<float>(values[i]);
         const double t = std::exp(-std::abs(v));
         const double exact = v >= 0 ? v/(1+t) : v*t/(1+t);
-        const float expected = static_cast<float>(T(static_cast<float>(exact)));
+        const T rounded(static_cast<float>(exact));
+        const float expected = static_cast<float>(rounded);
         const float got = static_cast<float>(actual[i]);
         if (std::isnan(expected)) {
             if (!std::isnan(got)) throw std::runtime_error("silu NaN mismatch");
@@ -127,9 +128,13 @@ void CheckSigmoidBackwardPrecision(Device device, Dtype dtype, float largest, fl
     for (int i = 0; i < count; ++i) {
         values.emplace_back(inputs[i % 8]);
         upstream.emplace_back(gradients[i % 8]);
-        const double t = std::exp(-std::abs(static_cast<double>(static_cast<float>(values.back()))));
+        const double x = static_cast<float>(values.back());
         const double g = static_cast<float>(upstream.back());
-        expected.push_back(static_cast<float>(T(static_cast<float>((g * t) / ((1 + t) * (1 + t))))));
+        const double t = std::exp(-std::abs(x));
+        const double denominator = 1 + t;
+        const double exact = g * t / (denominator * denominator);
+        const T rounded(static_cast<float>(exact));
+        expected.push_back(static_cast<float>(rounded));
     }
     Tensor x_storage(std::vector<int>{count, 2}, dtype, device);
     Tensor g_storage(std::vector<int>{count, 3}, dtype, device);
@@ -173,7 +178,10 @@ void CheckSiluBackwardPrecision(Device device, Dtype dtype, float rtol) {
         const double g = static_cast<float>(upstream.back());
         const double t = std::exp(-std::abs(x));
         const double s = x >= 0 ? 1 / (1 + t) : t / (1 + t);
-        expected.push_back(static_cast<float>(T(static_cast<float>(g * (s + x*t/((1+t)*(1+t)))))));
+        const double denominator = 1 + t;
+        const double exact = g * (s + x * t / (denominator * denominator));
+        const T rounded(static_cast<float>(exact));
+        expected.push_back(static_cast<float>(rounded));
     }
     Tensor xs(std::vector<int>{count, 2}, dtype, device);
     Tensor gs(std::vector<int>{count, 3}, dtype, device);
@@ -202,10 +210,11 @@ void CheckSiluBackwardPrecision(Device device, Dtype dtype, float rtol) {
 }
 
 template <typename T>
-void CheckIntegerSigmoid(Device device, Dtype dtype, T value) {
+void CheckIntegerActivations(Device device, Dtype dtype, T value) {
     Tensor x(&value, {}, dtype, device);
     const float v = static_cast<float>(value);
-    const float s = static_cast<float>(1.0 / (1.0 + std::exp(-static_cast<double>(v))));
+    const double logit = v;
+    const float s = static_cast<float>(1.0 / (1.0 + std::exp(-logit)));
     Tensor y = sigmoid(x);
     if (y.dtype() != Dtype::kFloat32 || y.grad_node())
         throw std::runtime_error("integer sigmoid must return FP32 without a grad node");
@@ -215,6 +224,75 @@ void CheckIntegerSigmoid(Device device, Dtype dtype, T value) {
         throw std::runtime_error("integer silu must return FP32 without a grad node");
     const float expected = v * s;
     Near<float>(z, &expected, 1e-6f);
+
+    const T logits[] = {value, static_cast<T>(value + 1), static_cast<T>(value + 2)};
+    const Tensor probs = softmax(Tensor(logits, {3}, dtype, device));
+    if (probs.dtype() != Dtype::kFloat32 || probs.device() != device ||
+        probs.shape() != std::vector<int>{3} || probs.grad_node()) {
+        throw std::runtime_error("integer softmax must return FP32 without a grad node");
+    }
+    const float expected_probs[] = {0.09003057f, 0.24472847f, 0.66524096f};
+    Near<float>(probs, expected_probs, 2e-6f);
+}
+
+template <typename T>
+void CheckSoftmax(Device device, Dtype dtype, float tolerance) {
+    // 这些值在 FP16/BF16 中都能精确表示，且直接 exp(100) 会溢出 FP32。
+    const T logits[] = {T(100), T(101), T(102), T(-100), T(-101), T(-102)};
+    Tensor input(logits, {2, 3}, dtype, device);
+    input.requires_grad_(true);
+    const Tensor view = input.transpose(0, 1);
+    Tensor probs = softmax(view, 0);
+    if (probs.shape() != view.shape() || probs.device() != device || probs.dtype() != input.dtype())
+        throw std::runtime_error("incorrect softmax metadata");
+
+    const double partition = 1.0 + std::exp(-1.0) + std::exp(-2.0);
+    const float a = static_cast<float>(std::exp(-2.0) / partition);
+    const float b = static_cast<float>(std::exp(-1.0) / partition);
+    const float c = static_cast<float>(1.0 / partition);
+    const float expected_view[] = {a, c, b, b, c, a};
+    Near<T>(probs, expected_view, tolerance);
+    {
+        NogradNode guard;
+        const float expected[] = {a, b, c, c, b, a};
+        const Tensor result = softmax(input);
+        if (result.grad_node()) throw std::runtime_error("softmax built a graph under no-grad");
+        Near<T>(result, expected, tolerance);
+    }
+
+    const T upstream[] = {T(1), T(4), T(2), T(5), T(3), T(6)};
+    probs.backward(Tensor(upstream, {3, 2}, dtype, device));
+    float expected_grad[6];
+    for (int row = 0; row < 2; ++row) {
+        double weighted = 0.0;
+        for (int col = 0; col < 3; ++col) {
+            const int i = 2 * col + row;
+            weighted += static_cast<double>(expected_view[i]) * static_cast<float>(upstream[i]);
+        }
+        for (int col = 0; col < 3; ++col) {
+            const int i = 2 * col + row;
+            expected_grad[3 * row + col] =
+                static_cast<float>(expected_view[i] * (static_cast<float>(upstream[i]) - weighted));
+        }
+    }
+    Near<T>(input.grad(), expected_grad, tolerance, 2e-7f);
+
+    bool invalid_axis = false;
+    try { softmax(input, 2); } catch (const std::out_of_range&) { invalid_axis = true; }
+    if (!invalid_axis) throw std::runtime_error("softmax accepted an invalid axis");
+}
+
+void CheckWideFloat16Softmax(Device device) {
+    NogradNode guard;
+    // 65536 个 exp(0)=1 的和超出 FP16 上限，但结果 1/65536 可以表示。
+    constexpr int width = 65536;
+    const Tensor input = full({width}, 0.0f, Dtype::kFloat16, device);
+    const Tensor host = softmax(input).to(Device::kCPU);
+    const auto* values = static_cast<const std::uint16_t*>(host.data_ptr());
+    const auto expected = EncodeFloat16(1.0f / width);
+    for (int i = 0; i < width; ++i) {
+        if (values[i] != expected) throw std::runtime_error("softmax lost the FP32 denominator");
+    }
 }
 }  // namespace
 
@@ -245,9 +323,13 @@ int main() {
     CheckSigmoidBackwardPrecision<Float16>(device, Dtype::kFloat16, 65504.0f, 1e-3f);
     CheckSigmoidBackwardPrecision<BFloat16>(device, Dtype::kBFloat16,
                                            3.3895313892515355e38f, 1.6e-2f);
-    CheckIntegerSigmoid<std::uint8_t>(device, Dtype::kUInt8, 1);
-    CheckIntegerSigmoid<std::int8_t>(device, Dtype::kInt8, -12);
-    CheckIntegerSigmoid<std::int16_t>(device, Dtype::kInt16, -20);
-    CheckIntegerSigmoid<std::int32_t>(device, Dtype::kInt32, 20);
-    CheckIntegerSigmoid<std::int64_t>(device, Dtype::kInt64, 2);
+    CheckIntegerActivations<std::uint8_t>(device, Dtype::kUInt8, 1);
+    CheckIntegerActivations<std::int8_t>(device, Dtype::kInt8, -12);
+    CheckIntegerActivations<std::int16_t>(device, Dtype::kInt16, -20);
+    CheckIntegerActivations<std::int32_t>(device, Dtype::kInt32, 20);
+    CheckIntegerActivations<std::int64_t>(device, Dtype::kInt64, 2);
+    CheckSoftmax<float>(device, Dtype::kFloat32, 4e-6f);
+    CheckSoftmax<Float16>(device, Dtype::kFloat16, 1e-3f);
+    CheckSoftmax<BFloat16>(device, Dtype::kBFloat16, 5e-3f);
+    CheckWideFloat16Softmax(device);
 }
