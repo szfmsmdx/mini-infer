@@ -13,6 +13,7 @@ if(BUILD_CUDA_BENCHMARKS)
     set(GGML_CUDA_GRAPHS_DEFAULT ON)
 endif()
 set(LLAMA_CPP_REVISION 401563f10ec60754e688cd3165c1343cf4be9642)
+set(LLAMA_CPP_REVISION ${LLAMA_CPP_REVISION} PARENT_SCOPE)
 if(NOT FETCHCONTENT_SOURCE_DIR_LLAMA_CPP)
     # The archive has no .git directory from which ggml can read its revision.
     set(GIT_EXE "")

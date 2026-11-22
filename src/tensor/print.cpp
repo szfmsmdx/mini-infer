@@ -6,9 +6,10 @@
 #include <string>
 #include <vector>
 
+#include "tensor/print.h"
 #include "mini_infer/tensor.h"
 #include "tensor/check.h"
-#include "ops/backend.h"
+#include "ops/copy/kernels.h"
 
 namespace mtensor {
 

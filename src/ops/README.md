@@ -2,13 +2,13 @@
 
 `src/ops/` 负责 Tensor 操作的成员函数实现、数值算子及 CPU/CUDA kernel。`src/tensor/` 负责存储所有权、元数据、基础查询和打印。
 
-已拆分公共入口、CPU 后端和 CUDA 后端。`elementwise.cpp` 负责输入检查、输出分配与设备分流；`add()` / `sub()` / `mul()` / `div()` / `neg()` 的 CPU 和 CUDA 路径均支持 stride，并由 Tensor 运算符复用。
+已拆分公共入口、CPU 后端和 CUDA 后端。`elementwise/elementwise.cpp` 负责输入检查、输出分配与设备分流；`add()` / `sub()` / `mul()` / `div()` / `neg()` 的 CPU 和 CUDA 路径均支持 stride，并由 Tensor 运算符复用。
 
 其他算子将在开始实现时按需建立文件和接口。
 
 `mtensor::sqrt(x)` 逐元素开平方；`mtensor::rsqrt(x)` 直接计算平方根的倒数，不分配中间 Tensor。CPU 遍历一次输入，CUDA 调用一个使用 `rsqrtf` 的 kernel。包含 `mini_infer/ops.h` 即可使用。两者都保持 shape 和 device，支持跨步视图。整数输入先转 FP32 再计算，不建反向图；FP32、FP16 和 BF16 输出保持输入 dtype，以 FP32 计算后写回。
 
-`silu(x)` 在 `activation.cpp` 分发到 CPU/CUDA 的 `elementwise` 文件，逐元素计算完整公式，不再分配 sigmoid 中间 Tensor。通常使用 FP32 计算；`x < -80` 的负尾部用 double 计算 `x * exp(x) / (1 + exp(x))`，避免 exp 在乘 x 前下溢，最后写回输出 dtype。浮点保持 dtype，整数输入提升到 FP32。`SiluNode` 在 `autograd/backward_nodes/elementwise.cpp/.cu` 中逐元素执行反向，采用 Torch 的 FP32 运算顺序，最后写回原 dtype；不使用 double，输入版本检查不变。CPU 双参考精度测试通过，CUDA 待验证，结果见 `tests/README.md`。
+`silu(x)` 在 `elementwise/elementwise.cpp` 分发到 CPU/CUDA 的 `elementwise` 文件，逐元素计算完整公式，不再分配 sigmoid 中间 Tensor。通常使用 FP32 计算；`x < -80` 的负尾部用 double 计算 `x * exp(x) / (1 + exp(x))`，避免 exp 在乘 x 前下溢，最后写回输出 dtype。浮点保持 dtype，整数输入提升到 FP32。`SiluNode` 在 `elementwise/elementwise.cpp`，CUDA 反向在 `elementwise/cuda.cu` 中逐元素执行反向，采用 Torch 的 FP32 运算顺序，最后写回原 dtype；不使用 double，输入版本检查不变。CPU 和 CUDA 的双参考精度测试均通过，结果见 [测试说明](../../tests/README.md#数值精度检查)。
 
 `add()` / `sub()` / `mul()` / `div()` 支持自动广播：右对齐推导公共 shape，在设备分发前按需创建 `broadcast()` 视图，复用 stride kernel；反向节点保存广播后的输入，由 `BroadcastNode` 沿广播维度求和。相同 shape 不创建额外视图。输入仍须同 dtype、同 device。
 
@@ -16,37 +16,52 @@
 
 ```text
 include/mini_infer/ops/
+    activation.h
     elementwise.h
     matmul.h
+    norm.h
     reduction.h
 
 src/ops/
-    backend.h               # CPU/CUDA 后端的内部入口
-    layout.cpp              # 索引、视图与布局转换
-    fill.cpp                # fill_、zero_ 和 full
-    copy.cpp                # copy_、clone 和 to
-    elementwise.cpp         # 逐元素算子入口与 Tensor 运算符
-    matmul.cpp              # 矩阵乘算子入口与设备分发
-    reduction.cpp           # 归约算子入口与建图
-    cpu/
-        copy.cpp
-        elementwise.cpp
-        fill.cpp
-        matmul.cpp
-        reduction.cpp
-    cuda/
-        copy.cu             # 复制与设备间传输
-        elementwise.cu
-        fill.cu
-        index.cuh           # 逻辑下标到 stride 偏移
-        matmul.cu
-        reduction.cu
+    elementwise/    # 逐元素与激活算子
+        elementwise.cpp  # 前向入口、反向节点和原有 CPU 反向函数
+        kernels.h   # CPU/CUDA 入口声明
+        cpu.cpp     # CPU 前向
+        cuda.cu     # CUDA 前向和反向
+    matmul/         # matmul.cpp、kernels.h、cpu.cpp、cuda.cu
+    reduction/      # reduction.cpp、nodes.h、kernels.h、cpu.cpp、cuda.cu
+    norm/           # norm.cpp、kernels.h、cuda.cu
+    copy/           # copy.cpp、nodes.h、kernels.h、cpu.cpp、cuda.cu
+    fill/           # fill.cpp、kernels.h、cpu.cpp、cuda.cu
+    layout/         # layout.cpp
+    common/
+        cuda_index.cuh
+
+src/device/
+    memory.h
+    memory.cpp
 ```
 
-按操作类别区分公共逻辑，按设备区分 kernel。后端头文件是项目内部接口，指针由 Tensor 持有。设备内存分配和释放位于 `src/utils/memory.*`。
+本轮按现有函数整体迁移。RMSNorm 原有 CPU 循环仍属于原函数体，位于 `norm/norm.cpp`。梯度开关与通用反向引擎保留在 `src/autograd/autograd.cpp`。
+
+
+按操作类别区分公共逻辑，按设备区分 kernel。后端头文件是项目内部接口，指针由 Tensor 持有。设备内存分配和释放位于 `src/device/memory.*`。
 
 `sum()` 对全部元素归约：整数提升为 Int64 并按 64 位回绕；Float32、Float16、BFloat16 使用 Float32 累加并保持输入 dtype，支持非连续 stride 和浮点反向。
 ## 接口与结果所有权
+
+当前公共步骤按使用范围组织。
+
+| 公共步骤 | 位置 | 调用范围 |
+| --- | --- | --- |
+| `ContiguousStride()` | `layout/layout.cpp` | Tensor 构造、reshape、clone 和设备迁移 |
+| `PrepareBinaryInputs()` | `elementwise/elementwise.cpp` | add、sub、mul、div 的检查和广播准备 |
+| `Tensor::MakeView()` | `layout/layout.cpp` | 8 种视图操作的共享存储、独立梯度元数据和 CUDA 布局初始化 |
+| `AllocateStorage()` | `src/device/memory.*` | 构造、clone 和跨设备迁移的数据分配与释放器绑定 |
+| `ForEachOffset()` | `elementwise/cpu_iteration.h` | CPU 逐元素前向和反向的 stride 遍历 |
+| `LaunchUnary()`、`LaunchBackward()` | `elementwise/cuda.cu` | 4 个一元前向和 3 个反向的 CUDA 启动准备 |
+
+视图的形状推导、参数检查和 Node 状态保存仍由对应操作完成。CPU 遍历回调负责元素计算，偏移单位为元素；连续输入的 rsqrt 快路径直接循环。CUDA 启动函数使用编译期 Kernel 参数，共用线程块和布局参数准备。
 
 以加法为例，计划同时提供：
 
@@ -76,7 +91,7 @@ CPU 和 CUDA 逐元素运算支持不同 stride 的非连续输入；CUDA 输出
 
 ## 反向传播（WIP）
 
-前向计算完成后，如果建图开关开启且 dtype 支持反向，算子创建一个 Node 并挂到输出上，与输入的 `requires_grad` 无关。逐元素 Node 位于 `src/autograd/backward_nodes/elementwise.h/.cpp`。推理时用守卫关闭建图。
+前向计算完成后，如果建图开关开启且 dtype 支持反向，算子创建一个 Node 并挂到输出上，与输入的 `requires_grad` 无关。逐元素 Node 位于 `src/ops/elementwise/elementwise.cpp`。推理时用守卫关闭建图。
 
 | 算子 | Node | 输入梯度 |
 | --- | --- | --- |
@@ -91,33 +106,33 @@ CPU 和 CUDA 逐元素运算支持不同 stride 的非连续输入；CUDA 输出
 | `silu(x)` | `SiluNode` | FP32 计算 `s = 1 / (1 + exp(-x))`，再计算 `(G * s) * (1 + x * (1 - s))`，最后写回原 dtype |
 | `rsqrt(x)` | `RsqrtNode` | 正数输入：令 `y = 1 / sqrt(x)`，逐元素计算 `dX = -0.5 * G * y³` |
 
-表中的 `G` 是引擎传入的上游梯度。反向在 `NogradNode` 下执行，不会继续建图。`rsqrt` 的反向在 `autograd/backward_nodes/elementwise.cpp/.cu` 中逐元素执行：`y` 和 `((-0.5 * y) * G) * y * y` 的中间结果保持 FP32，最后一次写回原 dtype，避免低精度中间 Tensor 反复舍入。
+表中的 `G` 是引擎传入的上游梯度。反向在 `NogradNode` 下执行，不会继续建图。`rsqrt` 的反向在 `ops/elementwise/elementwise.cpp` 和 `ops/elementwise/cuda.cu` 中逐元素执行：`y` 和 `((-0.5 * y) * G) * y * y` 的中间结果保持 FP32，最后一次写回原 dtype，避免低精度中间 Tensor 反复舍入。
 
 ## 分发流程
 
 ```text
 a + b
   ↓
-Tensor::operator+                         src/ops/elementwise.cpp
+Tensor::operator+                         src/ops/elementwise/elementwise.cpp
   ↓
-add(a, b)                                src/ops/elementwise.cpp
+add(a, b)                                src/ops/elementwise/elementwise.cpp
   ├─ 检查输入 shape、dtype、device 和空状态
   ├─ 分配与输入具有相同元数据的独立输出
-  ├─ CPU：调用 AddCPU(...)                src/ops/cpu/elementwise.cpp
+  ├─ CPU：调用 AddCPU(...)                src/ops/elementwise/cpu.cpp
   │    ├─ 根据 dtype 分发
   │    ├─ 普通数值类型：AddTypedCPU<T>(...)，按 stride 遍历
   │    └─ FP16/BF16：解码为 float → 计算 → 编码并写回
-  └─ CUDA：调用 AddCUDA(...)              src/ops/cuda/elementwise.cu
+  └─ CUDA：调用 AddCUDA(...)              src/ops/elementwise/cuda.cu
              按各输入 stride 计算偏移并写入连续输出
 ```
 
 ### 按 device 分发
 
-`elementwise.cpp` 统一检查参数、分配输出，再根据 device 调用普通后端入口：CPU 为 `AddCPU()` / `SubCPU()` / `MulCPU()` / `DivCPU()`，CUDA 为对应的 `AddCUDA()` / `SubCUDA()` / `MulCUDA()` / `DivCUDA()`。该文件不包含元素循环或 dtype 分发。CUDA 调用放在 `#ifdef ENABLE_CUDA` 中；CPU 构建不能引用未链接的 CUDA 启动函数。
+`elementwise/elementwise.cpp` 统一检查参数、分配输出，再根据 device 调用普通后端入口：CPU 为 `AddCPU()` / `SubCPU()` / `MulCPU()` / `DivCPU()`，CUDA 为对应的 `AddCUDA()` / `SubCUDA()` / `MulCUDA()` / `DivCUDA()`。该文件不包含元素循环或 dtype 分发。CUDA 调用放在 `#ifdef ENABLE_CUDA` 中；CPU 构建不能引用未链接的 CUDA 启动函数。
 
 CUDA 启动函数按 dtype 分发 kernel，读取设备上的 shape 和各输入的 stride。
 
-`mini_infer/ops/elementwise.h` 包含 `mini_infer/tensor.h`。Tensor 运算符在头文件里声明，在 `src/ops/elementwise.cpp` 中转发给对应算子。
+`mini_infer/ops/elementwise.h` 包含 `mini_infer/tensor.h`。Tensor 运算符在头文件里声明，在 `src/ops/elementwise/elementwise.cpp` 中转发给对应算子。
 
 ### 按 dtype 分发
 
@@ -129,16 +144,16 @@ void AddCPU(const void* a, const void* b, void* out, Dtype dtype,
             const std::vector<int>& shape, const std::vector<std::size_t>& a_stride,
             const std::vector<std::size_t>& b_stride, const std::vector<std::size_t>& out_stride);
 
-// src/ops/cpu/elementwise.cpp：匿名命名空间内的计算模板。
+// src/ops/elementwise/cpu.cpp：匿名命名空间内的计算模板。
 template <typename T>
 void AddTypedCPU(const T* a, const T* b, T* out, const std::vector<int>& shape,
                  const std::vector<std::size_t>& a_stride, const std::vector<std::size_t>& b_stride,
                  const std::vector<std::size_t>& out_stride);
 ```
 
-`AddTypedCPU<T>()` 的定义放在 `src/ops/cpu/elementwise.cpp` 的匿名命名空间内，由同文件的 `AddCPU()` 实例化调用。跨文件只调用普通入口，避免模板定义不可见导致链接错误。输入指针只读、输出指针可写，均不转移所有权；模板按 shape 和 stride 遍历并计算，不负责分配、形状检查或设备选择。减、乘、除使用对应的内部模板函数。
+`AddTypedCPU<T>()` 的定义放在 `src/ops/elementwise/cpu.cpp` 的匿名命名空间内，由同文件的 `AddCPU()` 实例化调用。跨文件只调用普通入口，避免模板定义不可见导致链接错误。输入指针只读、输出指针可写，均不转移所有权；模板按 shape 和 stride 遍历并计算，不负责分配、形状检查或设备选择。减、乘、除使用对应的内部模板函数。
 
-- CPU 路径在 `src/ops/cpu/elementwise.cpp` 中用 `switch` 选择普通数值类型，再调用 `AddTypedCPU<float>()`、`AddTypedCPU<std::int32_t>()` 等实例。
+- CPU 路径在 `src/ops/elementwise/cpu.cpp` 中用 `switch` 选择普通数值类型，再调用 `AddTypedCPU<float>()`、`AddTypedCPU<std::int32_t>()` 等实例。
 - CUDA 启动入口按 dtype 选择普通数值类型或半精度 kernel。
 - `void*` 只描述地址；必须根据 dtype 转换成正确的元素指针，输入使用只读指针，输出使用可写指针。
 
@@ -160,7 +175,7 @@ FP16/BF16 使用 16 位编码，不能直接将编码作为整数参与浮点运
 - [x] 拆分公共入口、CPU 文件与 CUDA 文件，声明可跨文件调用的普通后端入口。
 - [x] 将加法计算移入 CPU 文件的 `AddTypedCPU<T>()`，按 stride 遍历元素。
 - [x] 完成 `add()` / `sub()` / `mul()` / `div()` 的 CPU 和 CUDA 路径：检查输入、一次分配独立输出、按 device/dtype 分发并调用计算函数。
-- [x] 在 `src/ops/cpu/elementwise.cpp` 的 CPU 入口内使用 `switch`，选择对应的内部模板实例。
+- [x] 在 `src/ops/elementwise/cpu.cpp` 的 CPU 入口内使用 `switch`，选择对应的内部模板实例。
 - [x] 将 FP16/BF16 解码函数整理到 `dtype.h`，供算子复用。
 - [x] 实现 CPU 的 FP16/BF16 解码、FP32 计算和编码路径。
 - [x] `add()` / `sub()` / `mul()` 的整数溢出采用固定位宽回绕，并覆盖各整数类型的边界值。
@@ -168,7 +183,7 @@ FP16/BF16 使用 16 位编码，不能直接将编码作为整数参与浮点运
 - [x] 浮点四则运算遵循 IEEE 754，覆盖无穷和 NaN 传播。
 - [x] 声明并实现 `Tensor::operator+` / `operator-` / `operator*` / `operator/` 以及一元 `operator-`。
 - [x] 完成 CPU 的 `neg()`：整数取负按固定位宽回绕，FP16/BF16 翻转符号位。
-- [x] 将 `elementwise.cpp`、`src/ops/cpu/elementwise.cpp` 和 CPU 测试接入 CMake，覆盖各 dtype、标量、多维输入、索引视图、输入不变、输出独立和无效输入。
+- [x] 将 `elementwise/elementwise.cpp`、`src/ops/elementwise/cpu.cpp` 和 CPU 测试接入 CMake，覆盖各 dtype、标量、多维输入、索引视图、输入不变、输出独立和无效输入。
 - [x] 实现支持输入 stride 的 `AddCUDA()` / `SubCUDA()` / `MulCUDA()` / `DivCUDA()` / `NegCUDA()`；处理 dtype、线程越界和启动错误。
 - [x] 按 `ENABLE_CUDA` 条件接入 CUDA 测试；对照 CPU 结果，覆盖元素数不整除线程块大小的情况，读取结果时检查执行错误。
 - [x] 二元算子支持广播，四则运算符支持 Tensor 与标量混算。

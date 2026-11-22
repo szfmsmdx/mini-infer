@@ -26,30 +26,28 @@ endif()
 
 add_library(mini_infer STATIC
     src/autograd/autograd.cpp
-    src/autograd/backward_nodes/elementwise.cpp
-    src/autograd/backward_nodes/matmul.cpp
-    src/autograd/backward_nodes/reduction.cpp
-    src/autograd/backward_nodes/tensor_ops.cpp
+    src/ops/elementwise/elementwise.cpp
+    src/ops/matmul/matmul.cpp
+    src/ops/norm/norm.cpp
+    src/ops/reduction/reduction.cpp
+    src/ops/layout/layout.cpp
     src/modules/linear.cpp
     src/modules/rmsnorm.cpp
-    src/ops/activation.cpp
-    src/ops/norm.cpp
-    src/ops/layout.cpp
-    src/ops/fill.cpp
-    src/ops/copy.cpp
-    src/ops/elementwise.cpp
-    src/ops/matmul.cpp
-    src/ops/reduction.cpp
-    src/ops/cpu/copy.cpp
-    src/ops/cpu/elementwise.cpp
-    src/ops/cpu/fill.cpp
-    src/ops/cpu/matmul.cpp
-    src/ops/cpu/reduction.cpp
+    src/optim/optimizer.cpp
+    src/optim/sgd.cpp
+    src/optim/adam.cpp
+    src/ops/fill/fill.cpp
+    src/ops/copy/copy.cpp
+    src/ops/copy/cpu.cpp
+    src/ops/elementwise/cpu.cpp
+    src/ops/fill/cpu.cpp
+    src/ops/matmul/cpu.cpp
+    src/ops/reduction/cpu.cpp
     src/tensor/tensor.cpp
     src/tensor/check.cpp
     src/tensor/print.cpp
     src/utils/logger.cpp
-    src/utils/memory.cpp
+    src/device/memory.cpp
 )
 
 target_include_directories(mini_infer
@@ -59,16 +57,20 @@ target_include_directories(mini_infer
 
 if(ENABLE_CUDA)
     target_sources(mini_infer PRIVATE
-        src/autograd/backward_nodes/elementwise.cu
-        src/ops/cuda/copy.cu
-        src/ops/cuda/elementwise.cu
-        src/ops/cuda/fill.cu
-        src/ops/cuda/matmul.cu
-        src/ops/cuda/reduction.cu
+        src/ops/elementwise/cuda.cu
+        src/ops/norm/cuda.cu
+        src/ops/copy/cuda.cu
+        src/ops/fill/cuda.cu
+        src/ops/matmul/cuda.cu
+        src/ops/reduction/cuda.cu
     )
     set_target_properties(mini_infer PROPERTIES CUDA_STANDARD 17 CUDA_STANDARD_REQUIRED ON)
     target_link_libraries(mini_infer PUBLIC CUDA::cudart)
     target_compile_definitions(mini_infer PUBLIC ENABLE_CUDA=1)
+
+    add_executable(train_cuda_demo EXCLUDE_FROM_ALL examples/train_cuda_demo.cpp)
+    target_include_directories(train_cuda_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(train_cuda_demo PRIVATE mini_infer)
 endif()
 
 target_compile_features(mini_infer PUBLIC cxx_std_17)

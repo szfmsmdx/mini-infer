@@ -25,21 +25,23 @@ Tensor ──持有──→ AutogradMetadata
 
 ```text
 include/mini_infer/
-    autograd.h           # 元数据、节点基类、梯度开关和反向入口
+    autograd.h              # 元数据、节点基类、梯度开关和反向入口
 
 src/autograd/
-    autograd.cpp    # 梯度开关与反向引擎
-    backward_nodes/
-        elementwise.h    # 逐元素反向节点声明
-        elementwise.cpp  # 逐元素反向规则与 sigmoid/rsqrt/SiLU CPU 反向
-        elementwise.cu   # sigmoid/rsqrt/SiLU CUDA 反向
-        reduction.h      # 归约反向节点声明
-        reduction.cpp    # 归约反向节点（SumNode）
-        tensor_ops.h     # 复制、迁移与视图节点声明
-        tensor_ops.cpp   # 复制、迁移与视图的反向规则
+    autograd.cpp            # 梯度开关与反向引擎
+
+src/ops/
+    elementwise/elementwise.cpp      # 逐元素前向入口、反向节点和 CPU 反向函数
+    elementwise/cuda.cu     # 逐元素 CUDA 前向和反向
+    matmul/matmul.cpp           # 矩阵乘前向入口和反向节点
+    norm/norm.cpp             # RMSNorm 前向入口和反向节点
+    norm/cuda.cu            # RMSNorm CUDA 前向和反向
+    reduction/reduction.cpp        # 归约前向入口和反向节点
+    copy/copy.cpp             # 复制和设备迁移的前向、反向
+    layout/layout.cpp           # 视图和布局操作的前向、反向
 ```
 
-逐元素 Node 在 `src/autograd/backward_nodes/elementwise.h/.cpp`，前向入口在 `src/ops/elementwise.cpp` 中创建节点。反向规则按算子类别组织。sigmoid 的 CPU 反向放在同一个 `.cpp`，CUDA kernel 放在相邻的 `elementwise.cu`。两者从输入重新计算 `t = exp(-abs(x))`，在 FP32 中计算 `(G * t) / ((1 + t) * (1 + t))`，最后写回原 dtype；不使用已舍入的前向输出计算导数。原有输入、输出版本检查保留。
+逐元素 Node 与前向入口集中在 `src/ops/elementwise/elementwise.cpp`，前向入口负责创建节点。反向规则按算子类别组织。sigmoid 的 CPU 反向放在同一个 `.cpp`，CUDA kernel 放在同目录的 `cuda.cu`。两者从输入重新计算 `t = exp(-abs(x))`，在 FP32 中计算 `(G * t) / ((1 + t) * (1 + t))`，最后写回原 dtype；不使用已舍入的前向输出计算导数。原有输入、输出版本检查保留。
 
 rsqrt 也在这两个文件中逐元素计算反向：从输入在 FP32 中重新计算 `y = 1 / sqrt(x)`，依次计算 `((-0.5 * y) * G) * y * y`，最后才写回原 dtype。保留输入版本检查，CPU/CUDA 均按各自 stride 读取输入和上游梯度。
 

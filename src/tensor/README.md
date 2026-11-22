@@ -18,15 +18,15 @@ src/tensor/
     print.cpp        # CPU 格式化和 CUDA 数据回传
 ```
 
-索引和视图实现在 `src/ops/layout.cpp`，复制和迁移实现在 `src/ops/copy.cpp`，填充和清零实现在 `src/ops/fill.cpp`。这些成员仍可访问 Tensor 的私有存储和元数据。CPU/CUDA 实现与后端声明见 [算子目录说明](../ops/README.md)。分配和释放由 `src/utils/memory.*` 负责。
+索引和视图实现在 `src/ops/layout/layout.cpp`，复制和迁移实现在 `src/ops/copy/copy.cpp`，填充和清零实现在 `src/ops/fill/fill.cpp`。这些成员仍可访问 Tensor 的私有存储和元数据。CPU/CUDA 实现与后端声明见 [算子目录说明](../ops/README.md)。分配和释放由 `src/device/memory.*` 负责。
 
-`fill_(const Scalar&)` 在 `src/ops/fill.cpp` 中按目标 dtype 转换，再由私有的 `FillValue()` 按设备分流。`Scalar` 分别保存有符号整数、无符号整数和浮点数，避免 int64 先经过浮点数而丢失精度。整数转换遵循 C++ `static_cast`；浮点数转整数先向零截断，若结果超出目标范围或输入为 NaN/Inf 则抛 `std::out_of_range`，填充前不会修改 Tensor。支持不宽于 64 位的整数和不宽于 double 的浮点输入；不隐式支持更宽的扩展类型。`print()` 在 `src/tensor/print.cpp` 中按设备分流，CUDA 数据复制到主机后由 CPU 格式化。
+`fill_(const Scalar&)` 在 `src/ops/fill/fill.cpp` 中按目标 dtype 转换，再由私有的 `FillValue()` 按设备分流。`Scalar` 分别保存有符号整数、无符号整数和浮点数，避免 int64 先经过浮点数而丢失精度。整数转换遵循 C++ `static_cast`；浮点数转整数先向零截断，若结果超出目标范围或输入为 NaN/Inf 则抛 `std::out_of_range`，填充前不会修改 Tensor。支持不宽于 64 位的整数和不宽于 double 的浮点输入；不隐式支持更宽的扩展类型。`print()` 在 `src/tensor/print.cpp` 中按设备分流，CUDA 数据复制到主机后由 CPU 格式化。
 
 CUDA shape/stride 副本仍由 Tensor 的共享指针持有，视图创建时重新初始化；后续设备资源层需继续保持这些生命周期语义。
 
 `Tensor(1.5f)` 和 `Tensor(42)` 可直接创建 CPU 零维标量，浮点数默认 Float32，整数默认 Int64。超出 Int64 范围的无符号数会抛出 `std::out_of_range`；无参 `Tensor()` 仍创建空对象。
 
-`is_scalar()` 只对有数据的零维 Tensor 返回 true；shape 为 `{1}` 的 Tensor 和默认空对象都不是标量。`fill_(const Tensor&)` 接收零维标量 Tensor，要求填充值与目标的 dtype 和 device 相同；当两者共享存储时，会先保存填充值。它与现有 `fill_(Scalar)` 一样不建图。`full()` 在 `mini_infer/tensor.h` 中声明、`src/ops/fill.cpp` 中实现，支持用普通数值或零维 Tensor 创建并填充新 Tensor。
+`is_scalar()` 只对有数据的零维 Tensor 返回 true；shape 为 `{1}` 的 Tensor 和默认空对象都不是标量。`fill_(const Tensor&)` 接收零维标量 Tensor，要求填充值与目标的 dtype 和 device 相同；当两者共享存储时，会先保存填充值。它与现有 `fill_(Scalar)` 一样不建图。`full()` 在 `mini_infer/tensor.h` 中声明、`src/ops/fill/fill.cpp` 中实现，支持用普通数值或零维 Tensor 创建并填充新 Tensor。
 tensor 要解决的问题是：
 
 1. 我多大？

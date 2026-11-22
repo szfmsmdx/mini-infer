@@ -1,0 +1,172 @@
+#include <cstddef>
+#include <stdexcept>
+#include <cuda_bf16.h>
+#include <cuda_fp16.h>
+#include <cuda_runtime.h>
+
+#include "ops/norm/kernels.h"
+#include "mini_infer/tensor.h"
+#include "ops/common/cuda_index.cuh"
+#include "device/memory.h"
+
+namespace mtensor {
+namespace {
+
+// 每个线程处理一行，平方和及归一化中间量保持 float。
+template <typename T>
+__global__ void RMSNormKernel(
+    const T* x, const T* weight, T* output,
+    const int* shape, const std::size_t* x_stride,
+    std::size_t weight_stride, int ndim, std::size_t rows, float eps
+) {
+    const std::size_t row =
+        static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (row >= rows) return;
+
+    const int features = shape[ndim - 1];
+    const std::size_t offset = GetNumelIndex(row * features, shape, x_stride, ndim);
+    const auto* x_row = x + offset;
+    auto* output_row = output + row * features;
+
+    float sum_squares = 0.0f;
+    for (int j = 0; j < features; ++j) {
+        const float x_value = static_cast<float>(x_row[j * x_stride[ndim - 1]]);
+        sum_squares += x_value * x_value;
+    }
+    const float mean_square = sum_squares / static_cast<float>(features);
+    const float inv_rms = rsqrtf(mean_square + eps);
+
+    for (int j = 0; j < features; ++j) {
+        const float x_value = static_cast<float>(x_row[j * x_stride[ndim - 1]]);
+        const float weight_value = static_cast<float>(weight[j * weight_stride]);
+        output_row[j] = static_cast<T>((x_value * inv_rms) * weight_value);
+    }
+}
+
+template <typename T>
+void LaunchRMSNorm(const Tensor& x, const Tensor& weight, float eps, Tensor& output) {
+    const std::size_t rows = x.numel() / x.size(x.dim() - 1);
+    constexpr unsigned int threads = 256;
+    const auto blocks = static_cast<unsigned int>((rows - 1) / threads + 1);
+    RMSNormKernel<T><<<blocks, threads>>>(
+        static_cast<const T*>(x.data_ptr()), static_cast<const T*>(weight.data_ptr()),
+        static_cast<T*>(output.data_ptr()), x.shape_cuda(), x.stride_cuda(),
+        weight.stride()[0], x.dim(), rows, eps);
+    CUDA_CHECK(cudaGetLastError());
+}
+
+}  // namespace
+
+void RMSNormCUDA(const Tensor& x, const Tensor& weight, float eps, Tensor& output) {
+    switch (x.dtype()) {
+        case Dtype::kFloat16: LaunchRMSNorm<__half>(x, weight, eps, output); break;
+        case Dtype::kBFloat16: LaunchRMSNorm<__nv_bfloat16>(x, weight, eps, output); break;
+        default: throw std::invalid_argument("rms_norm CUDA: unsupported dtype");
+    }
+}
+
+namespace {
+
+// 每个线程处理一行，计算输入梯度并保存 FP32 的 inv_rms。
+template <typename T>
+__global__ void RMSNormInputBackwardKernel(
+    const T* x, const T* weight, const T* grad, T* dx, float* row_inv_rms,
+    const int* shape, const std::size_t* x_stride, const std::size_t* grad_stride,
+    std::size_t weight_stride, int ndim, std::size_t rows, float eps
+) {
+    const std::size_t row =
+        static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (row >= rows) return;
+
+    const int features = shape[ndim - 1];
+    const auto* x_row = x + GetNumelIndex(row * features, shape, x_stride, ndim);
+    const auto* grad_row = grad + GetNumelIndex(row * features, shape, grad_stride, ndim);
+    auto* dx_row = dx + row * features;
+
+    float sum_squares = 0.0f;
+    float sum_grad_weight_x = 0.0f;
+    for (int j = 0; j < features; ++j) {
+        const float x_value = static_cast<float>(x_row[j * x_stride[ndim - 1]]);
+        const float grad_value = static_cast<float>(grad_row[j * grad_stride[ndim - 1]]);
+        const float weight_value = static_cast<float>(weight[j * weight_stride]);
+        sum_squares += x_value * x_value;
+        sum_grad_weight_x += grad_value * weight_value * x_value;
+    }
+    const float mean_square = sum_squares / static_cast<float>(features);
+    const float inv_rms = rsqrtf(mean_square + eps);
+    row_inv_rms[row] = inv_rms;
+    const float correction = inv_rms * inv_rms * inv_rms *
+        (sum_grad_weight_x / static_cast<float>(features));
+
+    for (int j = 0; j < features; ++j) {
+        const float x_value = static_cast<float>(x_row[j * x_stride[ndim - 1]]);
+        const float grad_value = static_cast<float>(grad_row[j * grad_stride[ndim - 1]]);
+        const float weight_value = static_cast<float>(weight[j * weight_stride]);
+        const float dx_value = grad_value * weight_value * inv_rms - x_value * correction;
+        dx_row[j] = static_cast<T>(dx_value);
+    }
+}
+
+// 每个线程负责一个特征，权重梯度跨所有行以 float 累加，最后写回。
+template <typename T>
+__global__ void RMSNormWeightBackwardKernel(
+    const T* x, const T* grad, const float* row_inv_rms, T* dw,
+    const int* shape, const std::size_t* x_stride, const std::size_t* grad_stride,
+    int ndim, std::size_t rows
+) {
+    const std::size_t j =
+        static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    const int features = shape[ndim - 1];
+    if (j >= features) return;
+
+    float weight_grad = 0.0f;
+    for (std::size_t row = 0; row < rows; ++row) {
+        const std::size_t index = row * features + j;
+        const std::size_t x_offset = GetNumelIndex(index, shape, x_stride, ndim);
+        const std::size_t grad_offset = GetNumelIndex(index, shape, grad_stride, ndim);
+        const float x_value = static_cast<float>(x[x_offset]);
+        const float grad_value = static_cast<float>(grad[grad_offset]);
+        weight_grad += grad_value * x_value * row_inv_rms[row];
+    }
+    dw[j] = static_cast<T>(weight_grad);
+}
+
+template <typename T>
+void LaunchRMSNormBackward(const Tensor& x, const Tensor& weight, const Tensor& output_grad,
+                           float eps, Tensor& dx, Tensor& dw) {
+    const int features = x.size(x.dim() - 1);
+    const std::size_t rows = x.numel() / features;
+    auto row_shape = x.shape();
+    row_shape.back() = 1;
+    Tensor row_inv_rms(row_shape, Dtype::kFloat32, x.device());
+    constexpr unsigned int threads = 256;
+    const auto row_blocks = static_cast<unsigned int>((rows - 1) / threads + 1);
+    const auto feature_blocks = static_cast<unsigned int>((features - 1) / threads + 1);
+
+    RMSNormInputBackwardKernel<T><<<row_blocks, threads>>>(
+        static_cast<const T*>(x.data_ptr()), static_cast<const T*>(weight.data_ptr()),
+        static_cast<const T*>(output_grad.data_ptr()), static_cast<T*>(dx.data_ptr()),
+        static_cast<float*>(row_inv_rms.data_ptr()), x.shape_cuda(), x.stride_cuda(),
+        output_grad.stride_cuda(), weight.stride()[0], x.dim(), rows, eps);
+    CUDA_CHECK(cudaGetLastError());
+
+    // 同一 stream 按序执行，第二个 kernel 读取第一个 kernel 写入的 inv_rms。
+    RMSNormWeightBackwardKernel<T><<<feature_blocks, threads>>>(
+        static_cast<const T*>(x.data_ptr()), static_cast<const T*>(output_grad.data_ptr()),
+        static_cast<const float*>(row_inv_rms.data_ptr()), static_cast<T*>(dw.data_ptr()),
+        x.shape_cuda(), x.stride_cuda(), output_grad.stride_cuda(), x.dim(), rows);
+    CUDA_CHECK(cudaGetLastError());
+}
+
+}  // namespace
+
+void RMSNormBackwardCUDA(const Tensor& x, const Tensor& weight, const Tensor& output_grad,
+                         float eps, Tensor& dx, Tensor& dw) {
+    switch (x.dtype()) {
+        case Dtype::kFloat16: LaunchRMSNormBackward<__half>(x, weight, output_grad, eps, dx, dw); break;
+        case Dtype::kBFloat16: LaunchRMSNormBackward<__nv_bfloat16>(x, weight, output_grad, eps, dx, dw); break;
+        default: throw std::invalid_argument("rms_norm CUDA backward: unsupported dtype");
+    }
+}
+
+}  // namespace mtensor

@@ -128,6 +128,8 @@ private:
     Tensor& FillValue(const void* host_value);
     void InitCUDAMetadata();
     static std::vector<std::size_t> ContiguousStride(const std::vector<int>& shape);
+    Tensor MakeView(std::vector<int> shape, std::vector<std::size_t> stride,
+                    std::size_t byte_offset = 0) const;
 
     // 存储所有权、当前数据位置和 Tensor 元数据。
     void* data_ptr_ = nullptr;

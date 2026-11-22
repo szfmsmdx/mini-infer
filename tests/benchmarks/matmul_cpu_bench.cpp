@@ -1,12 +1,10 @@
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <iomanip>
 #include <iostream>
 #include <memory>
-#include <numeric>
 #include <random>
 #include <stdexcept>
 #include <vector>
@@ -14,29 +12,13 @@
 #include <ggml.h>
 #include <ggml-cpu.h>
 
-#include "ops/backend.h"
+#include "bench_common.h"
+#include "ops/matmul/kernels.h"
 
 namespace {
 constexpr int kSamples = 10;
 constexpr int kWarmups = 3;
 using Samples = std::array<double, kSamples>;
-
-template <typename Run>
-double TimeMs(Run run) {
-    const auto start = std::chrono::steady_clock::now();
-    run();
-    return std::chrono::duration<double, std::milli>(
-        std::chrono::steady_clock::now() - start).count();
-}
-
-double Mean(const Samples& samples) {
-    return std::accumulate(samples.begin(), samples.end(), 0.0) / samples.size();
-}
-
-double Median(Samples samples) {
-    std::sort(samples.begin(), samples.end());
-    return (samples[4] + samples[5]) / 2;
-}
 
 void RunCase(int m, int k, int n, bool transposed_weight) {
     std::mt19937 rng(42);
@@ -85,10 +67,7 @@ void RunCase(int m, int k, int n, bool transposed_weight) {
             throw std::runtime_error("ggml graph compute failed");
         }
     };
-    for (int i = 0; i < kWarmups; ++i) {
-        run_mini();
-        run_ggml();
-    }
+    benchmark::Warmup(run_mini, run_ggml, kWarmups);
     const auto* reference = static_cast<const float*>(result->data);
     for (std::size_t i = 0; i < c.size(); ++i) {
         if (!(std::abs(c[i] - reference[i]) <= 2e-4f + 1e-5f * std::abs(reference[i]))) {
@@ -97,22 +76,14 @@ void RunCase(int m, int k, int n, bool transposed_weight) {
     }
 
     Samples mini{}, ggml{};
-    for (int i = 0; i < kSamples; ++i) {
-        if (i % 2 == 0) {
-            mini[i] = TimeMs(run_mini);
-            ggml[i] = TimeMs(run_ggml);
-        } else {
-            ggml[i] = TimeMs(run_ggml);
-            mini[i] = TimeMs(run_mini);
-        }
-    }
-    const double mini_mean = Mean(mini);
-    const double ggml_mean = Mean(ggml);
+    benchmark::MeasureAlternating(run_mini, run_ggml, mini, ggml);
+    const double mini_mean = benchmark::Mean(mini);
+    const double ggml_mean = benchmark::Mean(ggml);
     const double flops = 2.0 * m * k * n;
     std::cout << m << '\t' << k << '\t' << n << '\t'
               << (transposed_weight ? "weight.T" : "row-major") << '\t'
               << mini_mean << '\t' << ggml_mean << '\t'
-              << Median(mini) << '\t' << Median(ggml) << '\t'
+              << benchmark::Median(mini) << '\t' << benchmark::Median(ggml) << '\t'
               << flops / (mini_mean * 1e6) << '\t' << flops / (ggml_mean * 1e6) << '\t'
               << mini_mean / ggml_mean << '\n';
 }

@@ -9,11 +9,14 @@ mini_infer/
 ├── include/mini_infer/  # Tensor、dtype、Scalar、Autograd、算子和网络模块的公开头文件
 ├── src/
 │   ├── tensor/          # Tensor 存储所有权、元数据与内部校验
-│   ├── ops/             # 布局、填充、复制、数值算子与 CPU/CUDA kernel
+│   ├── ops/             # 按算子类别组织入口、反向节点与 CPU/CUDA 实现
 │   ├── modules/         # 使用现有算子组合网络模块，例如 Linear
-│   ├── autograd/        # 反向引擎与反向节点
-│   └── utils/           # 内存分配与日志
+│   ├── optim/           # SGD、Adam 的参数更新与优化器状态
+│   ├── autograd/        # 建图开关与反向引擎
+│   ├── device/          # 内存分配与释放
+│   └── utils/           # 日志
 ├── tests/               # CPU/CUDA 正确性测试与独立 benchmark
+├── examples/            # CUDA 训练示例
 ├── 3rdparty/            # 按需构建 benchmark 使用的 ggml
 ├── CMakeLists.txt       # C++17 库目标与构建选项
 ├── setup.ipynb          # Colab 构建、测试和 benchmark
@@ -24,15 +27,32 @@ mini_infer/
 
 模块说明见 [Tensor](src/tensor/README.md)、[算子](src/ops/README.md)、[网络模块](src/modules/README.md)、[Autograd](src/autograd/README.md) 和 [测试](tests/README.md)。
 
-逐元素精度测试采用双参考：逐元素与数学参考误差达标，或者与 PyTorch 对齐，满足其一即通过。基础、边界和特殊值样本必须全部通过；随机样本按算子、dtype、前向及各输入梯度分别要求至少 99.5% 通过。测试直接使用环境中已有的 PyTorch，不限制版本，并记录实际版本。本地 CPU 当前覆盖的 10 个逐元素算子、三种浮点 dtype 的前向与反向，884,818 次双参考比较全部通过。CUDA 尚未验证。安装、复跑和结果见[数值精度检查](tests/README.md#数值精度检查)。
+逐元素精度测试采用双参考。每个元素与数学参考的误差达标，或与 PyTorch 对齐，即可通过。基础、边界和特殊值样本必须全部通过，随机样本按算子、dtype、前向及各输入梯度分别要求至少 99.5% 通过。测试使用环境中已有的 PyTorch 并记录版本。10 个逐元素算子覆盖三种浮点 dtype 的前向与反向，CPU 和 CUDA 各完成 884,818 次比较，均为零失败。安装、复跑和结果见[数值精度检查](tests/README.md#数值精度检查)。
 
-RMSNorm 已实现组合前向和自动反传，但新增 CPU 精度测试发现 FP16/BF16 共 84 个失败，结构测试通过，低精度问题待修复。结果见[测试说明](tests/README.md#rmsnorm-组合算子测试)；本轮排查过程记录在[算子精度问题](note/code/算子精度问题.md)。
+RMSNorm 的 FP16/BF16 前向和反向使用 FP32 中间量，CPU 和 CUDA 的结构测试均通过，每个设备的 5,166 次精度比较也全部通过。[测试说明](tests/README.md#rmsnorm-测试) · [精度排查记录](note/code/算子精度问题.md)
+
+SGD 和 Adam 支持 CPU/CUDA 的 FP32 参数。`SGD({weight, bias}, learning_rate, momentum)` 提供普通 SGD 和可选动量，`Adam({weight, bias}, learning_rate)` 使用默认的 beta1=0.9、beta2=0.999、eps=1e-8。头文件位于 `include/mini_infer/optim/`。训练循环按 `zero_grad()`、前向与 loss、`backward()`、`step()` 执行，参数通过共享 Tensor 句柄原地更新。用法和验证见 [优化器测试](tests/README.md#优化器测试)。
 
 ## CUDA 开发基线
 
 - GPU：Ampere 及更新架构（SM80 起）。
 - CUDA Toolkit：最低 12.4；CMake 自动检测可用 CUDA 编译环境，无需手动切换开关。默认编译 SM80 并保留 PTX，支持更新架构 GPU。
 - 构建与测试命令见 [tests/README.md](tests/README.md)。
+
+## CUDA 训练示例
+
+`train_cuda_demo` 在 GPU 上用 `Linear` 和 Adam 拟合 `y = 2*x1 - 3*x2 + 0.5`。每步的 loss 和耗时会显示在终端，并由 `Logger` 追加到工作目录下的 `train_cuda_demo.log`。loss 是本次参数更新前的均方误差，耗时包含前向、反向、参数更新和等待 GPU 完成。训练结束后会记录最终权重、偏置和一条新输入的预测。
+
+在 Windows 的 Visual Studio 生成器下运行以下命令。
+
+```powershell
+cmake -S . -B build/train-demo -DBUILD_TESTING=OFF
+cmake --build build/train-demo --config Release --target train_cuda_demo
+Set-Location build/train-demo
+.\Release\train_cuda_demo.exe
+```
+
+使用 Linux 上的单配置生成器时，可执行文件位于 `build/train-demo/train_cuda_demo`。
 
 ## Roadmap
 

@@ -2,6 +2,19 @@
 
 正确性测试在 `tests/CMakeLists.txt` 注册到 CTest。与 ggml 对比的性能程序由 `tests/benchmarks/CMakeLists.txt` 按需构建。
 
+| 目录 | 内容 |
+| --- | --- |
+| `tensor/` | Tensor、布局、标量和 dtype |
+| `ops/` | 逐元素、激活、归约和矩阵乘 |
+| `modules/` | Linear 和 RMSNorm |
+| `autograd/` | CPU/CUDA 自动微分 |
+| `optim/` | SGD、Adam 和训练回归 |
+| `utils/` | 日志 |
+| `precision/` | 逐元素精度样本生成、PyTorch 对照脚本和测试依赖 |
+| `benchmarks/` | 与 ggml 的性能对比 |
+
+三个 benchmark 源文件共用 `tests/benchmarks/bench_common.h` 中的计时、均值、中位数、预热和交替采样函数，各程序通过自己的执行回调确定计时范围。
+
 需要支持 C++17 的编译器和 CMake 3.18+。从仓库根目录运行：
 
 ```powershell
@@ -35,33 +48,70 @@ ctest --test-dir build/tests -C Release --output-on-failure
 | `tensor_cuda_test` | CUDA 内存、构造、索引视图、所有权、clone、copy_、8 种 dtype 双向 to 与原始编码保留、迁移赋值和共享生命周期、标量/空对象迁移、填充、清零、打印及异常 |
 | `elementwise_cuda_test` | 8 种 dtype 的 add/sub/mul/div/neg 与 CPU 结果逐字节对照；覆盖 stride 视图、标量、线程块边界、整数回绕与除零、FP16/BF16 特殊值及错误输入 |
 
+## 优化器测试
+
+`optimizer_cpu_test` / `optimizer_cuda_test` 共用 `optim/optimizer_test.cpp`，覆盖 SGD、momentum、Adam 偏差修正、每个参数独立计步、梯度缺失与清零、共享参数原地更新、版本检测、错误参数和梯度校验。两个优化器还分别训练 `y = 2*x1 - 3*x2 + 0.5` 的线性回归模型，检查最终参数和 loss。
+
+`optimizer_precision_cpu_test` / `optimizer_precision_cuda_test` 导出五组各 10 步的 FP32 参数更新轨迹，由 `precision/compare_optimizer.py` 同时对照同设备 PyTorch 和 CPU FP64 独立公式。每个设备有 250 次逐元素比较，要求两个参考都满足 `rtol=1e-5`、`atol=1e-6`。用例包含非连续参数、零维标量、延迟出现的梯度、零梯度、默认和自定义 beta，以及原始存储边界检查。
+
+```powershell
+ctest --test-dir build/rmsnorm-650216a -C Release -R '^optimizer' --output-on-failure
+```
+
+报告保存到 `<构建目录>/tests/optimizer-cpu/` 和 `optimizer-cuda/`，包含 `traces.jsonl` 与 `report.json`。PyTorch 依赖沿用下面的精度测试环境。
+
+模型和优化器都保存参数的共享 Tensor 句柄。
+
+```cpp
+#include "mini_infer/modules/linear.h"
+#include "mini_infer/optim/adam.h"
+
+// x、target、weight、bias 已在选定设备上创建为 FP32 Tensor。
+weight.requires_grad_(true);
+bias.requires_grad_(true);
+mtensor::Linear model(weight, bias);
+mtensor::Adam optimizer({weight, bias}, 0.001f);
+
+for (int step = 0; step < 500; ++step) {
+    optimizer.zero_grad();
+    auto error = model(x) - target;
+    auto loss = (error * error).mean();
+    loss.backward();
+    optimizer.step();
+}
+```
+
+SGD 的构造形式为 `SGD(parameters, learning_rate, momentum=0)`，Adam 为 `Adam(parameters, learning_rate=1e-3, beta1=0.9, beta2=0.999, eps=1e-8)`。参数列表在构造时确定，参数须为非空、可写的 FP32 Tensor，相同设备上的重复起始地址会报错。非连续参数由现有 stride 算子和 `copy_()` 支持。优化器对象支持移动。
+
+`step()` 在关闭建图的作用域内运行，先检查所有已存在梯度的 shape、dtype 和 device，再逐个更新参数及其状态。没有梯度的参数会跳过；已有零梯度的参数仍参与状态更新。`zero_grad()` 沿用 Tensor 的清零行为，保留已有梯度存储，动量和矩估计继续保存。
+
 ## 数值精度检查
 
 `precision_cpu_test` / `precision_cuda_test` 使用双参考逐元素验收：与数学参考误差达标，或者与 PyTorch 对齐，任一满足即通过。shape、dtype、device 必须先正确；原有布局、广播、整数语义、版本检查和自动微分结构测试继续保留。
 
 ```text
-precision_test.cpp：生成样本 → 运行 mini-infer 前向、反向
+precision/precision_test.cpp：生成样本 → 运行 mini-infer 前向、反向
                       ↓ 原始 dtype 编码、shape、stride、偏移、上游梯度
-compare_torch.py：重建相同输入 → 计算 FP64 数学参考 + 实际运行 PyTorch
+precision/compare_torch.py：重建相同输入 → 计算 FP64 数学参考 + 实际运行 PyTorch
                       ↓
                逐元素验收 → 数学通过 / 仅 Torch 通过 / 两者均失败
 ```
 
 ### 安装一次，之后直接运行 CTest
 
-PyTorch 只用于测试，不链接进 C++ 库。只要求环境能够导入 torch，不限制版本；已有 torch 无需重新安装。`tests/requirements-torch.txt` 仅声明 torch 依赖，实际版本记录在测试报告中。本地使用 Python 3.13.15 和 PyTorch 2.11.0+cpu，环境位于被 Git 忽略的 `build/torch-env`。
+PyTorch 只用于测试，不链接进 C++ 库。只要求环境能够导入 torch，不限制版本；已有 torch 无需重新安装。`tests/precision/requirements-torch.txt` 仅声明 torch 依赖，实际版本记录在测试报告中。本地使用 Python 3.13.15 和 PyTorch 2.11.0+cpu，环境位于被 Git 忽略的 `build/torch-env`。
 
 Windows，在已配置 C++ 编译器和 CMake 的终端运行：
 
 ```powershell
 python -m venv build/torch-env
-build/torch-env/Scripts/python.exe -m pip install -r tests/requirements-torch.txt --index-url https://download.pytorch.org/whl/cpu
+build/torch-env/Scripts/python.exe -m pip install -r tests/precision/requirements-torch.txt --index-url https://download.pytorch.org/whl/cpu
 cmake -S . -B build/tests -DBUILD_TESTING=ON
 cmake --build build/tests --config Release --parallel 2
 ctest --test-dir build/tests -C Release --output-on-failure
 ```
 
-已有环境无需重复创建或安装。本机通过 uv 安装，也可以使用 `uv pip install --python build/torch-env/Scripts/python.exe -r tests/requirements-torch.txt --index-url https://download.pytorch.org/whl/cpu`。
+已有环境无需重复创建或安装。本机通过 uv 安装，也可以使用 `uv pip install --python build/torch-env/Scripts/python.exe -r tests/precision/requirements-torch.txt --index-url https://download.pytorch.org/whl/cpu`。
 
 Linux / Colab 可直接使用已有 torch 的 Python 环境；需要新建时使用 `python3 -m venv build/torch-env`，环境内的 Python 路径为 `build/torch-env/bin/python`。GPU 对照需要支持 CUDA 的 torch；已有可用环境无需重装，否则选择与驱动兼容的 CUDA wheel，然后重新配置、构建 CUDA 测试。
 
@@ -144,26 +194,24 @@ C++ 导出每组的 `cohorts` 数量，Python 检查分组覆盖完整样本且�
 
 SiLU 反向改为 Torch 的 FP32 逐元素运算顺序后，原先 519 个失败全部修复。FP32/FP16/BF16 各 5,330 个反向样本中，数学参考分别通过 5,234/5,330/5,306 个，其余分别有 96/0/24 个通过 Torch 对齐。其他算子的对照结果未变；数值样本和容差未变。此前 Python 公式模拟残留 2 个 FP32 失败，本次以实际 C++ 导出结果为准，剩余 0 个。
 
-此次 activation/autograd CPU 回归通过；新增 SiLU 回归覆盖低精度失败样本、非连续输入与上游梯度、跨 block 长度和零维标量。此前 sigmoid/rsqrt 回归仍适用。此次分组验收改动后，`precision_cpu_test` 和包含 15 项自测的 `torch_comparator_test` 均通过，884,818 次比较仍为 0 个失败。CUDA 反向实现已补齐，本机无可用 CUDA 编译器，尚未编译运行验证。
+SiLU 回归覆盖低精度失败样本、非连续输入与上游梯度、跨 block 长度和零维标量。最新回归中，CPU 和 CUDA 逐元素精度测试各完成 884,818 次比较，均为零失败。包含 15 项自测的 `torch_comparator_test` 也通过。
 
 报告保存在 `<构建目录>/tests/torch-cpu/`（CUDA 为 `torch-cuda/`）：
 
 - `samples.jsonl`：完整输入、上游梯度和 mini-infer 结果的位编码，以及 `cohorts` 分组数量。
 - `report.json`：验收规则、环境版本、三类计数、两种参考诊断、全部失败下标和每组前 6 个失败样本。每个 cohort 记录下标起点、数量、通过率、允许失败数及 `accepted`；失败样本标注所属 cohort。`failed` 始终保留实际未对齐元素数，即使在随机额度内也不清零；`failed_groups` 统计未通过验收的算子/dtype/阶段组数，顶层 `accepted` 决定 CTest 返回码。
 
-当前报告为 `build/source-layout-cpu/tests/torch-cpu/report.json`。本机无可用 CUDA 编译器，CUDA 双参考测试尚未运行。
-
-## RMSNorm 组合算子测试
+## RMSNorm 测试
 
 ```powershell
-ctest --test-dir build/source-layout-cpu -R '^rmsnorm' --output-on-failure
+ctest --test-dir build/tests -C Release -R '^rmsnorm' --output-on-failure
 ```
 
 结构与精度测试分开：`rmsnorm_cpu_test` 检查精确可手算的前向、梯度与接口行为；`rmsnorm_precision_cpu_test` 用同一个可执行程序导出位编码，再用 FP64 独立解析公式和 `torch.nn.functional.rms_norm` 的真实 autograd 对照。复用逐元素测试的 dtype 容差与双参考规则，不修改已有 884,818 次逐元素比较的样本和报告。
 
 10 个固定案例涵盖一维、二维、三维、非连续输入/权重/上游梯度、单特征、零输入、不同 eps、小输入、大输入以及 257 长度特征维。每种 dtype 都检查输出、输入梯度、跨所有前导维度累加的权重梯度。这里没有随机组，全部元素必须通过。
 
-2026-11-20，Windows CPU、PyTorch 2.11.0+cpu，结构测试和参考公式的两项自测通过。精度结果如下，共 5,166 次比较、84 个失败，CTest 正常返回失败：
+低精度修复前，2026-11-20 在 Windows CPU 上用 PyTorch 2.11.0+cpu 完成的 5,166 次比较记录了 84 个失败。
 
 | dtype | 前向失败 | 输入梯度失败 | 权重梯度失败 |
 | --- | ---: | ---: | ---: |
@@ -171,9 +219,9 @@ ctest --test-dir build/source-layout-cpu -R '^rmsnorm' --output-on-failure
 | FP16 | 11 | 36 | 30 |
 | BF16 | 0 | 5 | 2 |
 
-例如 FP16 `large_input` 的 `x=-450`，平方 202500 写回 FP16 后成为 Inf，使归一化输出为零，数学参考和 Torch 约为 1.76953。其余失败也包括低精度反向舍入和相消。整段 FP32 计算模拟通过当前样本，但算子实现未改。
+例如 FP16 `large_input` 的 `x=-450`，平方 202500 写回 FP16 后成为 Inf，使归一化输出为零，数学参考和 Torch 约为 1.76953。其余失败也包括低精度反向舍入和相消。
 
-完整位编码与失败报告位于 `<构建目录>/tests/rmsnorm-cpu/`，CUDA 对应 `rmsnorm-cuda/`。CPU/CUDA 测试已在 CMake 注册；当前无可用 CUDA 编译器，GPU 结果尚未验证。Python 环境与逐元素精度测试共用，不锁 Torch 版本。
+修复后，FP16/BF16 的前向和反向使用 FP32 中间量。CPU 和 CUDA 各完成 5,166 次比较，均为零失败。完整位编码与报告位于 `<构建目录>/tests/rmsnorm-cpu/` 和 `<构建目录>/tests/rmsnorm-cuda/`。Python 环境与逐元素精度测试共用。
 
 ## 测试进度
 
@@ -286,3 +334,35 @@ mini-infer 当前串行计算。ggml 使用算子 API 的上游默认线程配�
 默认测 `M=1/32/128, K=N=1024`。在最后一个单元格的命令末尾加 `--model`，可运行表中的 13 个模型层尺寸。当前单 block 路径跑大尺寸耗时较长。
 
 两侧在同一张 GPU 上使用相同的 FP32 输入和 `weight.T` 布局。ggml 运行单个 `ggml_mul_mat` 节点，采用 llama.cpp 的默认 CUDA Graph 配置和 kernel 分发。预分配、上传和输出核对在计时外。预热 3 次后，两侧交替测量各 10 次，计时包含提交和等待 GPU 完成，输出均值、中位数、GFLOP/s 和耗时比。
+
+## 全部数值算子的前向完整调用对比
+
+`ops_cpu_bench` 和 `ops_cuda_bench` 共用 `ops_bench.cpp`，覆盖 FP32 的 17 组前向接口。默认输入形状为 [1,1024]、[32,1024] 和 [128,1024]，每个设备共 51 组结果。matmul 和 Linear 的权重为 [1024,1024]，Linear 带偏置，RMSNorm 带权重。
+
+| mini-infer 接口 | ggml 对应计算 |
+| --- | --- |
+| add、sub、mul、div、neg | 同名算子 |
+| sqrt、exp、sigmoid、silu | 同名算子 |
+| rsqrt | 全 1 Tensor 除以 sqrt(x) |
+| sum_all、sum_last | sum、sum_rows |
+| mean_all、mean_last | 展平后 mean、按行 mean |
+| matmul | mul_mat，权重 K 维连续 |
+| Linear | mul_mat 后广播加 bias |
+| RMSNorm | rms_norm 后广播乘 weight |
+
+计时覆盖两端的一次完整前向调用，包括输出和临时存储分配、ggml 图构建、计算、等待完成及临时对象释放。mini-infer 在 `NogradNode` 下运行。输入、权重、上传、后端初始化和 Linear 对象创建均在计时外。ggml 每次调用重新创建输出 context、图和输出 buffer，后端在整个程序中复用，并保留上游默认的优化和缓存行为。
+
+CPU 的 mini-infer 使用当前单线程实现，ggml 默认线程配置为 4，可用 `--ggml-threads` 指定。两边先用同一输入校验输出，再预热并交替计时，最后重新校验输出。校验同时检查形状、dtype、元素数和有限值，误差要求为 `abs(actual-reference) <= 2e-4 + 2e-5*abs(reference)`。校验失败时程序返回失败。ggml 后端不支持的计算会输出 `unsupported_ggml`，耗时字段留空。
+
+```powershell
+cmake -S . -B build/ops-bench -DBUILD_BENCHMARKS=ON -DBUILD_CUDA_BENCHMARKS=ON -DCMAKE_CUDA_ARCHITECTURES=89
+cmake --build build/ops-bench --config Release --target ops_cpu_bench ops_cuda_bench --parallel 4
+build/ops-bench/tests/benchmarks/Release/ops_cpu_bench.exe --samples 20 --warmups 5 | Set-Content -Encoding UTF8 build/ops-bench/ops-cpu.csv
+build/ops-bench/tests/benchmarks/Release/ops_cuda_bench.exe --samples 20 --warmups 5 | Set-Content -Encoding UTF8 build/ops-bench/ops-cuda.csv
+```
+
+CPU 单独构建时使用 `-DBUILD_CUDA_BENCHMARKS=OFF` 并仅指定 `ops_cpu_bench` 目标。Linux 单配置构建使用 `-DCMAKE_BUILD_TYPE=Release`，程序位于构建目录的 `tests/benchmarks/`。
+
+可用 `--op rmsnorm --rows 32 --cols 4096` 单独运行指定算子和形状。其余算子名称见 CSV 的 `op` 字段，默认 `--op all`、3 次预热、10 次采样。`--cols` 同时指定矩阵乘的 K 和 N。
+
+CSV 开头以 `#` 记录计时范围、版本、构建配置、编译器、线程或 GPU 信息。数据行包含均值、中位数、最大绝对误差和 `mini_over_ggml`。这个比值是 mini-infer 耗时除以 ggml 耗时，大于 1 表示 mini-infer 用时更多。测试范围是 FP32 数值算子前向，Tensor 视图元数据操作、设备传输、整数和低精度 dtype、反向传播的性能需要各自的用例。

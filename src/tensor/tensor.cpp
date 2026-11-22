@@ -11,8 +11,8 @@
 #include "tensor/check.h"
 #include "mini_infer/dtype.h"
 #include "mini_infer/ops/elementwise.h"
-#include "utils/memory.h"
-#include "ops/backend.h"
+#include "device/memory.h"
+#include "ops/copy/kernels.h"
 #include "mini_infer/autograd.h"
 
 namespace mtensor{
@@ -63,12 +63,7 @@ Tensor::Tensor(const void* data_ptr, std::vector<int> shape, Dtype dtype, Device
     */
     CheckNonnegativeShape(shape_, "Tensor dimensions must be non-negative");
 
-    stride_.resize(shape_.size());
-    std::size_t stride = 1;
-    for (std::size_t i = shape_.size(); i > 0; --i) {   // shape 可能为空的写法
-        stride_[i - 1] = stride;
-        stride *= shape_[i - 1];
-    }
+    stride_ = ContiguousStride(shape_);   // shape 可能为空的写法
 
     // 传入数据且 shape 为 {} 时构造标量，占一个元素。
     // 此时成员数据指针尚未设置，不能靠 numel() 判断标量的大小。
@@ -78,12 +73,12 @@ Tensor::Tensor(const void* data_ptr, std::vector<int> shape, Dtype dtype, Device
     }
 
     if(device == Device::kCPU){
-        storage_ = std::shared_ptr<void>(AllocateCPU(bytes), std::free);
+        storage_ = AllocateStorage(bytes, Device::kCPU);
         data_ptr_ = storage_.get();
         CopyCPU(data_ptr_, data_ptr, shape_, stride_, stride_, element_size());
     }else if(device == Device::kCUDA){
 #ifdef ENABLE_CUDA
-        storage_ = std::shared_ptr<void>(AllocateCUDA(bytes), FreeCUDA);
+        storage_ = AllocateStorage(bytes, Device::kCUDA);
         data_ptr_ = storage_.get();
         CopyHostToCUDA(data_ptr_, data_ptr, bytes);
 
@@ -101,12 +96,7 @@ Tensor::Tensor(std::vector<int> shape, Dtype dtype, Device device)
     autograd_metadata_(std::make_shared<AutogradMetadata>()){
     CheckNonnegativeShape(shape_, "Tensor dimensions must be non-negative");
 
-    stride_.resize(shape_.size());
-    std::size_t stride = 1;
-    for (std::size_t i = shape_.size(); i > 0; --i) {
-        stride_[i - 1] = stride;
-        stride *= shape_[i - 1];
-    }
+    stride_ = ContiguousStride(shape_);
 
     // shape 为 {} 表示标量，占一个元素。
     // 分配前 data_ptr_ 为空，不能直接用 numel() 判断。
@@ -116,11 +106,11 @@ Tensor::Tensor(std::vector<int> shape, Dtype dtype, Device device)
     }
 
     if (device == Device::kCPU) {
-        storage_ = std::shared_ptr<void>(AllocateCPU(bytes), std::free);
+        storage_ = AllocateStorage(bytes, Device::kCPU);
         data_ptr_ = storage_.get();
     } else if (device == Device::kCUDA) {
 #ifdef ENABLE_CUDA
-        storage_ = std::shared_ptr<void>(AllocateCUDA(bytes), FreeCUDA);
+        storage_ = AllocateStorage(bytes, Device::kCUDA);
         data_ptr_ = storage_.get();
 
         InitCUDAMetadata();

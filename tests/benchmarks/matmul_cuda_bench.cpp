@@ -1,11 +1,9 @@
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cstddef>
 #include <iomanip>
 #include <iostream>
 #include <memory>
-#include <numeric>
 #include <random>
 #include <stdexcept>
 #include <string_view>
@@ -16,31 +14,15 @@
 #include <ggml-backend.h>
 #include <ggml-cuda.h>
 
-#include "ops/backend.h"
+#include "bench_common.h"
+#include "ops/matmul/kernels.h"
 #include "mini_infer/tensor.h"
-#include "utils/memory.h"
+#include "device/memory.h"
 
 namespace {
 constexpr int kSamples = 10;
 constexpr int kWarmups = 3;
 using Samples = std::array<double, kSamples>;
-
-template <typename Run>
-double TimeMs(Run run) {
-    const auto start = std::chrono::steady_clock::now();
-    run();
-    return std::chrono::duration<double, std::milli>(
-        std::chrono::steady_clock::now() - start).count();
-}
-
-double Mean(const Samples& samples) {
-    return std::accumulate(samples.begin(), samples.end(), 0.0) / samples.size();
-}
-
-double Median(Samples samples) {
-    std::sort(samples.begin(), samples.end());
-    return (samples[samples.size() / 2 - 1] + samples[samples.size() / 2]) / 2;
-}
 
 void RunCase(ggml_backend_t backend, int m, int k, int n) {
     using namespace mtensor;
@@ -88,10 +70,7 @@ void RunCase(ggml_backend_t backend, int m, int k, int n) {
             throw std::runtime_error("ggml CUDA graph compute failed");
         }
     };
-    for (int i = 0; i < kWarmups; ++i) {
-        run_mini();
-        run_ggml();
-    }
+    benchmark::Warmup(run_mini, run_ggml, kWarmups);
     const Tensor host_c = c.to(Device::kCPU);
     const auto* actual = static_cast<const float*>(host_c.data_ptr());
     std::vector<float> reference(output_elements);
@@ -101,21 +80,13 @@ void RunCase(ggml_backend_t backend, int m, int k, int n) {
     }
 
     Samples mini{}, ggml{};
-    for (int i = 0; i < kSamples; ++i) {
-        if (i % 2 == 0) {
-            mini[i] = TimeMs(run_mini);
-            ggml[i] = TimeMs(run_ggml);
-        } else {
-            ggml[i] = TimeMs(run_ggml);
-            mini[i] = TimeMs(run_mini);
-        }
-    }
-    const double mini_mean = Mean(mini);
-    const double ggml_mean = Mean(ggml);
+    benchmark::MeasureAlternating(run_mini, run_ggml, mini, ggml);
+    const double mini_mean = benchmark::Mean(mini);
+    const double ggml_mean = benchmark::Mean(ggml);
     const double flops = 2.0 * m * k * n;
     std::cout << m << '\t' << k << '\t' << n << '\t'
               << mini_mean << '\t' << ggml_mean << '\t'
-              << Median(mini) << '\t' << Median(ggml) << '\t'
+              << benchmark::Median(mini) << '\t' << benchmark::Median(ggml) << '\t'
               << flops / (mini_mean * 1e6) << '\t' << flops / (ggml_mean * 1e6) << '\t'
               << mini_mean / ggml_mean << std::endl;
 }

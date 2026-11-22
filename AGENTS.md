@@ -36,7 +36,7 @@
 ## 当前设计
 
 - `include/mini_infer/` 提供 Tensor、dtype、Scalar、Autograd 和算子的公开头文件。`src/` 存放内部头文件和实现，`tests/` 存放正确性测试和可选的 ggml 性能对比。
-- Tensor 构造和存储管理位于 `src/tensor/tensor.cpp`，布局、填充和复制的成员实现分别在 `src/ops/layout.cpp`、`src/ops/fill.cpp` 和 `src/ops/copy.cpp`。CPU/CUDA 后端位于 `src/ops/cpu/` 和 `src/ops/cuda/`，反向节点位于 `src/autograd/backward_nodes/`，内存分配与日志位于 `src/utils/`。FP16/BF16 编解码位于 `include/mini_infer/dtype.h`。
+- Tensor 构造和存储管理位于 `src/tensor/tensor.cpp`，布局、填充和复制的成员实现分别在 `src/ops/layout/layout.cpp`、`src/ops/fill/fill.cpp` 和 `src/ops/copy/copy.cpp`。各类算子的入口和反向节点集中在 `src/ops/<类别>/<类别>.cpp`，CPU/CUDA 实现位于同目录的 `cpu.cpp`、`cuda.cu`，内部声明位于 `kernels.h`。内存分配位于 `src/device/`，日志位于 `src/utils/`。FP16/BF16 编解码位于 `include/mini_infer/dtype.h`。
 - 分配的存储是连续内存，Tensor 视图可以不连续；`std::shared_ptr<void> storage_` 持有分配起点并负责最终释放，`void* data_ptr_` 指向当前 Tensor 或视图的数据起点。视图共享 `storage_`，每个 Tensor 保存自己的 shape、stride、dtype 和 device。
 - 拷贝构造和拷贝赋值共享数据；`clone()` 深拷贝；`copy_()` 原地复制数据。`operator[](int)` 按第一维返回共享视图，偏移按字节计算，不需要按 dtype 分支。默认空对象与零维标量的 shape 都可能为 `{}`，通过是否持有数据区分。
 - 形状成员为 `shape_`，完整形状通过 `shape()` 查询（原无参 `size()` 已更名），`size(dim)` 查询单个维度。`to(Device)` 同设备返回共享句柄，跨设备分配并复制，保持 shape/dtype；`a = a.to(...)` 通过移动赋值接管结果，原存储在最后一个共享持有者释放时回收。
