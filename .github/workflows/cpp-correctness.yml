@@ -1,0 +1,28 @@
+name: C++ correctness
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  cpp-correctness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Configure CPU tests
+        run: >-
+          cmake -S . -B build/ci -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+          -DCMAKE_DISABLE_FIND_PACKAGE_CUDAToolkit=ON
+          -DCMAKE_DISABLE_FIND_PACKAGE_Python3=ON
+
+      - name: Build C++ tests
+        run: cmake --build build/ci --parallel 2
+
+      - name: Run C++ correctness tests
+        run: ctest --test-dir build/ci --output-on-failure --parallel 2 --exclude-regex '^precision_cpu_test$'
