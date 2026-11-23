@@ -26,6 +26,8 @@ endif()
 
 add_library(mini_infer STATIC
     src/autograd/autograd.cpp
+    src/ops/activation/activation.cpp
+    src/ops/activation/cpu.cpp
     src/ops/activation/softmax.cpp
     src/ops/elementwise/elementwise.cpp
     src/ops/matmul/matmul.cpp
@@ -69,6 +71,7 @@ target_include_directories(mini_infer
 
 if(ENABLE_CUDA)
     target_sources(mini_infer PRIVATE
+        src/ops/activation/cuda.cu
         src/ops/elementwise/cuda.cu
         src/ops/norm/cuda.cu
         src/ops/copy/cuda.cu

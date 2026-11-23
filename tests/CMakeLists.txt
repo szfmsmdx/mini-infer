@@ -1,8 +1,8 @@
-add_executable(tokenizer_test tensor/tokenizer_test.cpp)
+add_executable(tokenizer_test tokenizer/tokenizer_test.cpp)
 target_link_libraries(tokenizer_test PRIVATE mini_infer)
 add_test(NAME tokenizer_test COMMAND tokenizer_test)
 
-add_executable(bpe_tokenizer_test tensor/bpe_tokenizer_test.cpp)
+add_executable(bpe_tokenizer_test tokenizer/bpe_tokenizer_test.cpp)
 target_link_libraries(bpe_tokenizer_test PRIVATE mini_infer)
 add_test(NAME bpe_tokenizer_test COMMAND bpe_tokenizer_test)
 

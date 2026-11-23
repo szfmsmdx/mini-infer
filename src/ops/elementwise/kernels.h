@@ -9,14 +9,6 @@ namespace mtensor {
 
 class Tensor;
 
-void SiluCPU(const Tensor& x, Tensor& out);
-
-void SiluCUDA(const Tensor& x, Tensor& out);
-
-void SigmoidCPU(const Tensor& x, Tensor& out);
-
-void SigmoidCUDA(const Tensor& x, Tensor& out);
-
 void ExpCPU(const Tensor& x, Tensor& out);
 
 void ExpCUDA(const Tensor& x, Tensor& out);
@@ -76,8 +68,6 @@ void NegCUDA(const void* a, void* output, std::size_t numel, Dtype dtype,
              const int* shape, const std::size_t* a_stride, int ndim);
 
 // 内部 CUDA 后端：按各自 stride 读取 x 和上游梯度，写入连续 dx。
-void SigmoidBackwardCUDA(const Tensor& x, const Tensor& output_grad, Tensor& dx);
 void RsqrtBackwardCUDA(const Tensor& x, const Tensor& output_grad, Tensor& dx);
-void SiluBackwardCUDA(const Tensor& x, const Tensor& output_grad, Tensor& dx);
 
 }  // namespace mtensor

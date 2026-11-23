@@ -14,7 +14,6 @@ void CheckNotEmpty(const Tensor& tensor, const char* message);
 void CheckSameShape(const Tensor& a, const Tensor& b, const char* message);
 void CheckSameDtype(const Tensor& a, const Tensor& b, const char* message);
 void CheckSameDevice(const Tensor& a, const Tensor& b, const char* message);
-void CheckMatmul(const Tensor& a, const Tensor& b);
 void CheckFloatingDtype(Dtype dtype, const char* message);
 void CheckNonnegativeShape(const std::vector<int>& shape, const char* message);
 
