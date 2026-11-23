@@ -12,7 +12,7 @@ auto weights = projection.parameters();  // 一份 [256, 128] 的权重
 
 按尺寸构造时，构造函数调用 `Linear::init()` 一次，创建并登记 weight 和可选的 bias。参数默认在 CPU 上，使用 FP32 并保存梯度。默认权重使用 `kaiming_uniform_`，取 `a = sqrt(5)` 和 `fan_in = in_features`，采样区间仍是 `±1 / sqrt(in_features)`；偏置默认为开启，初值为 0。可以用第四个参数指定设备。
 
-[`weight_init.h`](../init/weight_init.h) 的 `normal_` 和 `uniform_` 接收分布参数。`kaiming_normal_` 和 `kaiming_uniform_` 则根据 `fan_in` 或 `fan_out` 及 Leaky ReLU 斜率计算采样尺度；斜率为 0 时对应 ReLU。它们原地填充主机 FP32 缓冲区，由层负责创建 Tensor。
+[`mini_infer/init.h`](../../include/mini_infer/init.h) 的 `normal_` 和 `uniform_` 接收分布参数。`kaiming_normal_` 和 `kaiming_uniform_` 则根据 `fan_in` 或 `fan_out` 及 Leaky ReLU 斜率计算采样尺度；斜率为 0 时对应 ReLU。它们原地填充主机 FP32 缓冲区，由层负责创建 Tensor。
 
 `Module` 声明 `init()`，由各层的构造函数决定何时调用。`Linear(weight, bias)` 和 `Linear(weight)` 只登记传入的 Tensor，不重跑初始化，也不改变 `requires_grad`。
 

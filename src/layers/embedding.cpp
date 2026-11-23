@@ -6,7 +6,7 @@
 
 #include "mini_infer/layers/embedding.h"
 #include "mini_infer/ops/embedding.h"
-#include "init/weight_init.h"
+#include "mini_infer/init.h"
 
 namespace mtensor {
 
