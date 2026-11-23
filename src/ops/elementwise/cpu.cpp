@@ -308,50 +308,6 @@ void ExpLogTypedCPU(const Tensor& x, Tensor& out) {
         });
 }
 
-template <typename Input, typename Output>
-void SigmoidTypedCPU(const Tensor& x, Tensor& out) {
-    const auto* src = static_cast<const std::byte*>(x.data_ptr());
-    auto* dst = static_cast<std::byte*>(out.data_ptr());
-    const auto& shape = x.shape();
-    const auto& stride = x.stride();
-    ForEachOffset(shape, stride,
-        [&](std::size_t offset) {
-            Input value(0);
-            std::memcpy(&value, src + offset * sizeof(Input), sizeof(Input));
-            const float v = static_cast<float>(value);
-            const float t = std::exp(-std::abs(v));
-            const Output result(v >= 0.0f ? 1.0f / (1.0f + t) : t / (1.0f + t));
-            std::memcpy(dst, &result, sizeof(Output));
-            dst += sizeof(Output);
-        });
-}
-
-template <typename Input, typename Output>
-void SiluTypedCPU(const Tensor& x, Tensor& out) {
-    const auto* src = static_cast<const std::byte*>(x.data_ptr());
-    auto* dst = static_cast<std::byte*>(out.data_ptr());
-    const auto& shape = x.shape();
-    const auto& stride = x.stride();
-    ForEachOffset(shape, stride,
-        [&](std::size_t offset) {
-            Input value(0);
-            std::memcpy(&value, src + offset * sizeof(Input), sizeof(Input));
-            const float v = static_cast<float>(value);
-            float y;
-            if (v < -80.0f) {
-                // 负尾部用 double，避免 exp(x) 在乘 x 前下溢。
-                const double t = std::exp(static_cast<double>(v));
-                y = static_cast<float>(v * t / (1.0 + t));
-            } else {
-                const float t = std::exp(-std::abs(v));
-                y = v >= 0.0f ? v / (1.0f + t) : (v * t) / (1.0f + t);
-            }
-            const Output result(y);
-            std::memcpy(dst, &result, sizeof(Output));
-            dst += sizeof(Output);
-        });
-}
-
 }  // namespace
 
 void AddCPU(const void* a, const void* b, void* output, Dtype dtype,
@@ -560,34 +516,6 @@ void ExpCPU(const Tensor& x, Tensor& out) {
 
 void LogCPU(const Tensor& x, Tensor& out) {
     ExpLogCPU<true>(x, out);
-}
-
-void SigmoidCPU(const Tensor& x, Tensor& out) {
-    switch (x.dtype()) {
-        case Dtype::kFloat32: SigmoidTypedCPU<float, float>(x, out); break;
-        case Dtype::kFloat16: SigmoidTypedCPU<Float16, Float16>(x, out); break;
-        case Dtype::kBFloat16: SigmoidTypedCPU<BFloat16, BFloat16>(x, out); break;
-        case Dtype::kInt8: SigmoidTypedCPU<std::int8_t, float>(x, out); break;
-        case Dtype::kUInt8: SigmoidTypedCPU<std::uint8_t, float>(x, out); break;
-        case Dtype::kInt16: SigmoidTypedCPU<std::int16_t, float>(x, out); break;
-        case Dtype::kInt32: SigmoidTypedCPU<std::int32_t, float>(x, out); break;
-        case Dtype::kInt64: SigmoidTypedCPU<std::int64_t, float>(x, out); break;
-        default: throw std::invalid_argument("sigmoid: unsupported dtype");
-    }
-}
-
-void SiluCPU(const Tensor& x, Tensor& out) {
-    switch (x.dtype()) {
-        case Dtype::kFloat32: SiluTypedCPU<float, float>(x, out); break;
-        case Dtype::kFloat16: SiluTypedCPU<Float16, Float16>(x, out); break;
-        case Dtype::kBFloat16: SiluTypedCPU<BFloat16, BFloat16>(x, out); break;
-        case Dtype::kInt8: SiluTypedCPU<std::int8_t, float>(x, out); break;
-        case Dtype::kUInt8: SiluTypedCPU<std::uint8_t, float>(x, out); break;
-        case Dtype::kInt16: SiluTypedCPU<std::int16_t, float>(x, out); break;
-        case Dtype::kInt32: SiluTypedCPU<std::int32_t, float>(x, out); break;
-        case Dtype::kInt64: SiluTypedCPU<std::int64_t, float>(x, out); break;
-        default: throw std::invalid_argument("silu: unsupported dtype");
-    }
 }
 
 }  // namespace mtensor

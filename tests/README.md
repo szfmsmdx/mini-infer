@@ -4,7 +4,8 @@
 
 | 目录 | 内容 |
 | --- | --- |
-| `tensor/` | Tensor、布局、标量、dtype、字节 tokenizer 和 BPE |
+| `tensor/` | Tensor、布局、标量和 dtype |
+| `tokenizer/` | 字节 tokenizer 和 BPE |
 | `ops/` | 逐元素、激活、归约、矩阵乘和 Transformer 算子 |
 | `modules/` | Linear 和 RMSNorm |
 | `init/` | 参数初始化 |

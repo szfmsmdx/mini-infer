@@ -6,8 +6,8 @@
 
 | 目录 | 内容 |
 | --- | --- |
-| `elementwise/` | 四则运算、开方、指数、对数、逐元素激活 |
-| `activation/` | 非逐元素激活：Softmax |
+| `elementwise/` | 四则运算、开方、指数、对数 |
+| `activation/` | Sigmoid、SiLU、Softmax |
 | `matmul/`、`reduction/`、`norm/` | 矩阵乘、归约、RMSNorm |
 | `attention/`、`embedding/`、`loss_fn/`、`position_embedding/` | 因果注意力、词嵌入、交叉熵、RoPE |
 | `copy/`、`fill/`、`layout/` | 存储复制、设备和 dtype 转换、填充与视图 |
@@ -26,7 +26,7 @@ RoPE 的公开声明在 [`mini_infer/ops/position_embedding.h`](../../include/mi
 | `Tensor::MakeView()` | `layout/layout.cpp` | 8 种视图操作的共享存储、独立梯度元数据和 CUDA 布局初始化 |
 | `AllocateStorage()` | `src/device/memory.*` | 构造、clone 和跨设备迁移的数据分配与释放器绑定 |
 | `ForEachOffset()` | `common/cpu_iteration.h` | CPU 逐元素算子和 dtype 转换的 stride 遍历 |
-| `LaunchUnary()`、`LaunchBackward()` | `elementwise/cuda.cu` | 4 个一元前向和 3 个反向的 CUDA 启动准备 |
+| `LaunchUnary()`、`LaunchBackward()` | `common/cuda_unary.cuh` | 一元算子的 CUDA 启动参数和 stride 准备 |
 
 视图的形状推导、参数检查和 Node 状态保存仍由对应操作完成。CPU 遍历回调负责元素计算，偏移单位为元素；连续输入的 rsqrt 快路径直接循环。CUDA 启动函数使用编译期 Kernel 参数，共用线程块和布局参数准备。
 
@@ -58,7 +58,7 @@ CPU 和 CUDA 逐元素运算支持不同 stride 的非连续输入；CUDA 输出
 
 ## 反向传播
 
-前向计算完成后，如果建图开关开启且 dtype 支持反向，算子创建一个 Node 并挂到输出上，与输入的 `requires_grad` 无关。逐元素 Node 位于 `src/ops/elementwise/elementwise.cpp`。推理时用守卫关闭建图。
+前向计算完成后，如果建图开关开启且 dtype 支持反向，算子创建一个 Node 并挂到输出上，与输入的 `requires_grad` 无关。Node 和算子入口放在一起：Sigmoid、SiLU 在 `activation/activation.cpp`，Softmax 在 `activation/softmax.cpp`。推理时用守卫关闭建图。
 
 | 算子 | Node | 输入梯度 |
 | --- | --- | --- |

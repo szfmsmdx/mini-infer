@@ -18,7 +18,16 @@ public:
 
 
 Tensor matmul(const Tensor& a, const Tensor& b) {
-    CheckMatmul(a, b);
+    CheckNotEmpty(a, "matmul: left input must not be empty");
+    CheckNotEmpty(b, "matmul: right input must not be empty");
+    CheckSameDtype(a, b, "matmul: inputs must have the same dtype");
+    CheckSameDevice(a, b, "matmul: inputs must be on the same device");
+    if (a.dim() != 2 || b.dim() != 2) {
+        throw std::invalid_argument("matmul: inputs must be two-dimensional");
+    }
+    if (a.size(1) != b.size(0)) {
+        throw std::invalid_argument("matmul: inner dimensions must match");
+    }
 
     const int m = a.size(0);
     const int k = a.size(1);
