@@ -4,7 +4,7 @@
 #include <stdexcept>
 
 #include "mini_infer/models/gpt.h"
-#include "init/weight_init.h"
+#include "mini_infer/init.h"
 #include "ops/common/attention_shape.h"
 
 namespace mtensor {

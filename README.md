@@ -20,8 +20,7 @@ mini_infer/
 │   ├── device/          # 内存分配与释放
 │   └── utils/           # 日志
 ├── tests/               # CPU/CUDA 正确性测试与独立 benchmark
-├── examples/            # 线性回归和字符级 GPT 的训练示例
-├── scripts/             # 下载训练语料
+├── examples/nanogpt/    # 字符级 GPT 的训练、续写和语料准备
 ├── 3rdparty/            # benchmark 使用的 ggml
 ├── CMakeLists.txt       # C++17 库目标与构建选项
 ├── setup.ipynb          # Colab 构建、测试和 benchmark
@@ -42,22 +41,9 @@ SGD 和 Adam 支持 CPU/CUDA 的 FP32 参数。模型和优化器共享权重 Te
 - CUDA Toolkit 最低版本为 12.4。CMake 自动检测 CUDA 编译环境，默认编译 SM80 并保留 PTX，支持更新架构的 GPU。
 - 构建与测试命令见 [tests/README.md](tests/README.md)。
 
-## CUDA 训练示例
+## 字符级 GPT 示例
 
-字符级 GPT 的语料准备、CUDA 训练和 checkpoint 加载命令见 [训练和加载字符级 GPT](examples/README.md)。
-
-`train_cuda_demo` 在 GPU 上用 `Linear` 和 Adam 拟合 `y = 2*x1 - 3*x2 + 0.5`。每步的 loss 和耗时会显示在终端，并由 `Logger` 追加到工作目录下的 `train_cuda_demo.log`。loss 是本次参数更新前的均方误差，耗时包含前向、反向、参数更新和等待 GPU 完成。训练结束后会记录最终权重、偏置和一条新输入的预测。
-
-在 Windows 的 Visual Studio 生成器下运行以下命令。
-
-```powershell
-cmake -S . -B build/train-demo -DBUILD_TESTING=OFF
-cmake --build build/train-demo --config Release --target train_cuda_demo
-Set-Location build/train-demo
-.\Release\train_cuda_demo.exe
-```
-
-使用 Linux 上的单配置生成器时，可执行文件位于 `build/train-demo/train_cuda_demo`。
+字符级 GPT 的语料准备、CUDA 训练和 checkpoint 加载命令见 [训练和加载字符级 GPT](examples/nanogpt/README.md)。
 
 ## 项目进度
 

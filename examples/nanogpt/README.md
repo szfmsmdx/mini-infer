@@ -1,13 +1,13 @@
 # 训练和加载字符级 GPT
 
-`train_gpt` 用 Tiny Shakespeare 从零训练两层 GPT。模型用 RoPE、因果注意力、RMSNorm 和 SiLU，词嵌入与输出投影共享权重。[GPT](../src/models/gpt.cpp) · [SimpleDecoderLayer](../src/layers/SimpleDecoderLayer.cpp) · [RoPE](../src/ops/position_embedding/rope.cpp)
+`train_gpt` 用 Tiny Shakespeare 从零训练两层 GPT。模型用 RoPE、因果注意力、RMSNorm 和 SiLU，词嵌入与输出投影共享权重。[GPT](../../src/models/gpt.cpp) · [SimpleDecoderLayer](../../src/layers/SimpleDecoderLayer.cpp) · [RoPE](../../src/ops/position_embedding/rope.cpp)
 
 ## 构建与运行
 
 从仓库根目录运行以下 PowerShell 命令。CMake 检测到 CUDA Toolkit 后，两个目标均可使用 GPU。
 
 ```powershell
-python scripts/prepare_shakespeare.py
+python examples/nanogpt/prepare_shakespeare.py
 cmake -S . -B build/gpt -DBUILD_TESTING=OFF
 cmake --build build/gpt --config Release --target train_gpt chat_gpt
 New-Item -ItemType Directory -Force build/gpt-run | Out-Null

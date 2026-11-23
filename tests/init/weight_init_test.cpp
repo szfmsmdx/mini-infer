@@ -4,7 +4,7 @@
 #include <random>
 #include <stdexcept>
 
-#include "init/weight_init.h"
+#include "mini_infer/init.h"
 
 namespace {
 using namespace mtensor::weight_init;

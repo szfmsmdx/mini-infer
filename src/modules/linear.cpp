@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "mini_infer/modules/linear.h"
-#include "init/weight_init.h"
+#include "mini_infer/init.h"
 
 namespace mtensor {
 

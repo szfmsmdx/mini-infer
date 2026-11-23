@@ -28,7 +28,6 @@ add_test(NAME linear_cpu_test COMMAND linear_cpu_test)
 
 add_executable(weight_init_test init/weight_init_test.cpp)
 target_link_libraries(weight_init_test PRIVATE mini_infer)
-target_include_directories(weight_init_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
 add_test(NAME weight_init_test COMMAND weight_init_test)
 
 add_executable(optimizer_cpu_test optim/optimizer_test.cpp)

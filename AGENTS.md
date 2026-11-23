@@ -57,7 +57,7 @@
 
 ### GPT
 
-`train_gpt` 用 Tiny Shakespeare 训练小型 GPT，只保存最后一份 checkpoint。`chat_gpt` 加载它进行续写。两者当前使用字节 tokenizer，BPE 有独立的编解码和回归测试。[训练说明](examples/README.md)
+`train_gpt` 用 Tiny Shakespeare 训练小型 GPT，只保存最后一份 checkpoint。`chat_gpt` 加载它进行续写。两者当前使用字节 tokenizer，BPE 有独立的编解码和回归测试。[训练说明](examples/nanogpt/README.md)
 
 ## 构建与验证
 
