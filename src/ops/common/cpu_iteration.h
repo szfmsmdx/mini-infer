@@ -1,14 +1,15 @@
 #pragma once
 
 #include <cstddef>
-#include <vector>
+
+#include "mini_infer/core/layout_view.h"
 
 namespace mtensor {
 
 // 按逻辑顺序访问元素，回调接收以元素为单位的存储偏移。
 template <typename Visit>
-void ForEachOffset(const std::vector<int>& shape,
-                   const std::vector<std::size_t>& stride, Visit visit) {
+void ForEachOffset(ShapeView shape,
+                   StrideView stride, Visit visit) {
     auto walk = [&](auto&& self, std::size_t dim, std::size_t offset) -> void {
         if (dim == shape.size()) {
             visit(offset);
@@ -22,9 +23,9 @@ void ForEachOffset(const std::vector<int>& shape,
 }
 
 template <typename Visit>
-void ForEachOffset(const std::vector<int>& shape,
-                   const std::vector<std::size_t>& a_stride,
-                   const std::vector<std::size_t>& b_stride, Visit visit) {
+void ForEachOffset(ShapeView shape,
+                   StrideView a_stride,
+                   StrideView b_stride, Visit visit) {
     auto walk = [&](auto&& self, std::size_t dim,
                     std::size_t a_offset, std::size_t b_offset) -> void {
         if (dim == shape.size()) {
@@ -41,10 +42,10 @@ void ForEachOffset(const std::vector<int>& shape,
 }
 
 template <typename Visit>
-void ForEachOffset(const std::vector<int>& shape,
-                   const std::vector<std::size_t>& a_stride,
-                   const std::vector<std::size_t>& b_stride,
-                   const std::vector<std::size_t>& output_stride, Visit visit) {
+void ForEachOffset(ShapeView shape,
+                   StrideView a_stride,
+                   StrideView b_stride,
+                   StrideView output_stride, Visit visit) {
     auto walk = [&](auto&& self, std::size_t dim, std::size_t a_offset,
                     std::size_t b_offset, std::size_t output_offset) -> void {
         if (dim == shape.size()) {

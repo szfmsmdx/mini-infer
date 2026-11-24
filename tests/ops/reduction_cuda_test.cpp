@@ -10,7 +10,7 @@
 #include "mini_infer/autograd.h"
 #include "mini_infer/ops/elementwise.h"
 #include "mini_infer/ops/reduction.h"
-#include "mini_infer/tensor.h"
+#include "mini_infer/core/tensor.h"
 #include "reduction_extrema.h"
 
 namespace {

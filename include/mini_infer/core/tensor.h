@@ -2,18 +2,22 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <memory>
 #include <stdexcept>
 #include <vector>
 
-#include "mini_infer/dtype.h"
-#include "mini_infer/scalar.h"
+#include "mini_infer/core/device.h"
+#include "mini_infer/core/dtype.h"
+#include "mini_infer/core/layout_view.h"
+#include "mini_infer/core/scalar.h"
 
 namespace mtensor{
 
 // 防止循环引用提前声明;
 class AutogradNode;
 struct AutogradMetadata;
+struct TensorImpl;
 
 class Tensor {
 public:
@@ -25,18 +29,21 @@ public:
     // 从数值创建 CPU 标量：浮点数默认为 Float32，整数默认为 Int64。
     explicit Tensor(const Scalar& value);
     // 从连续的 CPU 源数据复制，按 shape 和 dtype 解释，device 指定目标设备。
-    Tensor(const void* data_ptr, std::vector<int> shape, Dtype dtype,Device device = Device::kCPU);
+    Tensor(const void* data_ptr, ShapeView shape, Dtype dtype, Device device = Device::kCPU);
+    Tensor(const void* data_ptr, std::initializer_list<int> shape, Dtype dtype, Device device = Device::kCPU)
+        : Tensor(data_ptr, ShapeView(shape.begin(), shape.size()), dtype, device) {}
     // 按 shape、dtype、device 分配存储，供算子创建输出。
-    Tensor(std::vector<int> shape, Dtype dtype, Device device = Device::kCPU);
-    Tensor& operator=(const Tensor&);
+    Tensor(ShapeView shape, Dtype dtype, Device device = Device::kCPU);
+    Tensor(std::initializer_list<int> shape, Dtype dtype, Device device = Device::kCPU)
+        : Tensor(ShapeView(shape.begin(), shape.size()), dtype, device) {}
+    Tensor& operator=(const Tensor&) = default;
     Tensor(Tensor&&) noexcept;
     Tensor& operator=(Tensor&&) noexcept;
 
     // 基础属性：形状、布局、数据类型与设备。
-    const std::vector<int>& shape() const;
-    const std::vector<std::size_t>& stride() const;
-    const int* shape_cuda() const { return shape_cuda_.get(); }
-    const std::size_t* stride_cuda() const { return stride_cuda_.get(); }
+    // Borrowed views; do not keep them after releasing the owning Tensor.
+    ShapeView shape() const;
+    StrideView stride() const;
     int size(std::size_t dim) const;
     int dim() const;
     std::size_t numel() const;
@@ -76,9 +83,11 @@ public:
 
     // Tensor 操作：索引、视图与布局转换。
     Tensor operator[](int index) const;
-    Tensor reshape(std::vector<int> shape) const;
+    Tensor reshape(ShapeView shape) const;
+    Tensor reshape(std::initializer_list<int> shape) const { return reshape(ShapeView(shape.begin(), shape.size())); }
     // 广播到目标形状，保持 dtype 和 device 不变。
-    Tensor broadcast(const std::vector<int>& target_shape) const;
+    Tensor broadcast(ShapeView target_shape) const;
+    Tensor broadcast(std::initializer_list<int> shape) const { return broadcast(ShapeView(shape.begin(), shape.size())); }
 
     Tensor transpose(int dim0, int dim1) const;
     Tensor permute(const std::vector<int>& dims) const;
@@ -130,28 +139,15 @@ public:
 private:
     friend struct TensorMetadataTestAccess;
 
-    // 内部辅助函数。
     Tensor& FillValue(const void* host_value);
-    void InitCUDAMetadata();
-    static std::vector<std::size_t> ContiguousStride(const std::vector<int>& shape);
-    Tensor MakeView(std::vector<int> shape, std::vector<std::size_t> stride,
-                    std::size_t byte_offset = 0) const;
+    Tensor MakeView(ShapeView shape, StrideView stride, std::size_t offset_delta = 0) const;
+    static Tensor EmptyWithOptions(Dtype dtype, Device device);
+    AutogradMetadata& ensure_autograd_metadata();
 
-    // 存储所有权、当前数据位置和 Tensor 元数据。
-    void* data_ptr_ = nullptr;
-    std::shared_ptr<void> storage_;
-    // 共享存储的视图和 detach 共享版本，独立分配使用新版本。
-    std::shared_ptr<std::uint64_t> version_ = std::make_shared<std::uint64_t>(0);
-    std::vector<int> shape_;
-    std::vector<std::size_t> stride_;
-    Dtype dtype_ = Dtype::kFloat32;
-    Device device_ = Device::kCPU;
-
-    // gpu metadata，通过指针管理地址
-    std::shared_ptr<int> shape_cuda_;
-    std::shared_ptr<std::size_t> stride_cuda_;
-
-    std::shared_ptr<AutogradMetadata> autograd_metadata_;
+    std::shared_ptr<TensorImpl> impl_;
+    // A noexcept move leaves a storage-less handle with the source options.
+    Dtype moved_from_dtype_ = Dtype::kFloat32;
+    Device moved_from_device_ = Device::kCPU;
 };
 
 Tensor operator+(const Scalar& value, const Tensor& x);
@@ -160,9 +156,19 @@ Tensor operator*(const Scalar& value, const Tensor& x);
 Tensor operator/(const Scalar& value, const Tensor& x);
 
 // 创建指定形状的 Tensor，并用普通数值或零维 Tensor 填充。
-Tensor full(const std::vector<int>& shape, const Scalar& value, Dtype dtype,
+Tensor full(ShapeView shape, const Scalar& value, Dtype dtype,
             Device device = Device::kCPU);
-Tensor full(const std::vector<int>& shape, const Tensor& value, Dtype dtype,
+Tensor full(ShapeView shape, const Tensor& value, Dtype dtype,
             Device device = Device::kCPU);
+
+inline Tensor full(std::initializer_list<int> shape, const Scalar& value, Dtype dtype,
+                   Device device = Device::kCPU) {
+    return full(ShapeView(shape.begin(), shape.size()), value, dtype, device);
+}
+
+inline Tensor full(std::initializer_list<int> shape, const Tensor& value, Dtype dtype,
+                   Device device = Device::kCPU) {
+    return full(ShapeView(shape.begin(), shape.size()), value, dtype, device);
+}
 
 }  // namespace mtensor

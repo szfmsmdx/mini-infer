@@ -2,10 +2,9 @@
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
-#include <vector>
 
 #include "ops/copy/kernels.h"
-#include "mini_infer/tensor.h"
+#include "mini_infer/core/tensor.h"
 #include "ops/common/cpu_iteration.h"
 
 namespace mtensor {
@@ -30,9 +29,9 @@ float ReadFloat(const void* data, Dtype dtype, std::size_t offset) {
 void CopyCPU(
     void* dst_data_ptr,
     const void* src_data_ptr,
-    const std::vector<int>& shape,
-    const std::vector<std::size_t>& dst_stride,
-    const std::vector<std::size_t>& src_stride,
+    ShapeView shape,
+    StrideView dst_stride,
+    StrideView src_stride,
     std::size_t element_size
 ) {
     auto* byte_dst_data_ptr = static_cast<std::byte*>(dst_data_ptr);

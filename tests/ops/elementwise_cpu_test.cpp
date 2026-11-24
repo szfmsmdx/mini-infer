@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "mini_infer/ops/elementwise.h"
-#include "mini_infer/tensor.h"
+#include "mini_infer/core/tensor.h"
 #include "scalar_arithmetic.h"
 
 namespace {

@@ -2,8 +2,8 @@
 
 #include <cstddef>
 
-#include "mini_infer/dtype.h"
-#include "mini_infer/tensor.h"
+#include "mini_infer/core/dtype.h"
+#include "mini_infer/core/tensor.h"
 
 namespace mtensor {
 

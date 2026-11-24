@@ -1,49 +1,98 @@
+#include <algorithm>
 #include <cstddef>
-#include <cstdlib>
-#include <functional>
+#include <cstdint>
 #include <limits>
-#include <numeric>
 #include <stdexcept>
 #include <utility>
-#include <vector>
 
-#include "mini_infer/tensor.h"
-#include "tensor/check.h"
-#include "mini_infer/dtype.h"
-#include "mini_infer/ops/elementwise.h"
-#include "device/memory.h"
-#include "ops/copy/kernels.h"
+#include "mini_infer/core/tensor.h"
+#include "device/runtime.h"
 #include "mini_infer/autograd.h"
+#include "mini_infer/ops/elementwise.h"
+#include "tensor/tensor_impl.h"
 
-namespace mtensor{
+namespace mtensor {
 
-void Tensor::InitCUDAMetadata() {
-#ifdef ENABLE_CUDA
-    if (shape_.empty()) {
-        shape_cuda_.reset();
-        stride_cuda_.reset();
-        return;
-    }
-    const std::size_t shape_bytes = shape_.size() * sizeof(int);
-    const std::size_t stride_bytes = stride_.size() * sizeof(std::size_t);
-    std::shared_ptr<int> shape_cuda(static_cast<int*>(AllocateCUDA(shape_bytes)), FreeCUDA);
-    std::shared_ptr<std::size_t> stride_cuda(
-        static_cast<std::size_t*>(AllocateCUDA(stride_bytes)), FreeCUDA);
-    CopyHostToCUDA(shape_cuda.get(), shape_.data(), shape_bytes);
-    CopyHostToCUDA(stride_cuda.get(), stride_.data(), stride_bytes);
-    shape_cuda_ = std::move(shape_cuda);
-    stride_cuda_ = std::move(stride_cuda);
-#else
-    throw std::logic_error("Tensor: CUDA support is disabled");
-#endif
+namespace {
+
+ShapeView CheckSource(const void* data, ShapeView shape) {
+    if (!data) throw std::invalid_argument("Tensor constructor: null source data");
+    return shape;
 }
 
-// std::shared_ptr<AutogradMeta> 默认构造出来是空指针，不会创建 AutogradMeta
-// 所以需要手动构造，而不能直接 = default
-Tensor::Tensor() : autograd_metadata_(std::make_shared<AutogradMetadata>()) {}
+std::size_t CheckedMultiply(std::size_t a, std::size_t b) {
+    if (b && a > std::numeric_limits<std::size_t>::max() / b) {
+        throw std::overflow_error("Tensor layout: size overflow");
+    }
+    return a * b;
+}
+
+std::size_t ElementCount(ShapeView shape) {
+    std::size_t count = 1;
+    for (int extent : shape) {
+        if (extent <= 0) throw std::invalid_argument("Tensor layout: dimensions must be positive");
+        count = CheckedMultiply(count, static_cast<std::size_t>(extent));
+    }
+    return count;
+}
+
+}  // namespace
+
+void CheckLayoutRank(std::size_t rank) {
+    if (rank > kMaxDim) throw std::invalid_argument("Tensor layout: rank exceeds kMaxDim");
+}
+
+TensorImpl::TensorImpl(std::shared_ptr<Storage> storage, ShapeView shape, StrideView stride,
+                       std::size_t storage_offset, Dtype dtype, Device device,
+                       std::shared_ptr<std::uint64_t> version)
+    : storage(std::move(storage)), storage_offset(storage_offset), dtype(dtype),
+      empty_device(device), rank(0), numel(0),
+      version(version ? std::move(version) : std::make_shared<std::uint64_t>(0)) {
+    CheckLayoutRank(shape.size());
+    if (shape.size() != stride.size()) {
+        throw std::invalid_argument("Tensor layout: shape and stride rank must match");
+    }
+    if (!this->storage) {
+        if (!shape.empty() || storage_offset != 0) {
+            throw std::invalid_argument("Tensor layout: nonempty layout requires storage");
+        }
+        return;
+    }
+
+    numel = ElementCount(shape);
+    const auto itemsize = dtype_size(dtype);
+    if (!itemsize) throw std::invalid_argument("Tensor layout: unsupported dtype");
+    CheckedMultiply(numel, itemsize);
+    const auto capacity = this->storage->nbytes() / itemsize;
+    if (storage_offset >= capacity) {
+        throw std::out_of_range("Tensor layout: storage offset out of bounds");
+    }
+    std::size_t remaining = capacity - 1 - storage_offset;
+    for (std::size_t i = 0; i < shape.size(); ++i) {
+        const auto extent = static_cast<std::size_t>(shape[i] - 1);
+        if (extent && stride[i] > remaining / extent) {
+            throw std::out_of_range("Tensor layout: view exceeds storage capacity");
+        }
+        remaining -= extent * stride[i];
+    }
+    std::copy(shape.begin(), shape.end(), this->shape);
+    std::copy(stride.begin(), stride.end(), this->stride);
+    rank = static_cast<int>(shape.size());
+}
+
+Tensor::Tensor()
+    : impl_(std::make_shared<TensorImpl>(nullptr, ShapeView{}, StrideView{}, 0,
+                                         Dtype::kFloat32, Device::kCPU)) {}
+
+Tensor Tensor::EmptyWithOptions(Dtype dtype, Device device) {
+    Tensor result;
+    result.impl_->dtype = dtype;
+    result.impl_->empty_device = device;
+    return result;
+}
 
 Tensor::Tensor(const Scalar& value)
-    : Tensor(/*shape=*/std::vector<int>{},
+    : Tensor(/*shape=*/ShapeView{},
              /*dtype=*/value.is_floating_point() ? Dtype::kFloat32 : Dtype::kInt64,
              /*device=*/Device::kCPU) {
     constexpr std::uint64_t max_int64 = std::numeric_limits<std::int64_t>::max();
@@ -53,274 +102,136 @@ Tensor::Tensor(const Scalar& value)
     fill_(value);
 }
 
-Tensor::Tensor(const void* data_ptr, std::vector<int> shape, Dtype dtype, Device device)
-: shape_(std::move(shape)), dtype_(dtype), device_(device),
-    autograd_metadata_(std::make_shared<AutogradMetadata>()) {
-    /*
-    使用示例：
-        float values[] = {1.0f, 2.0f};
-        Tensor a(values, {2}, Dtype::kFloat32);
-    */
-    CheckNonnegativeShape(shape_, "Tensor dimensions must be non-negative");
-
-    stride_ = ContiguousStride(shape_);   // shape 可能为空的写法
-
-    // 传入数据且 shape 为 {} 时构造标量，占一个元素。
-    // 此时成员数据指针尚未设置，不能靠 numel() 判断标量的大小。
-    const std::size_t bytes = this->shape_.empty() ? element_size() : nbytes();
-    if(bytes == 0 || data_ptr == nullptr){
-        throw std::invalid_argument("Tensor constructor: null data or zero-sized shape");
-    }
-
-    if(device == Device::kCPU){
-        storage_ = AllocateStorage(bytes, Device::kCPU);
-        data_ptr_ = storage_.get();
-        CopyCPU(data_ptr_, data_ptr, shape_, stride_, stride_, element_size());
-    }else if(device == Device::kCUDA){
-#ifdef ENABLE_CUDA
-        storage_ = AllocateStorage(bytes, Device::kCUDA);
-        data_ptr_ = storage_.get();
-        CopyHostToCUDA(data_ptr_, data_ptr, bytes);
-
-        InitCUDAMetadata();
-#else
-        throw std::logic_error("Tensor constructor: CUDA support is disabled");
-#endif
-    }else{
-        throw std::invalid_argument("Tensor constructor: unsupported device");
-    }
+Tensor::Tensor(const void* data_ptr, ShapeView shape, Dtype dtype, Device device)
+    : Tensor(CheckSource(data_ptr, shape), dtype, device) {
+    CopyBytes(this->data_ptr(), device, data_ptr, Device::kCPU, nbytes());
 }
 
-Tensor::Tensor(std::vector<int> shape, Dtype dtype, Device device)
-:shape_(shape), dtype_(dtype), device_(device), 
-    autograd_metadata_(std::make_shared<AutogradMetadata>()){
-    CheckNonnegativeShape(shape_, "Tensor dimensions must be non-negative");
-
-    stride_ = ContiguousStride(shape_);
-
-    // shape 为 {} 表示标量，占一个元素。
-    // 分配前 data_ptr_ 为空，不能直接用 numel() 判断。
-    const std::size_t bytes = shape_.empty() ? element_size() : nbytes();
-    if (bytes == 0) {
-        throw std::invalid_argument("Tensor constructor: zero-sized shape");
+Tensor::Tensor(ShapeView shape, Dtype dtype, Device device) {
+    CheckLayoutRank(shape.size());
+    const auto count = ElementCount(shape);
+    const auto itemsize = dtype_size(dtype);
+    if (!itemsize) throw std::invalid_argument("Tensor constructor: unsupported dtype");
+    const auto bytes = CheckedMultiply(count, itemsize);
+    std::size_t stride[kMaxDim]{};
+    std::size_t step = 1;
+    for (std::size_t i = shape.size(); i > 0; --i) {
+        stride[i - 1] = step;
+        step *= static_cast<std::size_t>(shape[i - 1]);
     }
-
-    if (device == Device::kCPU) {
-        storage_ = AllocateStorage(bytes, Device::kCPU);
-        data_ptr_ = storage_.get();
-    } else if (device == Device::kCUDA) {
-#ifdef ENABLE_CUDA
-        storage_ = AllocateStorage(bytes, Device::kCUDA);
-        data_ptr_ = storage_.get();
-
-        InitCUDAMetadata();
-#else
-        throw std::logic_error("Tensor constructor: CUDA support is disabled");
-#endif
-    } else {
-        throw std::invalid_argument("Tensor constructor: unsupported device");
-    }
+    auto storage = std::make_shared<Storage>(GetAllocator(device).allocate(bytes), bytes);
+    impl_ = std::make_shared<TensorImpl>(std::move(storage), shape,
+                                        StrideView(stride, shape.size()), 0, dtype, device);
 }
 
-Tensor& Tensor::operator=(const Tensor& other) {
-    if (this == &other) { // 处理 a = a 的情况;
-        return *this;
+Tensor::Tensor(Tensor&& other) noexcept {
+    *this = std::move(other);
+}
+
+Tensor& Tensor::operator=(Tensor&& other) noexcept {
+    if (this != &other) {
+        moved_from_dtype_ = other.moved_from_dtype_ = other.dtype();
+        moved_from_device_ = other.moved_from_device_ = other.device();
+        impl_ = std::move(other.impl_);
     }
-    shape_ = other.shape_;
-    stride_ = other.stride_;
-    shape_cuda_ = other.shape_cuda_;
-    stride_cuda_ = other.stride_cuda_;
-    storage_ = other.storage_;
-    version_ = other.version_;
-    data_ptr_ = other.data_ptr_;
-    dtype_ = other.dtype_;
-    device_ = other.device_;
-    autograd_metadata_ = other.autograd_metadata_;
     return *this;
 }
 
-Tensor::Tensor(Tensor&& other) noexcept
-:   data_ptr_(other.data_ptr_),
-    storage_(std::move(other.storage_)),
-    version_(std::move(other.version_)),
-    shape_(std::move(other.shape_)),
-    stride_(std::move(other.stride_)),
-    dtype_(other.dtype_),
-    device_(other.device_),
-    shape_cuda_(std::move(other.shape_cuda_)),
-    stride_cuda_(std::move(other.stride_cuda_)),
-    autograd_metadata_(std::move(other.autograd_metadata_))
-{
-    other.data_ptr_ = nullptr;
-    other.shape_.clear();
-    other.stride_.clear();
-}
-
-Tensor& Tensor::operator=(Tensor&& other) noexcept
-{
-    if(this == &other){
-        return *this;
-    }
-    storage_ = std::move(other.storage_);
-    version_ = std::move(other.version_);
-    data_ptr_ = other.data_ptr_;
-    shape_ = std::move(other.shape_);
-    stride_ = std::move(other.stride_);
-    shape_cuda_ = std::move(other.shape_cuda_);
-    stride_cuda_ = std::move(other.stride_cuda_);
-    dtype_ = other.dtype_;
-    device_ = other.device_;
-    autograd_metadata_ = std::move(other.autograd_metadata_);
-
-    other.data_ptr_ = nullptr;
-    other.shape_.clear();
-    other.stride_.clear();
-    return *this;
+AutogradMetadata& Tensor::ensure_autograd_metadata() {
+    if (!impl_) impl_ = EmptyWithOptions(dtype(), device()).impl_;
+    if (!impl_->autograd_meta) impl_->autograd_meta = std::make_shared<AutogradMetadata>();
+    return *impl_->autograd_meta;
 }
 
 bool Tensor::requires_grad() const {
-    return autograd_metadata_ && autograd_metadata_->requires_grad;
+    return impl_ && impl_->autograd_meta && impl_->autograd_meta->requires_grad;
 }
 
 Tensor& Tensor::requires_grad_(bool value) {
     // TODO: 实现反向传播时确定各 dtype 的梯度支持范围及检查位置。
-    if (!autograd_metadata_) {
-        autograd_metadata_ = std::make_shared<AutogradMetadata>();
-    }
-    autograd_metadata_->requires_grad = value;
+    ensure_autograd_metadata().requires_grad = value;
     return *this;
 }
 
 bool Tensor::has_grad() const {
-    return autograd_metadata_ && autograd_metadata_->grad.has_value();
+    return impl_ && impl_->autograd_meta && impl_->autograd_meta->grad.has_value();
 }
 
 Tensor Tensor::grad() const {
-    return has_grad() ? *autograd_metadata_->grad : Tensor();
+    return has_grad() ? *impl_->autograd_meta->grad : Tensor();
 }
 
 void Tensor::zero_grad() {
     if(has_grad()){
-        autograd_metadata_->grad->zero_();
+        impl_->autograd_meta->grad->zero_();
     }
 }
 
-std::uint64_t Tensor::version() const { return version_ ? *version_ : 0; }
-void Tensor::update_version() { if (version_) ++(*version_); }
+std::uint64_t Tensor::version() const { return impl_ ? *impl_->version : 0; }
+void Tensor::update_version() { if (impl_) ++(*impl_->version); }
 
 std::shared_ptr<AutogradNode> Tensor::grad_node() const {
-    return autograd_metadata_ ? autograd_metadata_->grad_node : nullptr;
+    return impl_ && impl_->autograd_meta ? impl_->autograd_meta->grad_node : nullptr;
 }
 
 void Tensor::set_grad_node(std::shared_ptr<AutogradNode> node) {
-    if(!autograd_metadata_){
-        autograd_metadata_ = std::make_shared<AutogradMetadata>();
-    }
-    autograd_metadata_->grad_node = node;
+    ensure_autograd_metadata().grad_node = std::move(node);
 }
 
 void Tensor::accumulate_grad(const Tensor& grad) {
     // 从零开始累计梯度，如果没有的话就保存
-    if (!autograd_metadata_) {
-        autograd_metadata_ = std::make_shared<AutogradMetadata>();
-    }
-
-    if (!autograd_metadata_->grad.has_value()) {
-        autograd_metadata_->grad = grad.clone();
+    auto& meta = ensure_autograd_metadata();
+    if (!meta.grad.has_value()) {
+        meta.grad = grad.clone();
     } else {
-        *autograd_metadata_->grad = add(*autograd_metadata_->grad, grad);
+        *meta.grad = add(*meta.grad, grad);
     }
 }
 
 Tensor Tensor::detach() const {
-    Tensor result;
-    result.storage_ = storage_;
-    result.version_ = version_;
-    result.data_ptr_ = data_ptr_;
-    result.shape_ = shape_;
-    result.stride_ = stride_;
-    result.device_ = device_;
-    result.dtype_ = dtype_;
-    result.shape_cuda_ = shape_cuda_;
-    result.stride_cuda_ = stride_cuda_;
-
-    return result;
+    if (!impl_) return EmptyWithOptions(dtype(), device());
+    return MakeView(shape(), stride());
 }
 
 void Tensor::backward() { RunBackward(*this); }
 void Tensor::backward(const Tensor& gradient) { RunBackward(*this, gradient); }
 
-const std::vector<int>& Tensor::shape() const {
-    return shape_;
-}
-
-const std::vector<std::size_t>& Tensor::stride() const {
-    return stride_;
-}
+ShapeView Tensor::shape() const { return impl_ ? ShapeView(impl_->shape, impl_->rank) : ShapeView{}; }
+StrideView Tensor::stride() const { return impl_ ? StrideView(impl_->stride, impl_->rank) : StrideView{}; }
 
 int Tensor::size(std::size_t dim) const {
-    if(dim >= shape_.size()){
-        throw std::out_of_range("Tensor::size: dimension index out of range");
-    }
-    return shape_[dim];
+    if (dim >= shape().size()) throw std::out_of_range("Tensor::size: dimension index out of range");
+    return shape()[dim];
 }
 
-int Tensor::dim() const {
-    return shape_.size();
-}
-
-bool Tensor::empty() const {
-    return data_ptr_ == nullptr;
-}
-
-bool Tensor::is_scalar() const {
-    return !empty() && shape_.empty();
-}
+int Tensor::dim() const { return impl_ ? impl_->rank : 0; }
+bool Tensor::empty() const { return !impl_ || !impl_->storage; }
+bool Tensor::is_scalar() const { return !empty() && dim() == 0; }
 
 bool Tensor::is_contiguous() const {
-    if (stride_.size() != shape_.size()) {
-        return false;
-    }
     std::size_t expected = 1;
-    for (std::size_t i = shape_.size(); i > 0; --i) {
-        if (shape_[i - 1] != 1 && stride_[i - 1] != expected) {
-            return false;
-        }
-        expected *= static_cast<std::size_t>(shape_[i - 1]);
+    for (int i = dim() - 1; i >= 0; --i) {
+        if (impl_->shape[i] != 1 && impl_->stride[i] != expected) return false;
+        expected *= static_cast<std::size_t>(impl_->shape[i]);
     }
     return true;
 }
 
-std::size_t Tensor::numel() const {
-    if(shape_.empty()){
-        return empty() ? 0 : 1;
-    }
-    return std::accumulate(
-        shape_.begin(), shape_.end(), static_cast<size_t>(1), std::multiplies<size_t>());
-}
-
-std::size_t Tensor::element_size() const {
-    return dtype_size(dtype_);
-}
-
-std::size_t Tensor::nbytes() const {
-    return numel() * dtype_size(dtype_);
-}
-
-Dtype Tensor::dtype() const {
-    return dtype_;
-}
-
+std::size_t Tensor::numel() const { return impl_ ? impl_->numel : 0; }
+std::size_t Tensor::element_size() const { return dtype_size(dtype()); }
+std::size_t Tensor::nbytes() const { return numel() * element_size(); }
+Dtype Tensor::dtype() const { return impl_ ? impl_->dtype : moved_from_dtype_; }
 Device Tensor::device() const {
-    return device_;
+    if (!impl_) return moved_from_device_;
+    return impl_->storage ? impl_->storage->device() : impl_->empty_device;
 }
 
 const void* Tensor::data_ptr() const {
-    return data_ptr_;
+    if (empty()) return nullptr;
+    return static_cast<const std::byte*>(impl_->storage->data()) +
+           impl_->storage_offset * element_size();
 }
 
-void* Tensor::data_ptr() {
-    return data_ptr_;
-}
+void* Tensor::data_ptr() { return const_cast<void*>(static_cast<const Tensor&>(*this).data_ptr()); }
 
 }  // namespace mtensor

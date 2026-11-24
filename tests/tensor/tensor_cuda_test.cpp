@@ -11,8 +11,8 @@
 #include <vector>
 
 #include "mini_infer/autograd.h"
-#include "mini_infer/tensor.h"
-#include "device/memory.h"
+#include "mini_infer/core/tensor.h"
+#include "device/runtime.h"
 
 namespace {
 
@@ -20,8 +20,8 @@ using mtensor::Device;
 using mtensor::Dtype;
 using mtensor::Tensor;
 
-static_assert(noexcept(mtensor::FreeCUDA(nullptr)),
-              "FreeCUDA must not throw from a shared_ptr deleter");
+static_assert(noexcept(std::declval<mtensor::DataDeleter>()(nullptr)),
+              "DataPtr deleters must not throw");
 
 void Check(bool condition, const char* message) {
     if (!condition) {
@@ -64,16 +64,17 @@ std::string Printed(const Tensor& tensor) {
 }
 
 void TestMemory() {
-    Check(mtensor::AllocateCUDA(0) == nullptr, "Zero-byte allocation must be null");
-    mtensor::FreeCUDA(nullptr);
-    void* device_ptr = mtensor::AllocateCUDA(sizeof(std::int32_t));
-    Check(device_ptr != nullptr, "CUDA allocation returned null");
+    const auto& allocator = mtensor::GetAllocator(Device::kCUDA);
+    Check(allocator.allocate(0).get() == nullptr, "Zero-byte allocation must be null");
+    auto allocation = allocator.allocate(sizeof(std::int32_t));
+    auto owner = std::move(allocation);
+    Check(allocation.get() == nullptr && owner.get() && owner.device() == Device::kCUDA,
+          "CUDA DataPtr must transfer ownership and preserve device");
     const std::int32_t input = 42;
     std::int32_t output = 0;
-    CheckCuda(cudaMemcpy(device_ptr, &input, sizeof(input), cudaMemcpyHostToDevice));
-    CheckCuda(cudaMemcpy(&output, device_ptr, sizeof(output), cudaMemcpyDeviceToHost));
+    mtensor::CopyBytes(owner.get(), Device::kCUDA, &input, Device::kCPU, sizeof(input));
+    mtensor::CopyBytes(&output, Device::kCPU, owner.get(), Device::kCUDA, sizeof(output));
     Check(output == input, "Allocated CUDA memory could not round-trip data");
-    mtensor::FreeCUDA(device_ptr);
 }
 
 template <typename T>

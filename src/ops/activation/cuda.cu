@@ -7,7 +7,7 @@
 #include <cuda_runtime.h>
 
 #include "ops/activation/kernels.h"
-#include "mini_infer/tensor.h"
+#include "mini_infer/core/tensor.h"
 #include "ops/common/cuda_index.cuh"
 #include "ops/common/cuda_unary.cuh"
 
@@ -15,11 +15,10 @@ namespace mtensor {
 namespace {
 
 template <typename In, typename Out>
-__global__ void SigmoidKernel(const In* x, Out* out, std::size_t count, const int* shape,
-                            const std::size_t* xs, int ndim) {
+__global__ void SigmoidKernel(const In* x, Out* out, std::size_t count, CUDALayout x_layout) {
     const auto i = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i >= count) return;
-    const auto xi = xs ? GetNumelIndex(i, shape, xs, ndim) : i;
+    const auto xi = GetNumelIndex(i, x_layout);
     const float v = static_cast<float>(x[xi]);
     const float t = expf(-fabsf(v));
     out[i] = static_cast<Out>(v >= 0.0f ? 1.0f / (1.0f + t) : t / (1.0f + t));
@@ -31,11 +30,10 @@ void LaunchSigmoid(const Tensor& x, Tensor& out) {
 }
 
 template <typename In, typename Out>
-__global__ void SiluKernel(const In* x, Out* out, std::size_t count, const int* shape,
-                           const std::size_t* xs, int ndim) {
+__global__ void SiluKernel(const In* x, Out* out, std::size_t count, CUDALayout x_layout) {
     const auto i = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i >= count) return;
-    const auto xi = xs ? GetNumelIndex(i, shape, xs, ndim) : i;
+    const auto xi = GetNumelIndex(i, x_layout);
     const float v = static_cast<float>(x[xi]);
     float y;
     if (v < -80.0f) {
@@ -56,13 +54,11 @@ void LaunchSilu(const Tensor& x, Tensor& out) {
 
 template <typename T>
 __global__ void SigmoidBackwardKernel(const T* x, const T* grad, T* dx,
-                                      std::size_t count, const int* shape,
-                                      const std::size_t* xs, const std::size_t* gs,
-                                      int ndim) {
+                                      std::size_t count, CUDALayout x_layout, CUDALayout grad_layout) {
     const auto i = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i >= count) return;
-    const auto xi = xs ? GetNumelIndex(i, shape, xs, ndim) : i;
-    const auto gi = gs ? GetNumelIndex(i, shape, gs, ndim) : i;
+    const auto xi = GetNumelIndex(i, x_layout);
+    const auto gi = GetNumelIndex(i, grad_layout);
     const float value = static_cast<float>(x[xi]);
     const float upstream = static_cast<float>(grad[gi]);
     const float t = expf(-fabsf(value));
@@ -77,13 +73,11 @@ void LaunchSigmoidBackward(const Tensor& x, const Tensor& output_grad, Tensor& d
 
 template <typename T>
 __global__ void SiluBackwardKernel(const T* x, const T* grad, T* dx,
-                                      std::size_t count, const int* shape,
-                                      const std::size_t* xs, const std::size_t* gs,
-                                      int ndim) {
+                                      std::size_t count, CUDALayout x_layout, CUDALayout grad_layout) {
     const auto i = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i >= count) return;
-    const auto xi = xs ? GetNumelIndex(i, shape, xs, ndim) : i;
-    const auto gi = gs ? GetNumelIndex(i, shape, gs, ndim) : i;
+    const auto xi = GetNumelIndex(i, x_layout);
+    const auto gi = GetNumelIndex(i, grad_layout);
     const float value = static_cast<float>(x[xi]);
     const float upstream = static_cast<float>(grad[gi]);
     const float s = 1.0f / (1.0f + expf(-value));

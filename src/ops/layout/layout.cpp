@@ -5,8 +5,9 @@
 #include <utility>
 #include <vector>
 
-#include "mini_infer/tensor.h"
+#include "mini_infer/core/tensor.h"
 #include "tensor/check.h"
+#include "tensor/tensor_impl.h"
 #include "mini_infer/autograd.h"
 
 namespace mtensor {
@@ -105,9 +106,7 @@ std::vector<int> InferReshapeShape(std::vector<int> shape, std::size_t numel) {
     return shape;
 }
 
-}  // namespace
-
-std::vector<std::size_t> Tensor::ContiguousStride(const std::vector<int>& shape) {
+std::vector<std::size_t> ContiguousStride(ShapeView shape) {
     std::vector<std::size_t> result(shape.size());
     std::size_t stride = 1;
     for (std::size_t i = shape.size(); i > 0; --i) {
@@ -117,32 +116,30 @@ std::vector<std::size_t> Tensor::ContiguousStride(const std::vector<int>& shape)
     return result;
 }
 
-Tensor Tensor::MakeView(std::vector<int> shape, std::vector<std::size_t> stride,
-                        std::size_t byte_offset) const {
-    Tensor result(*this);
-    result.autograd_metadata_ = std::make_shared<AutogradMetadata>();
-    result.shape_ = std::move(shape);
-    result.stride_ = std::move(stride);
-    if (byte_offset != 0) {
-        result.data_ptr_ = static_cast<std::byte*>(data_ptr_) + byte_offset;
+}  // namespace
+
+Tensor Tensor::MakeView(ShapeView shape, StrideView stride, std::size_t offset_delta) const {
+    const auto parent_offset = impl_->storage_offset;
+    if (offset_delta > std::numeric_limits<std::size_t>::max() - parent_offset) {
+        throw std::overflow_error("Tensor view: storage offset overflow");
     }
-    if (result.device_ == Device::kCUDA) {
-        result.InitCUDAMetadata();
-    }
+    Tensor result = *this;
+    result.impl_ = std::make_shared<TensorImpl>(impl_->storage, shape, stride,
+        parent_offset + offset_delta, dtype(), device(), impl_->version);
     return result;
 }
 
 Tensor Tensor::operator[](int index) const {
-    if(shape_.empty() || index < 0 || index >= shape_[0]){
+    if(this->shape().empty() || index < 0 || index >= this->shape()[0]){
         throw std::out_of_range("Tensor::operator[]: index out of range");
     }
     CheckDataPointer(*this, "Tensor::operator[]: null data pointer");
 
-    const std::size_t offset = static_cast<std::size_t>(index) * this->stride_[0] * element_size();
-    std::vector<int> shape(shape_.begin() + 1, shape_.end());
-    std::vector<std::size_t> stride(stride_.begin() + 1, stride_.end());
-    Tensor result = MakeView(std::move(shape), std::move(stride), offset);
-    if (EnableGrad() && CheckGradDtype(dtype_)) {
+    const std::size_t offset = static_cast<std::size_t>(index) * this->stride()[0];
+    std::vector<int> shape(this->shape().begin() + 1, this->shape().end());
+    std::vector<std::size_t> stride(this->stride().begin() + 1, this->stride().end());
+    Tensor result = MakeView(shape, stride, offset);
+    if (EnableGrad() && CheckGradDtype(dtype())) {
         auto node = std::make_shared<IndexNode>();
         node->inputs = {*this};
         node->index = index;
@@ -157,18 +154,18 @@ Tensor Tensor::transpose(int dim0, int dim1) const {
     使用示例:
         Tensor b = a.transpose(0, 1);
     */
-    CheckDim(dim0, shape_.size(), "Tensor::transpose: dimension index out of range");
-    CheckDim(dim1, shape_.size(), "Tensor::transpose: dimension index out of range");
+    CheckDim(dim0, this->shape().size(), "Tensor::transpose: dimension index out of range");
+    CheckDim(dim1, this->shape().size(), "Tensor::transpose: dimension index out of range");
 
-    auto shape = shape_;
-    auto stride = stride_;
-    shape[dim0] = shape_[dim1];
-    shape[dim1] = shape_[dim0];
-    stride[dim0] = stride_[dim1];
-    stride[dim1] = stride_[dim0];
-    Tensor result = MakeView(std::move(shape), std::move(stride));
+    auto shape = this->shape().to_vector();
+    auto stride = this->stride().to_vector();
+    shape[dim0] = this->shape()[dim1];
+    shape[dim1] = this->shape()[dim0];
+    stride[dim0] = this->stride()[dim1];
+    stride[dim1] = this->stride()[dim0];
+    Tensor result = MakeView(shape, stride);
 
-    if(EnableGrad() && CheckGradDtype(dtype_)) {
+    if(EnableGrad() && CheckGradDtype(dtype())) {
         auto node = std::make_shared<TransposeNode>();
         node->inputs = { *this };
         node->dim0 = dim0;
@@ -188,17 +185,17 @@ Tensor Tensor::permute(const std::vector<int>& dims) const {
     // 新旧下标取到同一个元素的 offset 应该一致，那么一个简单的直觉证明就是直接交换
     // offset(b) = Σ jₖ × b.stride[k] = Σ jₖ × a.stride[dims[k]]
 
-    CheckPermutation(dims, shape_.size());
+    CheckPermutation(dims, this->shape().size());
 
-    auto shape = shape_;
-    auto stride = stride_;
+    auto shape = this->shape().to_vector();
+    auto stride = this->stride().to_vector();
     for (std::size_t i = 0; i < dims.size(); ++i) {
-        shape[i] = shape_[dims[i]];
-        stride[i] = stride_[dims[i]];
+        shape[i] = this->shape()[dims[i]];
+        stride[i] = this->stride()[dims[i]];
     }
-    Tensor result = MakeView(std::move(shape), std::move(stride));
+    Tensor result = MakeView(shape, stride);
 
-    if(EnableGrad() && CheckGradDtype(dtype_)){
+    if(EnableGrad() && CheckGradDtype(dtype())){
         auto node = std::make_shared<PermuteNode>();
         node->inputs = { *this };
         node->dims = dims;
@@ -227,17 +224,17 @@ Tensor Tensor::squeeze(int dim) const {
         Tensor b = a.squeeze(1);
     */
     CheckNotEmpty(*this, "Tensor::squeeze: input must not be empty");
-    CheckDim(dim, shape_.size(), "Tensor::squeeze: dimension index out of range");
-    if(shape_[dim] != 1)
+    CheckDim(dim, this->shape().size(), "Tensor::squeeze: dimension index out of range");
+    if(this->shape()[dim] != 1)
         return *this;
 
-    auto shape = shape_;
-    auto stride = stride_;
+    auto shape = this->shape().to_vector();
+    auto stride = this->stride().to_vector();
     shape.erase(shape.begin() + dim);
     stride.erase(stride.begin() + dim);
-    Tensor res = MakeView(std::move(shape), std::move(stride));
+    Tensor res = MakeView(shape, stride);
 
-    if(EnableGrad() && CheckGradDtype(dtype_)){
+    if(EnableGrad() && CheckGradDtype(dtype())){
         auto node = std::make_shared<SqueezeNode>();
         node->inputs = { *this };
         node->dim = dim;
@@ -253,16 +250,23 @@ Tensor Tensor::unsqueeze(int dim) const {
         Tensor b = a.unsqueeze(1);
     */
     CheckNotEmpty(*this, "Tensor::unsqueeze: input must not be empty");
-    CheckDim(dim, shape_.size() + 1, "Tensor::unsqueeze: dimension index out of range");
-    auto shape = shape_;
-    auto stride = stride_;
-    const std::size_t inserted_stride =
-        dim == this->dim() ? 1 : stride_[dim] * shape_[dim];
+    CheckDim(dim, this->shape().size() + 1, "Tensor::unsqueeze: dimension index out of range");
+    CheckLayoutRank(this->shape().size() + 1);
+    auto shape = this->shape().to_vector();
+    auto stride = this->stride().to_vector();
+    std::size_t inserted_stride = 1;
+    if (dim != this->dim()) {
+        const auto extent = static_cast<std::size_t>(this->shape()[dim]);
+        if (this->stride()[dim] > std::numeric_limits<std::size_t>::max() / extent) {
+            throw std::overflow_error("Tensor::unsqueeze: stride overflow");
+        }
+        inserted_stride = this->stride()[dim] * extent;
+    }
     shape.insert(shape.begin() + dim, 1);
     stride.insert(stride.begin() + dim, inserted_stride);
-    Tensor res = MakeView(std::move(shape), std::move(stride));
+    Tensor res = MakeView(shape, stride);
 
-    if(EnableGrad() && CheckGradDtype(dtype_)){
+    if(EnableGrad() && CheckGradDtype(dtype())){
         auto node = std::make_shared<UnsqueezeNode>();
         node->dim = dim;
         node->inputs = { *this };
@@ -272,8 +276,9 @@ Tensor Tensor::unsqueeze(int dim) const {
     return res;
 }
 
-Tensor Tensor::reshape(std::vector<int> shape) const {
-    shape = InferReshapeShape(std::move(shape), numel());
+Tensor Tensor::reshape(ShapeView requested_shape) const {
+    CheckLayoutRank(requested_shape.size());
+    auto shape = InferReshapeShape(requested_shape.to_vector(), numel());
 
     // 非连续输入先按逻辑顺序复制，复用 CloneNode 和 ReshapeNode 的反向链。
     if (!is_contiguous()) {
@@ -282,10 +287,10 @@ Tensor Tensor::reshape(std::vector<int> shape) const {
 
     // 连续输入创建共享存储的新视图，更新布局并使用独立的 Autograd 元数据。
     auto stride = ContiguousStride(shape);
-    Tensor result = MakeView(std::move(shape), std::move(stride));
+    Tensor result = MakeView(shape, stride);
 
     // 保存前向输入，反向时将梯度恢复为输入 shape。
-    if(EnableGrad() && CheckGradDtype(dtype_)){
+    if(EnableGrad() && CheckGradDtype(dtype())){
         auto node = std::make_shared<ReshapeNode>();
         node->inputs = { *this };
         result.set_grad_node(node);
@@ -295,8 +300,8 @@ Tensor Tensor::reshape(std::vector<int> shape) const {
 }
 
 Tensor Tensor::narrow(int dim, int start, int length) const{
-    CheckDim(dim, shape_.size(), "Tensor::narrow: dimension index out of range");
-    const int dimension = shape_[dim];
+    CheckDim(dim, this->shape().size(), "Tensor::narrow: dimension index out of range");
+    const int dimension = this->shape()[dim];
     if (start < 0 || start >= dimension) {
         throw std::out_of_range("Tensor::narrow: start index out of range");
     }
@@ -305,12 +310,12 @@ Tensor Tensor::narrow(int dim, int start, int length) const{
     }
     CheckDataPointer(*this, "Tensor::narrow: null data pointer");
 
-    auto shape = shape_;
+    auto shape = this->shape().to_vector();
     shape[dim] = length;
 
-    const std::size_t byte_offset = static_cast<std::size_t>(start) * stride_[dim] * element_size();
-    Tensor result = MakeView(std::move(shape), stride_, byte_offset);
-    if (EnableGrad() && CheckGradDtype(dtype_)) {
+    const std::size_t offset_delta = static_cast<std::size_t>(start) * this->stride()[dim];
+    Tensor result = MakeView(shape, this->stride(), offset_delta);
+    if (EnableGrad() && CheckGradDtype(dtype())) {
         auto node = std::make_shared<NarrowNode>();
         node->inputs = {*this};
         node->dim = dim;
@@ -321,19 +326,20 @@ Tensor Tensor::narrow(int dim, int start, int length) const{
     return result;
 }
 
-Tensor Tensor::broadcast(const std::vector<int>& target_shape) const {
+Tensor Tensor::broadcast(ShapeView target_shape) const {
     CheckNotEmpty(*this, "broadcast: input must not be empty");
-    CheckBroadcastTarget(shape_, target_shape);
-    const std::size_t leading = target_shape.size() - shape_.size();
+    CheckLayoutRank(target_shape.size());
+    CheckBroadcastTarget(this->shape(), target_shape);
+    const std::size_t leading = target_shape.size() - this->shape().size();
 
     std::vector<std::size_t> stride(target_shape.size(), 0);
-    for (std::size_t i = 0; i < shape_.size(); ++i) {
-        if (shape_[i] != 1 || target_shape[leading + i] == 1) {
-            stride[leading + i] = stride_[i];
+    for (std::size_t i = 0; i < this->shape().size(); ++i) {
+        if (this->shape()[i] != 1 || target_shape[leading + i] == 1) {
+            stride[leading + i] = this->stride()[i];
         }
     }
-    Tensor result = MakeView(target_shape, std::move(stride));
-    if (EnableGrad() && CheckGradDtype(dtype_)) {
+    Tensor result = MakeView(target_shape, stride);
+    if (EnableGrad() && CheckGradDtype(dtype())) {
         auto node = std::make_shared<BroadcastNode>();
         node->inputs = { *this };
         result.set_grad_node(node);

@@ -7,9 +7,9 @@
 #include <vector>
 
 #include "tensor/print.h"
-#include "mini_infer/tensor.h"
+#include "mini_infer/core/tensor.h"
+#include "device/runtime.h"
 #include "tensor/check.h"
-#include "ops/copy/kernels.h"
 
 namespace mtensor {
 
@@ -46,7 +46,7 @@ void PrintElement(std::ostream& out, Dtype dtype, const void* element_ptr) {
 }
 
 void PrintNested(std::ostream& out, Dtype dtype, const std::byte* data_bytes_ptr,
-                 const std::vector<int>& shape, const std::vector<std::size_t>& stride,
+                 ShapeView shape, StrideView stride,
                  std::size_t dimension, std::size_t element_bytes, std::size_t offset) {
     out << '[';
     for (int index = 0; index < shape[dimension]; ++index) {
@@ -74,8 +74,8 @@ void PrintNested(std::ostream& out, Dtype dtype, const std::byte* data_bytes_ptr
 
 }  // namespace
 
-void PrintCPU(const void* data_ptr, const std::vector<int>& shape,
-              const std::vector<std::size_t>& stride, Dtype dtype, bool is_empty) {
+void PrintCPU(const void* data_ptr, ShapeView shape,
+              StrideView stride, Dtype dtype, bool is_empty) {
     std::cout << "tensor(";
     if (shape.empty()) {
         if (is_empty) {
@@ -98,9 +98,9 @@ void Tensor::print() const {
     const std::size_t count = numel();
     if (count > 0) CheckDataPointer(*this, "Tensor::print: null data pointer");
 
-    if (device_ == Device::kCPU) {
-        PrintCPU(data_ptr_, shape_, stride_, dtype_, empty());
-    } else if (device_ == Device::kCUDA) {
+    if (device() == Device::kCPU) {
+        PrintCPU(data_ptr(), shape(), stride(), dtype(), empty());
+    } else if (device() == Device::kCUDA) {
 #ifdef ENABLE_CUDA
         if (!is_contiguous()) {
             clone().print();
@@ -109,9 +109,9 @@ void Tensor::print() const {
         const std::size_t bytes = nbytes();
         std::vector<std::byte> host_buffer(bytes);
         if (bytes > 0) {
-            CopyCUDAToHost(host_buffer.data(), data_ptr_, bytes);
+            CopyBytes(host_buffer.data(), Device::kCPU, data_ptr(), device(), bytes);
         }
-        PrintCPU(host_buffer.data(), shape_, stride_, dtype_, empty());
+        PrintCPU(host_buffer.data(), shape(), stride(), dtype(), empty());
 #else
         throw std::logic_error("Tensor::print: CUDA support is disabled");
 #endif

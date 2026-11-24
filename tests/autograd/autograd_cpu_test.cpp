@@ -9,17 +9,17 @@
 
 #include "mini_infer/autograd.h"
 #include "mini_infer/ops/elementwise.h"
-#include "mini_infer/tensor.h"
+#include "mini_infer/core/tensor.h"
 
 using namespace mtensor;
 
 namespace mtensor {
 struct TensorMetadataTestAccess {
     static void set_node(Tensor& tensor, std::shared_ptr<AutogradNode> node) {
-        tensor.autograd_metadata_->grad_node = std::move(node);
+        tensor.ensure_autograd_metadata().grad_node = std::move(node);
     }
     static void set_grad(Tensor& tensor, const Tensor& grad) {
-        tensor.autograd_metadata_->grad = grad;
+        tensor.ensure_autograd_metadata().grad = grad;
     }
 };
 }
@@ -481,9 +481,9 @@ void TestSqueezeUnsqueeze() {
         Tensor view = x.transpose(0, 1);
         for (int dim = 0; dim <= view.dim(); ++dim) {
             Tensor expanded = view.unsqueeze(dim);
-            auto expected_shape = view.shape();
+            auto expected_shape = view.shape().to_vector();
             expected_shape.insert(expected_shape.begin() + dim, 1);
-            auto expected_stride = view.stride();
+            auto expected_stride = view.stride().to_vector();
             const std::size_t inserted = dim == view.dim() ? 1 : view.stride()[dim] * view.size(dim);
             expected_stride.insert(expected_stride.begin() + dim, inserted);
             require(expanded.shape() == expected_shape && expanded.stride() == expected_stride,

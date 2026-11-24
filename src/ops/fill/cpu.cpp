@@ -1,6 +1,5 @@
 #include <cstddef>
 #include <cstring>
-#include <vector>
 
 #include "ops/fill/kernels.h"
 
@@ -8,8 +7,8 @@ namespace mtensor {
 
 void ZeroCPU(
     void* data_ptr,
-    const std::vector<int>& shape,
-    const std::vector<std::size_t>& stride,
+    ShapeView shape,
+    StrideView stride,
     std::size_t element_size
 ) {
     auto* byte_data_ptr = static_cast<std::byte*>(data_ptr);
@@ -36,8 +35,8 @@ void ZeroCPU(
 
 void FillCPU(
     void* data_ptr,
-    const std::vector<int>& shape,
-    const std::vector<std::size_t>& stride,
+    ShapeView shape,
+    StrideView stride,
     std::size_t element_size,
     const void* host_value
 ) {

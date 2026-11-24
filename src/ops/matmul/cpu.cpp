@@ -10,8 +10,8 @@ namespace mtensor {
 namespace {
 
 void MatmulFloat(const void* a, const void* b, void* output, int m, int k, int n,
-                 const std::vector<std::size_t>& a_stride,
-                 const std::vector<std::size_t>& b_stride) {
+                 StrideView a_stride,
+                 StrideView b_stride) {
     const auto* a_data = static_cast<const float*>(a);
     const auto* b_data = static_cast<const float*>(b);
     auto* output_data = static_cast<float*>(output);
@@ -30,8 +30,8 @@ void MatmulFloat(const void* a, const void* b, void* output, int m, int k, int n
 
 template <typename U>
 void MatmulInteger(const void* a, const void* b, void* output, int m, int k, int n,
-                   const std::vector<std::size_t>& a_stride,
-                   const std::vector<std::size_t>& b_stride) {
+                   StrideView a_stride,
+                   StrideView b_stride) {
     // Corresponding unsigned types can access signed storage and give modular arithmetic.
     using Acc = std::conditional_t<(sizeof(U) < sizeof(std::uint32_t)), std::uint32_t, U>;
     const auto* a_data = static_cast<const U*>(a);
@@ -52,8 +52,8 @@ void MatmulInteger(const void* a, const void* b, void* output, int m, int k, int
 
 template <float (*Decode)(const void*), std::uint16_t (*Encode)(float)>
 void MatmulHalf(const void* a, const void* b, void* output, int m, int k, int n,
-                const std::vector<std::size_t>& a_stride,
-                const std::vector<std::size_t>& b_stride) {
+                StrideView a_stride,
+                StrideView b_stride) {
     const auto* a_data = static_cast<const std::uint16_t*>(a);
     const auto* b_data = static_cast<const std::uint16_t*>(b);
     auto* output_data = static_cast<std::uint16_t*>(output);
@@ -77,8 +77,8 @@ void MatmulHalf(const void* a, const void* b, void* output, int m, int k, int n,
 }  // namespace
 
 void MatmulCPU(const void* a, const void* b, void* output, Dtype dtype,
-               int m, int k, int n, const std::vector<std::size_t>& a_stride,
-               const std::vector<std::size_t>& b_stride) {
+               int m, int k, int n, StrideView a_stride,
+               StrideView b_stride) {
     if (m == 0 || n == 0) return;
 
     switch (dtype) {

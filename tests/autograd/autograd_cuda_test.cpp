@@ -11,7 +11,7 @@
 #include "mini_infer/autograd.h"
 #include "ops/copy/nodes.h"
 #include "mini_infer/ops/elementwise.h"
-#include "mini_infer/tensor.h"
+#include "mini_infer/core/tensor.h"
 
 namespace {
 using namespace mtensor;
@@ -306,9 +306,9 @@ void TestSqueezeUnsqueeze() {
         Tensor view = x.transpose(0, 1);
         for (int dim = 0; dim <= view.dim(); ++dim) {
             Tensor expanded = view.unsqueeze(dim);
-            auto expected_shape = view.shape();
+            auto expected_shape = view.shape().to_vector();
             expected_shape.insert(expected_shape.begin() + dim, 1);
-            auto expected_stride = view.stride();
+            auto expected_stride = view.stride().to_vector();
             const std::size_t inserted = dim == view.dim() ? 1 : view.stride()[dim] * view.size(dim);
             expected_stride.insert(expected_stride.begin() + dim, inserted);
             require(expanded.shape() == expected_shape && expanded.stride() == expected_stride,

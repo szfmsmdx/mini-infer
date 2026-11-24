@@ -2,7 +2,8 @@
 
 #include <cuda_runtime.h>
 
-#include "mini_infer/tensor.h"
+#include "ops/common/cuda_layout.h"
+#include "mini_infer/core/tensor.h"
 #include "device/memory.h"
 
 namespace mtensor {
@@ -14,8 +15,7 @@ void LaunchUnary(const Tensor& x, Tensor& out) {
     constexpr unsigned threads = 256;
     const unsigned blocks = static_cast<unsigned>((n - 1) / threads + 1);
     Kernel<<<blocks, threads>>>(
-        static_cast<const In*>(x.data_ptr()), static_cast<Out*>(out.data_ptr()), n, x.shape_cuda(),
-        x.is_contiguous() ? nullptr : x.stride_cuda(), x.dim());
+        static_cast<const In*>(x.data_ptr()), static_cast<Out*>(out.data_ptr()), n, PackLayout(x));
     CUDA_CHECK(cudaGetLastError());
 }
 
@@ -29,9 +29,7 @@ void LaunchBackward(const Tensor& x, const Tensor& output_grad, Tensor& dx) {
     const auto* grad = static_cast<const T*>(output_grad.data_ptr());
     auto* input_grad = static_cast<T*>(dx.data_ptr());
     Kernel<<<blocks, threads>>>(
-        input, grad, input_grad, count, x.shape_cuda(),
-        x.is_contiguous() ? nullptr : x.stride_cuda(),
-        output_grad.is_contiguous() ? nullptr : output_grad.stride_cuda(), x.dim());
+        input, grad, input_grad, count, PackLayout(x), PackLayout(output_grad));
     CUDA_CHECK(cudaGetLastError());
 }
 

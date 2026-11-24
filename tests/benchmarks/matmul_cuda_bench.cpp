@@ -16,7 +16,7 @@
 
 #include "bench_common.h"
 #include "ops/matmul/kernels.h"
-#include "mini_infer/tensor.h"
+#include "mini_infer/core/tensor.h"
 #include "device/memory.h"
 
 namespace {

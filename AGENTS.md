@@ -29,12 +29,13 @@
 - 提交前检查暂存内容，不混入其他功能或用户未授权的本地改动。改写已推送的提交时先核对远端状态，并使用 `--force-with-lease`；不要使用无保护的 `--force`。
 - 用户当次明确指定的提交范围、格式和方式优先；任务是否完成或待提交范围无法判断时，先向用户确认。
 
-## C/C++ include 顺序
+## C/C++ 代码风格
 
 - 适用于项目中的 C/C++ 头文件和源文件，包括后续的 `.cu` / `.cuh`。
 - 先集中放系统、标准库和第三方头文件，使用 `#include <...>`；然后空一行，集中放项目自己的头文件，使用 `#include "..."`。两个组内不额外空行。
 - 项目头文件按实际需要和依赖顺序排列；`.cpp` 等实现文件对应的头文件放在项目头文件组的最前面。不要把它单独放到系统头文件前面。
 - `#pragma once` 保持在头文件开头，与 include 区域空一行。整理顺序时不要改动接口或实现逻辑。
+- `namespace` 不增加缩进。命名空间中的类型、函数和声明仍顶格写；类或函数体内部按原有层级缩进。
 
 ## 当前设计
 
@@ -52,9 +53,9 @@
 
 ### Tensor 和 Autograd
 
-- `storage_` 持有分配地址，`data_ptr_` 指向当前 Tensor 或视图的数据起点。`shape()` 查询形状，`size(dim)` 查询单维长度，stride 的单位是元素。Tensor 拷贝共享存储，`clone()` 深拷贝。
+- `Tensor` 共享持有 `TensorImpl`；视图有独立布局，与原 Tensor 共享 Storage。Storage 管分配地址和容量，`data_ptr()` 从基地址和元素偏移计算。shape/stride 是最多 8 维的借用只读视图；`clone()` 深拷贝。CUDA kernel 按值接收布局。
 - `to(Device)` 同设备共享存储，跨设备分配并复制。`copy_()` 写入同设备的现有存储。非连续输入的 `reshape()` 先复制成连续布局。[Tensor 设计](src/tensor/README.md)
-- `Tensor::autograd_metadata_` 是 `std::shared_ptr<AutogradMetadata>`，保存 `requires_grad`、`grad_node` 和 `grad`。Tensor 拷贝共享它，视图及 `detach()` 使用新的元数据。
+- `TensorImpl` 按需创建 `AutogradMetadata`，保存 `requires_grad`、`grad_node` 和 `grad`。Tensor 拷贝共享同一个实现；视图及 `detach()` 有独立梯度元数据，但共享写入版本。
 - `NogradNode` 控制建图，`requires_grad` 控制是否保存梯度。反向引擎用 DFS 排序，再逆序执行，临时梯度按节点指针汇总。[Autograd 设计](src/autograd/README.md)
 
 ### GPT

@@ -71,6 +71,7 @@ target_include_directories(mini_infer
 
 if(ENABLE_CUDA)
     target_sources(mini_infer PRIVATE
+        src/ops/common/cuda_layout.cpp
         src/ops/activation/cuda.cu
         src/ops/elementwise/cuda.cu
         src/ops/norm/cuda.cu

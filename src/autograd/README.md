@@ -32,8 +32,8 @@ Tensor ──持有──→ AutogradMetadata
 ## 数据结构
 
 ```cpp
-// include/mini_infer/tensor.h
-std::shared_ptr<AutogradMetadata> autograd_metadata_;
+// src/tensor/tensor_impl.h：按需创建
+std::shared_ptr<AutogradMetadata> autograd_meta;
 
 // include/mini_infer/autograd.h
 struct AutogradMetadata {

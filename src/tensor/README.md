@@ -8,41 +8,30 @@
 
 | 位置 | 内容 |
 | --- | --- |
-| `include/mini_infer/` | `tensor.h`、`scalar.h`、`dtype.h` |
+| `include/mini_infer/core/` | `tensor.h`、`scalar.h`、`dtype.h` |
 | `src/tensor/` | 构造、元数据、校验和打印 |
 | `src/ops/` | `layout/` 管视图，`copy/` 管复制和迁移，`fill/` 管填充和清零 |
 | `src/device/` | CPU/CUDA 内存分配与释放 |
 
-CUDA Tensor 持有 shape 和 stride 的设备副本。新视图创建自己的布局副本，拷贝共享原副本。[算子文件结构](../ops/README.md#文件结构)
+Tensor 拷贝共享同一个 `TensorImpl`；视图创建新 `TensorImpl`，但共享 `Storage` 和写入版本。
 
-| 子问题 | 字段 | 当前做法 |
-| --- | --- | --- |
-| 数据在哪 / 谁释放 | `std::shared_ptr<void> storage_` | 持有原始分配地址，最后一个持有者销毁时调用 CPU 或 CUDA 释放函数 |
-| 从哪开始 | `void* data_ptr_` | 指向当前 Tensor 的数据起点；视图可以指向内存中间 |
-| 每一维多大 | `std::vector<int> shape_` | 每个 Tensor 自己保存形状，通过 `shape()` 查询 |
-| 每一维的跨度 | `std::vector<std::size_t> stride_` | 单位是元素个数，通过 `stride()` 查询 |
-| 每个元素占几字节 | `Dtype dtype_` | 通过 `dtype_size()` 查询 |
-| 数据在哪个设备 | `Device device_` | 区分 CPU 与 CUDA |
+| 对象 | 职责 |
+| --- | --- |
+| `TensorImpl` | 固定容量的 shape、stride，实际维数，dtype，元素偏移，以及按需创建的梯度元数据 |
+| `Storage` | 字节容量和 `DataPtr`；最后一个拥有者销毁时释放数据 |
+| `DataPtr` | 基地址、设备和对应的释放器 |
+| `CUDALayout` | 启动 CUDA kernel 时从宿主布局打包，按值传参，不分配或上传专用显存副本 |
 
 ## 内存与索引
 
-`storage_` 管释放，`data_ptr_` 管位置。索引只调整指针和形状，仍共享原来的内存：
+布局最多 8 维。创建 Tensor 或视图时校验维数和范围。stride 与偏移的单位都是元素，`data_ptr()` 才换算成字节地址：
 
 ```text
-a        shape {2, 3}，data_ptr_ 指向开头 ──┐
-b = a    shape {2, 3}，data_ptr_ 指向开头 ──┼→ 共享同一块 storage_
-a[1]     shape {3}，data_ptr_ 指向第二行 ───┘
+视图偏移 = 父 Tensor 相对 Storage 的偏移 + 本次操作的增量
+数据地址 = Storage 基地址 + 视图偏移 × element_size()
 ```
 
-第一维索引的地址计算是：
-
-```text
-字节偏移 = index × stride[0] × element_size()
-视图地址 = 当前 data_ptr_ 按字节加上偏移
-视图形状 = 去掉 shape 的第一维
-```
-
-例如 float32、shape `{2, 3}`，第二行的起点在当前地址之后 `1 × 3 × 4 = 12` 字节。原 Tensor 销毁后，视图仍持有 `storage_`，数据继续有效。
+例如 `x` 的 shape 为 `{2, 3}`，`x[1]` 的起点偏移为 3；再做 `.narrow(0, 1, 2)`，结果偏移为 4。只改布局的操作不改变起点。视图持有 Storage，即使原 Tensor 先销毁也可以继续访问数据。
 
 ## 关键函数设计
 
@@ -51,8 +40,8 @@ a[1]     shape {3}，data_ptr_ 指向第二行 ───┘
 | `Tensor()` | 创建默认空对象 | 数据指针为空，`numel() == 0` |
 | `Tensor(data_ptr, shape, dtype, device)` | 从连续的 CPU 源数据构造 | 自己分配并复制；源数据按 dtype 编码，拒绝空指针、负数维度和元素数为 0 的 shape |
 | `Tensor(shape, dtype, device)` | 按元数据分配存储，供算子创建输出 | 只分配不初始化；`shape` 为 `{}` 时按标量分配一个元素；拒绝负数维度和元素数为 0 的 shape |
-| 拷贝构造 / 拷贝赋值 | 创建或更新共享数据的 Tensor | 共享 `storage_`，复制形状、dtype、device 和当前数据指针 |
-| 移动构造 / 移动赋值 | 接管已有资源 | 转移 `storage_`，源对象的指针置空、形状清空 |
+| 拷贝构造 / 拷贝赋值 | 创建或更新共享数据的 Tensor | 共享同一个 `TensorImpl`，不复制布局或数据 |
+| 移动构造 / 移动赋值 | 接管已有资源 | 转移 `TensorImpl`，源对象变为空 Tensor，保留 dtype 和 device |
 | 析构 | 释放当前对象持有的资源 | 使用默认析构，由智能指针决定何时释放数据 |
 | `operator[](i)` | 沿第一维取子 Tensor | 返回共享视图，每次去掉一维；索引必须非负且不越界 |
 | `data_ptr()` | 获取当前数据起点 | 返回 `void*`；读写时由调用方按 dtype 转换类型 |
@@ -67,7 +56,8 @@ a[1]     shape {3}，data_ptr_ 指向第二行 ───┘
 | `reshape` / `transpose` / `permute` | 形状与布局操作 | reshape 支持一个 -1 推导；连续输入共享存储，非连续输入先复制；transpose、permute 返回共享视图 |
 | `contiguous` / `squeeze` / `unsqueeze` | 形状与布局操作 | 已实现；squeeze/unsqueeze 支持非连续视图及反向，目前只接受非负维度 |
 
-`shape()` 和 `stride()` 返回形状与跨度的只读引用，`size(dim)` 返回指定维度长度，`dim()` 返回维数，`numel()` 返回元素总数，`nbytes()` 返回字节数。`element_size()`、`dtype()`、`device()` 提供对应的元数据。
+`shape()` 和 `stride()` 返回借用的只读布局视图，不能比对应的布局活得更久；要修改或单独保存布局，用 `.to_vector()`。
+`size(dim)` 返回指定维度长度，`dim()` 返回维数，`numel()` 返回元素总数，`nbytes()` 返回字节数。`element_size()`、`dtype()`、`device()` 提供对应的元数据。
 
 ### 空对象与标量
 
@@ -127,18 +117,18 @@ Autograd 的数据结构、反向节点和引擎见 [autograd/README.md](../auto
 
 | 成员 / 方法 | 作用 | 要点 |
 | --- | --- | --- |
-| `autograd_metadata_` | 自动微分状态 | `std::shared_ptr<AutogradMetadata>`；拷贝共享，视图新建 |
+| `autograd_meta` | 自动微分状态 | `std::shared_ptr<AutogradMetadata>`；拷贝共享，视图新建 |
 | `requires_grad()` / `requires_grad_(bool)` | 查询和设置 | 控制是否保存梯度；RunBackward 仅接受 Float32/Float16/BFloat16 |
 | `has_grad()` / `grad()` | 查询梯度 | `meta->grad` 是否有值；无梯度返回默认空 Tensor |
 | `zero_grad()` | 清零当前 Tensor 的梯度 | 保留梯度存储和 has_grad 状态；无梯度时不操作，不改变计算图或参数数据 |
 | `backward()` | 单元素反向入口 | 上游梯度默认为 1，要求 `numel() == 1` |
 | `backward(gradient)` | 指定上游梯度 | 支持非标量输出；gradient 须与输出同 shape/dtype/device，输出须有 grad_node |
-| `detach()` | 断开图和梯度 | 共享 `storage_`，创建新的空 meta |
+| `detach()` | 断开图和梯度 | 共享 Storage 和版本，并使用新的 TensorImpl，不继承梯度历史 |
 | `grad_node()` / `set_grad_node()` | 图的连边 | 读写 `meta->grad_node`，它指向产生当前 Tensor 的节点 |
 | `accumulate_grad()` | 梯度累加 | 首次克隆梯度，之后用 `add()` 累加 |
 | `version()` / `update_version()` | 查询版本 / 版本加一 | 共享存储的 Tensor 共用计数；原地写入自动更新，通过 data_ptr 写入须手动通知 |
 
-拷贝共享 `storage_`、`version_` 和 `autograd_metadata_`。视图和 `detach()` 使用独立的梯度元数据，共享存储的写入版本。
+拷贝共享 `TensorImpl`。视图和 `detach()` 使用新的 `TensorImpl`，只共享 Storage 和写入版本；梯度元数据按需创建。
 
 ## dtype
 

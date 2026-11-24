@@ -7,8 +7,8 @@
 
 #include "mini_infer/autograd.h"
 #include "ops/reduction/nodes.h"
-#include "mini_infer/scalar.h"
-#include "mini_infer/tensor.h"
+#include "mini_infer/core/scalar.h"
+#include "mini_infer/core/tensor.h"
 
 namespace {
 
