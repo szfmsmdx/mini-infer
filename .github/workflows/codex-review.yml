@@ -2,7 +2,7 @@ name: Request Codex review
 
 on:
   workflow_run:
-    workflows: ["C++ correctness"]
+    workflows: ["C\\+\\+ correctness"]
     types: [completed]
 
 permissions:
