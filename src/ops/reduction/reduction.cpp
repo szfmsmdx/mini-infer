@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "mini_infer/ops/reduction.h"
+#include "backend/dispatch.h"
 #include "tensor/check.h"
 #include "mini_infer/autograd.h"
 #include "ops/reduction/nodes.h"
@@ -20,22 +21,11 @@ Tensor sum(const Tensor& input) {
     Tensor result(/*shape=*/std::vector<int>{},
                   /*dtype=*/floating ? input.dtype() : Dtype::kInt64,
                   /*device=*/input.device());
-    if (input.device() == Device::kCPU) {
-        SumCPU(input.data_ptr(), result.data_ptr(), input.dtype(), input.shape(),
-               input.stride(), input.numel());
-    } else if (input.device() == Device::kCUDA) {
-#ifdef ENABLE_CUDA
-        SumCUDA(input.data_ptr(), result.data_ptr(), input.dtype(), PackLayout(input), input.numel());
-#else
-        throw std::logic_error("sum: CUDA support is disabled");
-#endif
-    } else {
-        throw std::invalid_argument("sum: unsupported device");
-    }
+    GetKernelTable().sum_all.call(input.device(), "sum", input, result);
 
-    if (EnableGrad() && floating) {
+    if (floating && ShouldRecordGrad({&input}, result.dtype())) {
         auto node = std::make_shared<SumNode>();
-        node->inputs = {input};
+        node->record_inputs({input});
         result.set_grad_node(node);
     }
     return result;
@@ -53,22 +43,11 @@ Tensor sum(const Tensor& input, int dim, bool keepdim) {
     else output_shape.erase(output_shape.begin() + dim);
     
     Tensor result(output_shape, floating ? input.dtype() : Dtype::kInt64, input.device());
-    if (input.device() == Device::kCPU) {
-        SumCPU(input.data_ptr(), result.data_ptr(), input.dtype(), input.shape(),
-               input.stride(), input.numel(), dim);
-    } else if (input.device() == Device::kCUDA) {
-#ifdef ENABLE_CUDA
-        SumCUDA(input.data_ptr(), result.data_ptr(), input.dtype(), PackLayout(input), result.numel(), dim);
-#else
-        throw std::logic_error("sum: CUDA support is disabled");
-#endif
-    } else {
-        throw std::invalid_argument("sum: unsupported device");
-    }
+    GetKernelTable().sum_dim.call(input.device(), "sum", input, dim, result);
     
-    if (EnableGrad() && floating) {
+    if (floating && ShouldRecordGrad({&input}, result.dtype())) {
         auto node = std::make_shared<SumNode>();
-        node->inputs = {input};
+        node->record_inputs({input});
         node->dim = dim;
         result.set_grad_node(node);
     }
@@ -113,26 +92,17 @@ namespace {
 
 class ExtremaNode : public AutogradNode {
 public:
-    Tensor extrema;
+    SavedTensor saved_input;
+    SavedTensor saved_extrema;
     std::size_t inner_size = 1;
-    std::uint64_t input_version = 0;
-    std::uint64_t output_version = 0;
 
     std::vector<Tensor> backward(const Tensor& output_grad) override {
-        const Tensor& input = inputs[0];
-        CheckVersion(input, input_version, "extrema: input modified after forward");
-        CheckVersion(extrema, output_version, "extrema: output modified after forward");
+        const Tensor input = saved_input.unpack("extrema input");
+        const Tensor extrema = saved_extrema.unpack("extrema output");
         const Tensor grad = output_grad.contiguous();
         Tensor input_grad(input.shape(), input.dtype(), input.device());
-        if (input.device() == Device::kCPU) {
-            ExtremaGradCPU(input, extrema, grad, input_grad, inner_size);
-        } else {
-#ifdef ENABLE_CUDA
-            ExtremaGradCUDA(input, extrema, grad, input_grad, inner_size);
-#else
-            throw std::logic_error("extrema: CUDA support is disabled");
-#endif
-        }
+        GetKernelTable().extrema_backward.call(
+            input.device(), "extrema backward", input, extrema, grad, input_grad, inner_size);
         return {input_grad};
     }
 };
@@ -153,25 +123,15 @@ Tensor ReduceExtrema(const Tensor& input, std::optional<int> dim, bool keepdim, 
     }
 
     Tensor output(output_shape, input.dtype(), input.device());
-    if (input.device() == Device::kCPU) {
-        ExtremaCPU(input, output, inner_size, maximum);
-    } else if (input.device() == Device::kCUDA) {
-#ifdef ENABLE_CUDA
-        ExtremaCUDA(input, output, inner_size, maximum);
-#else
-        throw std::logic_error("max/min: CUDA support is disabled");
-#endif
-    } else {
-        throw std::invalid_argument("max/min: unsupported device");
-    }
+    GetKernelTable().extrema.call(
+        input.device(), "max/min", input, output, inner_size, maximum);
 
-    if (EnableGrad() && CheckGradDtype(input.dtype())) {
+    if (ShouldRecordGrad({&input}, output.dtype())) {
         auto node = std::make_shared<ExtremaNode>();
-        node->inputs = {input};
-        node->extrema = output.detach();
+        node->record_inputs({input});
+        node->saved_input = SavedTensor(input);
+        node->saved_extrema = SavedTensor(output, /*is_output=*/true);
         node->inner_size = inner_size;
-        node->input_version = input.version();
-        node->output_version = output.version();
         output.set_grad_node(node);
     }
     return output;

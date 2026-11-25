@@ -290,6 +290,27 @@ void TestBlockBoundary() {
     CheckValues<float>(sum, std::vector<float>(1026, 4.0f));
 }
 
+void TestOutReuse() {
+    float left[] = {1.0f, 2.0f};
+    float right[] = {3.0f, 4.0f};
+    Tensor a(left, {2}, Dtype::kFloat32, Device::kCUDA);
+    Tensor b(right, {2}, Dtype::kFloat32, Device::kCUDA);
+    Tensor output({2}, Dtype::kFloat32, Device::kCUDA);
+    void* address = output.data_ptr();
+    const auto version = output.version();
+    mtensor::add_out(a, b, output);
+    const Tensor host = output.to(Device::kCPU);
+    const auto* values = static_cast<const float*>(host.data_ptr());
+    Check(output.data_ptr() == address && output.version() == version + 1,
+          "CUDA add_out must reuse output storage and update its version");
+    Check(values[0] == 4.0f && values[1] == 6.0f, "CUDA add_out result");
+
+    bool rejected = false;
+    try { mtensor::add_out(a, b, a); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    Check(rejected, "CUDA add_out must reject output sharing an input Storage");
+}
+
 void TestErrors() {
     float input[] = {1, 2};
     Tensor cuda(input, {2}, Dtype::kFloat32, Device::kCUDA);
@@ -342,6 +363,7 @@ int main() {
         TestStrided();
         TestScalar();
         TestBlockBoundary();
+        TestOutReuse();
         TestErrors();
         CheckCuda(cudaDeviceSynchronize());
         std::cout << "Elementwise CUDA tests passed\n";

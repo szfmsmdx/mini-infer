@@ -740,6 +740,29 @@ void TestStridedAdd() {
     }
 }
 
+void TestOutReuse() {
+    float left[] = {1.0f, 2.0f};
+    float right[] = {3.0f, 4.0f};
+    Tensor a(left, {2}, Dtype::kFloat32);
+    Tensor b(right, {2}, Dtype::kFloat32);
+    Tensor output({2}, Dtype::kFloat32);
+    void* address = output.data_ptr();
+    const auto version = output.version();
+    mtensor::add_out(a, b, output);
+    Check(output.data_ptr() == address && output.version() == version + 1,
+          "add_out must reuse output storage and update its version");
+    CheckValues<float>(output, {4.0f, 6.0f});
+    Tensor next({2}, Dtype::kFloat32);
+    mtensor::sub_out(output, b, next);
+    CheckValues<float>(next, {1.0f, 2.0f});
+
+    bool rejected = false;
+    try { mtensor::add_out(a, b, a); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    Check(rejected, "add_out must reject output sharing an input Storage");
+    CheckValues<float>(a, {1.0f, 2.0f});
+}
+
 void TestErrors() {
     float input[] = {1, 2};
     Tensor a(input, {2}, Dtype::kFloat32);
@@ -789,6 +812,7 @@ int main() {
         TestHalfMul();
         TestHalfDiv();
         TestNeg();
+        TestOutReuse();
         TestErrors();
         std::cout << "Elementwise CPU tests passed\n";
         return 0;

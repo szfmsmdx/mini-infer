@@ -2,7 +2,7 @@
 #include <cuda_runtime.h>
 
 #include "mini_infer/ops/position_embedding.h"
-#include "cuda/cuda_check.h"
+#include "runtime/cuda_check.h"
 
 namespace mtensor {
 namespace {
@@ -14,11 +14,12 @@ unsigned int Blocks(std::size_t count) {
 }
 
 __global__ void RoPEKernel(const float* x, int width, int head_width, float base, bool inverse,
-                           std::size_t pairs, float* output) {
+                           int pos_offset, std::size_t pairs, float* output) {
     const std::size_t pair = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (pair >= pairs) return;
     const std::size_t offset = pair * 2;
-    const float position = static_cast<float>(offset / width);
+    const float position = static_cast<float>(
+        static_cast<std::size_t>(pos_offset) + offset / width);
     const int col = static_cast<int>(offset % width);
     const float exponent = -static_cast<float>(col % head_width) / head_width;
     const float angle = position * powf(base, exponent);
@@ -33,12 +34,13 @@ __global__ void RoPEKernel(const float* x, int width, int head_width, float base
 
 }  // namespace
 
-void RoPECUDA(const Tensor& x, int head_width, float base, bool inverse, Tensor& output) {
+void RoPECUDA(const Tensor& x, int head_width, float base, bool inverse,
+              int pos_offset, Tensor& output) {
     const std::size_t pairs = x.numel() / 2;
     const auto* input = static_cast<const float*>(x.data_ptr());
     auto* result = static_cast<float*>(output.data_ptr());
     RoPEKernel<<<Blocks(pairs), kThreads>>>(
-        input, x.size(1), head_width, base, inverse, pairs, result);
+        input, x.size(1), head_width, base, inverse, pos_offset, pairs, result);
     CUDA_CHECK(cudaGetLastError());
 }
 

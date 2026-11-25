@@ -5,8 +5,8 @@
 #include <vector>
 
 #include "mini_infer/ops/activation.h"
+#include "backend/dispatch.h"
 #include "mini_infer/autograd.h"
-#include "ops/activation/kernels.h"
 #include "tensor/check.h"
 
 namespace mtensor {
@@ -14,48 +14,31 @@ namespace {
 
 class SigmoidNode : public AutogradNode {
 public:
-    Tensor y;
-    std::uint64_t input_version = 0;
-    std::uint64_t output_version = 0;
+    SavedTensor saved_input;
+    SavedTensor saved_output;
     std::vector<Tensor> backward(const Tensor& output_grad) override;
 };
 
 class SiluNode : public AutogradNode {
 public:
-    std::uint64_t input_version = 0;
+    SavedTensor saved_input;
     std::vector<Tensor> backward(const Tensor& output_grad) override;
 };
 
 std::vector<Tensor> SigmoidNode::backward(const Tensor& output_grad) {
-    const Tensor& x = inputs[0];
-    CheckVersion(x, input_version, "SigmoidNode::backward: input modified after forward");
-    CheckVersion(y, output_version, "SigmoidNode::backward: output modified after forward");
+    const Tensor x = saved_input.unpack("SigmoidNode::backward");
+    (void)saved_output.unpack("SigmoidNode::backward");
     Tensor dx(x.shape(), x.dtype(), x.device());
-    if (x.device() == Device::kCPU) {
-        SigmoidBackwardCPU(x, output_grad, dx);
-#ifdef ENABLE_CUDA
-    } else if (x.device() == Device::kCUDA) {
-        SigmoidBackwardCUDA(x, output_grad, dx);
-#endif
-    } else {
-        throw std::logic_error("sigmoid backward: no backend for this device");
-    }
+    GetKernelTable().sigmoid_backward.call(
+        x.device(), "sigmoid backward", x, output_grad, dx);
     return {dx};
 }
 
 std::vector<Tensor> SiluNode::backward(const Tensor& output_grad) {
-    const Tensor& x = inputs[0];
-    CheckVersion(x, input_version, "SiluNode::backward: input modified after forward");
+    const Tensor x = saved_input.unpack("SiluNode::backward");
     Tensor dx(x.shape(), x.dtype(), x.device());
-    if (x.device() == Device::kCPU) {
-        SiluBackwardCPU(x, output_grad, dx);
-#ifdef ENABLE_CUDA
-    } else if (x.device() == Device::kCUDA) {
-        SiluBackwardCUDA(x, output_grad, dx);
-#endif
-    } else {
-        throw std::logic_error("silu backward: no backend for this device");
-    }
+    GetKernelTable().silu_backward.call(
+        x.device(), "silu backward", x, output_grad, dx);
     return {dx};
 }
 
@@ -66,21 +49,12 @@ Tensor sigmoid(const Tensor& x) {
     CheckNotEmpty(x, "sigmoid: empty input");
     const bool floating = CheckGradDtype(x.dtype());
     Tensor y(x.shape(), floating ? x.dtype() : Dtype::kFloat32, x.device());
-    if (x.device() == Device::kCPU) {
-        SigmoidCPU(x, y);
-#ifdef ENABLE_CUDA
-    } else if (x.device() == Device::kCUDA) {
-        SigmoidCUDA(x, y);
-#endif
-    } else {
-        throw std::logic_error("sigmoid: no backend for this device");
-    }
-    if (EnableGrad() && floating) {
+    GetKernelTable().sigmoid.call(x.device(), "sigmoid", x, y);
+    if (floating && ShouldRecordGrad({&x}, y.dtype())) {
         auto node = std::make_shared<SigmoidNode>();
-        node->inputs = {x};
-        node->input_version = x.version();
-        node->y = y.detach();
-        node->output_version = y.version();
+        node->record_inputs({x});
+        node->saved_input = SavedTensor(x);
+        node->saved_output = SavedTensor(y, /*is_output=*/true);
         y.set_grad_node(std::move(node));
     }
     return y;
@@ -91,19 +65,11 @@ Tensor silu(const Tensor& x) {
     CheckNotEmpty(x, "silu: empty input");
     const bool floating = CheckGradDtype(x.dtype());
     Tensor y(x.shape(), floating ? x.dtype() : Dtype::kFloat32, x.device());
-    if (x.device() == Device::kCPU) {
-        SiluCPU(x, y);
-#ifdef ENABLE_CUDA
-    } else if (x.device() == Device::kCUDA) {
-        SiluCUDA(x, y);
-#endif
-    } else {
-        throw std::logic_error("silu: no backend for this device");
-    }
-    if (EnableGrad() && floating) {
+    GetKernelTable().silu.call(x.device(), "silu", x, y);
+    if (floating && ShouldRecordGrad({&x}, y.dtype())) {
         auto node = std::make_shared<SiluNode>();
-        node->inputs = {x};
-        node->input_version = x.version();
+        node->record_inputs({x});
+        node->saved_input = SavedTensor(x);
         y.set_grad_node(std::move(node));
     }
     return y;

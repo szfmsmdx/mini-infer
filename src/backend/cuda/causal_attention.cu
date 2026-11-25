@@ -2,7 +2,7 @@
 #include <cuda_runtime.h>
 
 #include "mini_infer/ops/attention.h"
-#include "cuda/cuda_check.h"
+#include "runtime/cuda_check.h"
 
 namespace mtensor {
 namespace {

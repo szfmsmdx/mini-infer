@@ -8,8 +8,8 @@
 
 #include "ops/activation/kernels.h"
 #include "mini_infer/tensor/tensor.h"
-#include "ops/common/cuda_index.cuh"
-#include "ops/common/cuda_unary.cuh"
+#include "backend/common/cuda_index.cuh"
+#include "backend/common/cuda_unary.cuh"
 
 namespace mtensor {
 namespace {

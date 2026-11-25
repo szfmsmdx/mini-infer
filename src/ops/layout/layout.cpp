@@ -118,18 +118,6 @@ std::vector<std::size_t> ContiguousStride(ShapeView shape) {
 
 }  // namespace
 
-Tensor Tensor::MakeView(ShapeView shape, StrideView stride, std::size_t offset_delta) const {
-    if (!impl_) return EmptyWithOptions(dtype(), device());
-    const auto parent_offset = impl_->storage_offset;
-    if (offset_delta > std::numeric_limits<std::size_t>::max() - parent_offset) {
-        throw std::overflow_error("Tensor view: storage offset overflow");
-    }
-    Tensor result = *this;
-    result.impl_ = std::make_shared<TensorImpl>(impl_->storage, shape, stride,
-        parent_offset + offset_delta, dtype(), device(), impl_->version);
-    return result;
-}
-
 Tensor Tensor::operator[](int index) const {
     if(this->shape().empty() || index < 0 || index >= this->shape()[0]){
         throw std::out_of_range("Tensor::operator[]: index out of range");
@@ -140,9 +128,9 @@ Tensor Tensor::operator[](int index) const {
     std::vector<int> shape(this->shape().begin() + 1, this->shape().end());
     std::vector<std::size_t> stride(this->stride().begin() + 1, this->stride().end());
     Tensor result = MakeView(shape, stride, offset);
-    if (EnableGrad() && CheckGradDtype(dtype())) {
+    if (ShouldRecordGrad({this}, dtype())) {
         auto node = std::make_shared<IndexNode>();
-        node->inputs = {*this};
+        node->record_inputs({*this});
         node->index = index;
         result.set_grad_node(std::move(node));
     }
@@ -166,9 +154,9 @@ Tensor Tensor::transpose(int dim0, int dim1) const {
     stride[dim1] = this->stride()[dim0];
     Tensor result = MakeView(shape, stride);
 
-    if(EnableGrad() && CheckGradDtype(dtype())) {
+    if (ShouldRecordGrad({this}, dtype())) {
         auto node = std::make_shared<TransposeNode>();
-        node->inputs = { *this };
+        node->record_inputs({*this});
         node->dim0 = dim0;
         node->dim1 = dim1;
         result.set_grad_node(node);
@@ -196,9 +184,9 @@ Tensor Tensor::permute(const std::vector<int>& dims) const {
     }
     Tensor result = MakeView(shape, stride);
 
-    if(EnableGrad() && CheckGradDtype(dtype())){
+    if (ShouldRecordGrad({this}, dtype())){
         auto node = std::make_shared<PermuteNode>();
-        node->inputs = { *this };
+        node->record_inputs({*this});
         node->dims = dims;
         result.set_grad_node(node);
     }
@@ -235,9 +223,9 @@ Tensor Tensor::squeeze(int dim) const {
     stride.erase(stride.begin() + dim);
     Tensor res = MakeView(shape, stride);
 
-    if(EnableGrad() && CheckGradDtype(dtype())){
+    if (ShouldRecordGrad({this}, dtype())){
         auto node = std::make_shared<SqueezeNode>();
-        node->inputs = { *this };
+        node->record_inputs({*this});
         node->dim = dim;
         res.set_grad_node(node);
     }
@@ -267,10 +255,10 @@ Tensor Tensor::unsqueeze(int dim) const {
     stride.insert(stride.begin() + dim, inserted_stride);
     Tensor res = MakeView(shape, stride);
 
-    if(EnableGrad() && CheckGradDtype(dtype())){
+    if (ShouldRecordGrad({this}, dtype())){
         auto node = std::make_shared<UnsqueezeNode>();
         node->dim = dim;
-        node->inputs = { *this };
+        node->record_inputs({*this});
         res.set_grad_node(node);
     }
 
@@ -291,9 +279,9 @@ Tensor Tensor::reshape(ShapeView requested_shape) const {
     Tensor result = MakeView(shape, stride);
 
     // 保存前向输入，反向时将梯度恢复为输入 shape。
-    if(EnableGrad() && CheckGradDtype(dtype())){
+    if (ShouldRecordGrad({this}, dtype())){
         auto node = std::make_shared<ReshapeNode>();
-        node->inputs = { *this };
+        node->record_inputs({*this});
         result.set_grad_node(node);
     }
 
@@ -316,9 +304,9 @@ Tensor Tensor::narrow(int dim, int start, int length) const{
 
     const std::size_t offset_delta = static_cast<std::size_t>(start) * this->stride()[dim];
     Tensor result = MakeView(shape, this->stride(), offset_delta);
-    if (EnableGrad() && CheckGradDtype(dtype())) {
+    if (ShouldRecordGrad({this}, dtype())) {
         auto node = std::make_shared<NarrowNode>();
-        node->inputs = {*this};
+        node->record_inputs({*this});
         node->dim = dim;
         node->start = start;
         node->length = length;
@@ -340,9 +328,9 @@ Tensor Tensor::broadcast(ShapeView target_shape) const {
         }
     }
     Tensor result = MakeView(target_shape, stride);
-    if (EnableGrad() && CheckGradDtype(dtype())) {
+    if (ShouldRecordGrad({this}, dtype())) {
         auto node = std::make_shared<BroadcastNode>();
-        node->inputs = { *this };
+        node->record_inputs({*this});
         result.set_grad_node(node);
     }
 

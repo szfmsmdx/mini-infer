@@ -9,8 +9,8 @@
 
 #include "mini_infer/tensor/tensor.h"
 #include "ops/reduction/kernels.h"
-#include "ops/common/cuda_index.cuh"
-#include "cuda/cuda_check.h"
+#include "backend/common/cuda_index.cuh"
+#include "runtime/cuda_check.h"
 
 namespace mtensor {
 namespace {

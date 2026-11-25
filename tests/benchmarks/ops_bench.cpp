@@ -24,7 +24,7 @@
 #include "mini_infer/modules/linear.h"
 #include "mini_infer/ops.h"
 #ifdef OPS_BENCH_CUDA
-#include "cuda/cuda_check.h"
+#include "runtime/cuda_check.h"
 #endif
 
 namespace {

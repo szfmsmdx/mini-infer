@@ -5,11 +5,11 @@
 #include <utility>
 
 #include "mini_infer/tensor/tensor.h"
+#include "backend/dispatch.h"
 #include "tensor/check.h"
 #include "mini_infer/autograd.h"
 #include "ops/copy/nodes.h"
-#include "ops/copy/kernels.h"
-#include "memory/memory.h"
+#include "runtime/memory.h"
 #include "tensor/tensor_impl.h"
 
 namespace mtensor {
@@ -55,18 +55,9 @@ Tensor& Tensor::copy_(const Tensor& src) {
     if (is_contiguous() && src.is_contiguous()) {
         update_version();
         CopyBytes(data_ptr(), device(), src.data_ptr(), src.device(), nbytes());
-    } else if (device() == Device::kCPU) {
-        update_version();
-        CopyCPU(data_ptr(), src.data_ptr(), shape(), stride(), src.stride(), element_size());
-    } else if (device() == Device::kCUDA) {
-#ifdef ENABLE_CUDA
-        update_version();
-        CopyCUDA(data_ptr(), src.data_ptr(), PackLayout(*this), PackLayout(src), numel(), element_size());
-#else
-        throw std::logic_error("Tensor::copy_: CUDA support is disabled");
-#endif
     } else {
-        throw std::invalid_argument("Tensor::copy_: unsupported device");
+        update_version();
+        GetKernelTable().copy_strided.call(device(), "Tensor::copy_", src, *this);
     }
     return *this;
 }
@@ -78,26 +69,23 @@ Tensor Tensor::to(Device device) const {
     if (device != Device::kCPU && device != Device::kCUDA) {
         throw std::invalid_argument("Tensor::to: unsupported device");
     }
+    (void)GetDeviceContext(device);
 
     if (!is_contiguous()) {
         return clone().to(device);
     }
 
-#ifdef ENABLE_CUDA
     if (empty()) return EmptyWithOptions(dtype(), device);
 
     Tensor result(shape(), dtype(), device);
     CopyBytes(result.data_ptr(), device, data_ptr(), this->device(), nbytes());
-    if (EnableGrad() && CheckGradDtype(dtype())) {
+    if (ShouldRecordGrad({this}, result.dtype())) {
         auto node = std::make_shared<ToDeviceNode>();
-        node->inputs = {*this};
+        node->record_inputs({*this});
         node->input_device = this->device();
         result.set_grad_node(node);
     }
     return result;
-#else
-    throw std::logic_error("Tensor::to: CUDA support is disabled");
-#endif
 }
 
 Tensor Tensor::to(Dtype dtype) const {
@@ -112,21 +100,11 @@ Tensor Tensor::to(Dtype dtype) const {
     if (empty()) return EmptyWithOptions(dtype, device());
 
     Tensor result(shape(), dtype, device());
-    if (device() == Device::kCPU) {
-        CastCPU(*this, result);
-    } else if (device() == Device::kCUDA) {
-#ifdef ENABLE_CUDA
-        CastCUDA(*this, result);
-#else
-        throw std::logic_error("Tensor::to: CUDA support is disabled");
-#endif
-    } else {
-        throw std::invalid_argument("Tensor::to: unsupported device");
-    }
+    GetKernelTable().cast.call(device(), "Tensor::to(dtype)", *this, result);
 
-    if (EnableGrad() && CheckGradDtype(this->dtype())) {
+    if (CheckGradDtype(this->dtype()) && ShouldRecordGrad({this}, result.dtype())) {
         auto node = std::make_shared<ToDtypeNode>();
-        node->inputs = {*this};
+        node->record_inputs({*this});
         result.set_grad_node(node);
     }
     return result;
@@ -142,21 +120,14 @@ Tensor Tensor::clone() const {
     if (!empty()) {
         if (is_contiguous()) {
             CopyBytes(result.data_ptr(), device(), data_ptr(), device(), nbytes());
-        } else if (device() == Device::kCPU) {
-            CopyCPU(result.data_ptr(), data_ptr(), shape(), result.stride(), stride(), element_size());
         } else {
-#ifdef ENABLE_CUDA
-            CopyCUDA(result.data_ptr(), data_ptr(), PackLayout(result), PackLayout(*this),
-                     numel(), element_size());
-#else
-            throw std::logic_error("Tensor::clone: CUDA support is disabled");
-#endif
+            GetKernelTable().copy_strided.call(device(), "Tensor::clone", *this, result);
         }
     }
 
-    if(EnableGrad() && CheckGradDtype(dtype())) {
+    if (ShouldRecordGrad({this}, result.dtype())) {
         auto node = std::make_shared<CloneNode>();
-        node->inputs = { *this };
+        node->record_inputs({*this});
         result.set_grad_node(node);
     }
 

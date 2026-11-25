@@ -5,10 +5,10 @@
 #include <vector>
 
 #include "mini_infer/tensor/tensor.h"
+#include "backend/dispatch.h"
 #include "mini_infer/autograd.h"
 #include "tensor/check.h"
 #include "tensor/tensor_impl.h"
-#include "ops/fill/kernels.h"
 
 namespace mtensor {
 
@@ -67,48 +67,19 @@ Tensor& Tensor::fill_(const Tensor& value) {
     }
     CheckBroadcastWritable(*this);
 
-    if (device() == Device::kCPU) {
-        // 先保存填充值，避免 value 与目标共享存储时被覆盖。
-        std::vector<std::byte> saved_value(element_size());
-        std::memcpy(saved_value.data(), value.data_ptr(), element_size());
-        update_version();
-        FillCPU(data_ptr(), shape(), stride(), element_size(), saved_value.data());
-    } else if (device() == Device::kCUDA) {
-#ifdef ENABLE_CUDA
-        if (impl_->storage == value.impl_->storage) {
-            NogradNode guard;
-            Tensor saved_value = value.clone();
-            update_version();
-            FillCUDAFromDevice(data_ptr(), numel(), element_size(), saved_value.data_ptr(),
-                               PackLayout(*this));
-        } else {
-            update_version();
-            FillCUDAFromDevice(data_ptr(), numel(), element_size(), value.data_ptr(),
-                               PackLayout(*this));
-        }
-#else
-        throw std::logic_error("Tensor::fill_: CUDA support is disabled");
-#endif
-    } else {
-        throw std::invalid_argument("Tensor::fill_: unsupported device");
+    Tensor saved_value = value;
+    if (impl_->storage == value.impl_->storage) {
+        NogradNode guard;
+        saved_value = value.clone();
     }
+    update_version();
+    GetKernelTable().fill_tensor.call(device(), "Tensor::fill_", *this, saved_value);
     return *this;
 }
 
 Tensor& Tensor::FillValue(const void* host_value) {
-    if (device() == Device::kCPU) {
-        update_version();
-        FillCPU(data_ptr(), shape(), stride(), element_size(), host_value);
-    } else if (device() == Device::kCUDA) {
-#ifdef ENABLE_CUDA
-        update_version();
-        FillCUDA(data_ptr(), numel(), dtype(), host_value, PackLayout(*this));
-#else
-        throw std::logic_error("Tensor::fill_: CUDA support is disabled");
-#endif
-    } else {
-        throw std::invalid_argument("Tensor::fill_: unsupported device");
-    }
+    update_version();
+    GetKernelTable().fill_value.call(device(), "Tensor::fill_", *this, host_value);
     return *this;
 }
 
@@ -120,19 +91,8 @@ Tensor& Tensor::zero_() {
     const std::size_t bytes = nbytes();
     if(bytes > 0){
         CheckBroadcastWritable(*this);
-        if (device() == Device::kCPU) {
-            update_version();
-            ZeroCPU(data_ptr(), shape(), stride(), element_size());
-        } else if (device() == Device::kCUDA) {
-#ifdef ENABLE_CUDA
-            update_version();
-            ZeroCUDA(data_ptr(), PackLayout(*this), numel(), element_size());
-#else
-            throw std::logic_error("Tensor::zero_: CUDA support is disabled");
-#endif
-        } else {
-            throw std::invalid_argument("Tensor::zero_: unsupported device");
-        }
+        update_version();
+        GetKernelTable().zero.call(device(), "Tensor::zero_", *this);
     }
     return *this;
 }

@@ -12,12 +12,11 @@ namespace {
 
 class SoftmaxNode : public AutogradNode {
 public:
-    Tensor probabilities;
-    std::uint64_t probabilities_version = 0;
+    SavedTensor saved_probabilities;
     int dim = -1;
 
     std::vector<Tensor> backward(const Tensor& output_grad) override {
-        CheckVersion(probabilities, probabilities_version, "softmax: probabilities modified after forward");
+        const Tensor probabilities = saved_probabilities.unpack("softmax probabilities");
         const Tensor grad = output_grad.to(Dtype::kFloat32);
         const Tensor weighted = probabilities * grad;
         const Tensor input_grad = weighted - probabilities * weighted.sum(dim, /*keepdim=*/true);
@@ -42,11 +41,10 @@ Tensor softmax(const Tensor& x, int dim) {
         probabilities = weights / weights.sum(dim, /*keepdim=*/true);
         output = floating ? probabilities.to(x.dtype()) : probabilities;
     }
-    if (EnableGrad() && floating) {
+    if (floating && ShouldRecordGrad({&x}, output.dtype())) {
         auto node = std::make_shared<SoftmaxNode>();
-        node->inputs = {x};
-        node->probabilities = probabilities.detach();
-        node->probabilities_version = probabilities.version();
+        node->record_inputs({x});
+        node->saved_probabilities = SavedTensor(probabilities, /*is_output=*/true);
         node->dim = dim;
         output.set_grad_node(node);
     }

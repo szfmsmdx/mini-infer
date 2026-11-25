@@ -1,13 +1,15 @@
 #include <cstddef>
 #include <stdexcept>
+#include <type_traits>
 #include <cuda_bf16.h>
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
 
 #include "ops/norm/kernels.h"
+#include "backend/common/dtype_dispatch.h"
 #include "mini_infer/tensor/tensor.h"
-#include "ops/common/cuda_index.cuh"
-#include "cuda/cuda_check.h"
+#include "backend/common/cuda_index.cuh"
+#include "runtime/cuda_check.h"
 
 namespace mtensor {
 namespace {
@@ -60,11 +62,12 @@ void LaunchRMSNorm(const Tensor& x, const Tensor& weight, float eps, Tensor& out
 }  // namespace
 
 void RMSNormCUDA(const Tensor& x, const Tensor& weight, float eps, Tensor& output) {
-    switch (x.dtype()) {
-        case Dtype::kFloat16: LaunchRMSNorm<__half>(x, weight, eps, output); break;
-        case Dtype::kBFloat16: LaunchRMSNorm<__nv_bfloat16>(x, weight, eps, output); break;
-        default: throw std::invalid_argument("rms_norm CUDA: unsupported dtype");
-    }
+    DispatchFloatingDtypes(x.dtype(), [&](auto tag) {
+        using T = typename decltype(tag)::type;
+        if constexpr (std::is_same_v<T, float>) LaunchRMSNorm<float>(x, weight, eps, output);
+        else if constexpr (std::is_same_v<T, Float16>) LaunchRMSNorm<__half>(x, weight, eps, output);
+        else LaunchRMSNorm<__nv_bfloat16>(x, weight, eps, output);
+    });
 }
 
 namespace {
@@ -167,11 +170,15 @@ void LaunchRMSNormBackward(const Tensor& x, const Tensor& weight, const Tensor& 
 
 void RMSNormBackwardCUDA(const Tensor& x, const Tensor& weight, const Tensor& output_grad,
                          float eps, Tensor& dx, Tensor& dw) {
-    switch (x.dtype()) {
-        case Dtype::kFloat16: LaunchRMSNormBackward<__half>(x, weight, output_grad, eps, dx, dw); break;
-        case Dtype::kBFloat16: LaunchRMSNormBackward<__nv_bfloat16>(x, weight, output_grad, eps, dx, dw); break;
-        default: throw std::invalid_argument("rms_norm CUDA backward: unsupported dtype");
-    }
+    DispatchFloatingDtypes(x.dtype(), [&](auto tag) {
+        using T = typename decltype(tag)::type;
+        if constexpr (std::is_same_v<T, float>)
+            LaunchRMSNormBackward<float>(x, weight, output_grad, eps, dx, dw);
+        else if constexpr (std::is_same_v<T, Float16>)
+            LaunchRMSNormBackward<__half>(x, weight, output_grad, eps, dx, dw);
+        else
+            LaunchRMSNormBackward<__nv_bfloat16>(x, weight, output_grad, eps, dx, dw);
+    });
 }
 
 }  // namespace mtensor

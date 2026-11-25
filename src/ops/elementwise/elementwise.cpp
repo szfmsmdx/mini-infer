@@ -8,8 +8,9 @@
 #include <cstdint>
 
 #include "mini_infer/ops/elementwise.h"
+#include "backend/dispatch.h"
 #include "ops/elementwise/kernels.h"
-#include "ops/common/cpu_iteration.h"
+#include "backend/common/cpu_iteration.h"
 #include "tensor/check.h"
 #include "mini_infer/autograd.h"
 
@@ -32,38 +33,37 @@ public:
 
 class SqrtNode : public AutogradNode {
 public:
-    std::uint64_t input_version = 0;
+    SavedTensor saved_input;
     std::vector<Tensor> backward(const Tensor& output_grad) override;
 };
 
 class RsqrtNode : public AutogradNode {
 public:
-    std::uint64_t input_version = 0;
+    SavedTensor saved_input;
     std::vector<Tensor> backward(const Tensor& output_grad) override;
 };
 
 class ExpNode : public AutogradNode {
 public:
-    Tensor y;
-    std::uint64_t output_version = 0;
+    SavedTensor saved_output;
     std::vector<Tensor> backward(const Tensor& output_grad) override;
 };
 
 class LogNode : public AutogradNode {
 public:
-    std::uint64_t input_version = 0;
+    SavedTensor saved_input;
     std::vector<Tensor> backward(const Tensor& output_grad) override;
 };
 
 class MulNode : public AutogradNode {
 public:
-    std::uint64_t input_versions[2] = {};
+    SavedTensor saved_inputs[2];
     std::vector<Tensor> backward(const Tensor& output_grad) override;
 };
 
 class DivNode : public AutogradNode {
 public:
-    std::uint64_t input_versions[2] = {};
+    SavedTensor saved_inputs[2];
     std::vector<Tensor> backward(const Tensor& output_grad) override;
 };
 
@@ -98,31 +98,89 @@ std::pair<Tensor, Tensor> PrepareBinaryInputs(const Tensor& a, const Tensor& b) 
     return {lhs, rhs};
 }
 
+void CheckOutStorage(const Tensor& x, const Tensor& out, const char* name) {
+    CheckNotEmpty(out, name);
+    CheckSameShape(x, out, name);
+    CheckSameDevice(x, out, name);
+    if (!out.is_contiguous() || out.shares_storage(x)) {
+        throw std::invalid_argument("op_out: output must be contiguous and have independent storage");
+    }
+}
+
+Tensor& RunBinaryOut(const Tensor& a, const Tensor& b, Tensor& out,
+                     const KernelSlot<BinaryKernel>& slot, const char* name) {
+    CheckNotEmpty(a, name);
+    CheckNotEmpty(b, name);
+    CheckSameShape(a, b, name);
+    CheckSameDtype(a, b, name);
+    CheckSameDevice(a, b, name);
+    CheckOutStorage(a, out, name);
+    CheckSameDtype(a, out, name);
+    if (out.shares_storage(b)) {
+        throw std::invalid_argument("op_out: output must have independent storage");
+    }
+    out.update_version();
+    slot.call(a.device(), name, a, b, out);
+    return out;
+}
+
+Tensor& RunUnaryOut(const Tensor& x, Tensor& out, Dtype expected_dtype,
+                    const KernelSlot<UnaryKernel>& slot, const char* name) {
+    CheckNotEmpty(x, name);
+    CheckOutStorage(x, out, name);
+    if (out.dtype() != expected_dtype) {
+        throw std::invalid_argument("op_out: output dtype does not match");
+    }
+    out.update_version();
+    slot.call(x.device(), name, x, out);
+    return out;
+}
+
 }  // namespace
+
+Tensor& add_out(const Tensor& a, const Tensor& b, Tensor& out) {
+    return RunBinaryOut(a, b, out, GetKernelTable().add, "add_out");
+}
+Tensor& sub_out(const Tensor& a, const Tensor& b, Tensor& out) {
+    return RunBinaryOut(a, b, out, GetKernelTable().sub, "sub_out");
+}
+Tensor& mul_out(const Tensor& a, const Tensor& b, Tensor& out) {
+    return RunBinaryOut(a, b, out, GetKernelTable().mul, "mul_out");
+}
+Tensor& div_out(const Tensor& a, const Tensor& b, Tensor& out) {
+    return RunBinaryOut(a, b, out, GetKernelTable().div, "div_out");
+}
+Tensor& neg_out(const Tensor& x, Tensor& out) {
+    return RunUnaryOut(x, out, x.dtype(), GetKernelTable().neg, "neg_out");
+}
+Tensor& sqrt_out(const Tensor& x, Tensor& out) {
+    const Dtype dtype = CheckGradDtype(x.dtype()) ? x.dtype() : Dtype::kFloat32;
+    return RunUnaryOut(x, out, dtype, GetKernelTable().sqrt, "sqrt_out");
+}
+Tensor& rsqrt_out(const Tensor& x, Tensor& out) {
+    const Dtype dtype = CheckGradDtype(x.dtype()) ? x.dtype() : Dtype::kFloat32;
+    return RunUnaryOut(x, out, dtype, GetKernelTable().rsqrt, "rsqrt_out");
+}
+Tensor& exp_out(const Tensor& x, Tensor& out) {
+    const Dtype dtype = CheckGradDtype(x.dtype()) ? x.dtype() : Dtype::kFloat32;
+    return RunUnaryOut(x, out, dtype, GetKernelTable().exp, "exp_out");
+}
+Tensor& log_out(const Tensor& x, Tensor& out) {
+    const Dtype dtype = CheckGradDtype(x.dtype()) ? x.dtype() : Dtype::kFloat32;
+    return RunUnaryOut(x, out, dtype, GetKernelTable().log, "log_out");
+}
 
 
 Tensor add(const Tensor& a, const Tensor& b){
     auto [lhs, rhs] = PrepareBinaryInputs(a, b);
     const auto& shape = lhs.shape();
     Tensor out(shape, a.dtype(), a.device());
-    if (a.device() == Device::kCPU) {
-        AddCPU(lhs.data_ptr(), rhs.data_ptr(), out.data_ptr(), a.dtype(),
-               shape, lhs.stride(), rhs.stride(), out.stride());
-    } else if (a.device() == Device::kCUDA) {
-#ifdef ENABLE_CUDA
-        AddCUDA(lhs.data_ptr(), rhs.data_ptr(), out.data_ptr(), out.numel(), a.dtype(),
-                PackLayout(lhs), PackLayout(rhs));
-#else
-        throw std::logic_error("add: CUDA support is disabled");
-#endif
-    } else {
-        throw std::invalid_argument("add: unsupported device");
-    }
+    add_out(lhs, rhs, out);
 
     // 反向传播建图
-    if(EnableGrad() && CheckGradDtype(a.dtype())) {
+    if (ShouldRecordGrad({&lhs, &rhs}, out.dtype())) {
         auto node = std::make_shared<AddNode>();
-        node->inputs = { lhs, rhs };
+        node->record_inputs({lhs, rhs});
         out.set_grad_node(std::move(node));
     }
 
@@ -133,23 +191,11 @@ Tensor sub(const Tensor& a, const Tensor& b){
     auto [lhs, rhs] = PrepareBinaryInputs(a, b);
     const auto& shape = lhs.shape();
     Tensor out(shape, a.dtype(), a.device());
-    if (a.device() == Device::kCPU) {
-        SubCPU(lhs.data_ptr(), rhs.data_ptr(), out.data_ptr(), a.dtype(),
-               shape, lhs.stride(), rhs.stride(), out.stride());
-    } else if (a.device() == Device::kCUDA) {
-#ifdef ENABLE_CUDA
-        SubCUDA(lhs.data_ptr(), rhs.data_ptr(), out.data_ptr(), out.numel(), a.dtype(),
-                PackLayout(lhs), PackLayout(rhs));
-#else
-        throw std::logic_error("sub: CUDA support is disabled");
-#endif
-    } else {
-        throw std::invalid_argument("sub: unsupported device");
-    }
+    sub_out(lhs, rhs, out);
 
-    if (EnableGrad() && CheckGradDtype(a.dtype())) {
+    if (ShouldRecordGrad({&lhs, &rhs}, out.dtype())) {
         auto node = std::make_shared<SubNode>();
-        node->inputs = { lhs, rhs };
+        node->record_inputs({lhs, rhs});
         out.set_grad_node(std::move(node));
     }
 
@@ -160,25 +206,13 @@ Tensor mul(const Tensor& a, const Tensor& b){
     auto [lhs, rhs] = PrepareBinaryInputs(a, b);
     const auto& shape = lhs.shape();
     Tensor out(shape, a.dtype(), a.device());
-    if (a.device() == Device::kCPU) {
-        MulCPU(lhs.data_ptr(), rhs.data_ptr(), out.data_ptr(), a.dtype(),
-               shape, lhs.stride(), rhs.stride(), out.stride());
-    } else if (a.device() == Device::kCUDA) {
-#ifdef ENABLE_CUDA
-        MulCUDA(lhs.data_ptr(), rhs.data_ptr(), out.data_ptr(), out.numel(), a.dtype(),
-                PackLayout(lhs), PackLayout(rhs));
-#else
-        throw std::logic_error("mul: CUDA support is disabled");
-#endif
-    } else {
-        throw std::invalid_argument("mul: unsupported device");
-    }
+    mul_out(lhs, rhs, out);
 
-    if (EnableGrad() && CheckGradDtype(a.dtype())) {
+    if (ShouldRecordGrad({&lhs, &rhs}, out.dtype())) {
         auto node = std::make_shared<MulNode>();
-        node->inputs = { lhs, rhs };
-        node->input_versions[0] = lhs.version();
-        node->input_versions[1] = rhs.version();
+        node->record_inputs({lhs, rhs});
+        node->saved_inputs[0] = SavedTensor(lhs);
+        node->saved_inputs[1] = SavedTensor(rhs);
         out.set_grad_node(std::move(node));
     }
 
@@ -189,25 +223,13 @@ Tensor div(const Tensor& a, const Tensor& b){
     auto [lhs, rhs] = PrepareBinaryInputs(a, b);
     const auto& shape = lhs.shape();
     Tensor out(shape, a.dtype(), a.device());
-    if (a.device() == Device::kCPU) {
-        DivCPU(lhs.data_ptr(), rhs.data_ptr(), out.data_ptr(), a.dtype(),
-               shape, lhs.stride(), rhs.stride(), out.stride());
-    } else if (a.device() == Device::kCUDA) {
-#ifdef ENABLE_CUDA
-        DivCUDA(lhs.data_ptr(), rhs.data_ptr(), out.data_ptr(), out.numel(), a.dtype(),
-                PackLayout(lhs), PackLayout(rhs));
-#else
-        throw std::logic_error("div: CUDA support is disabled");
-#endif
-    } else {
-        throw std::invalid_argument("div: unsupported device");
-    }
+    div_out(lhs, rhs, out);
 
-    if (EnableGrad() && CheckGradDtype(a.dtype())) {
+    if (ShouldRecordGrad({&lhs, &rhs}, out.dtype())) {
         auto node = std::make_shared<DivNode>();
-        node->inputs = { lhs, rhs };
-        node->input_versions[0] = lhs.version();
-        node->input_versions[1] = rhs.version();
+        node->record_inputs({lhs, rhs});
+        node->saved_inputs[0] = SavedTensor(lhs);
+        node->saved_inputs[1] = SavedTensor(rhs);
         out.set_grad_node(std::move(node));
     }
 
@@ -217,22 +239,11 @@ Tensor div(const Tensor& a, const Tensor& b){
 Tensor neg(const Tensor& a){
     CheckNotEmpty(a, "Get Empty Tensor");
     Tensor out(a.shape(), a.dtype(), a.device());
-    if (a.device() == Device::kCPU) {
-        NegCPU(a.data_ptr(), out.data_ptr(), a.dtype(), a.shape(), a.stride(), out.stride());
-    } else if (a.device() == Device::kCUDA) {
-#ifdef ENABLE_CUDA
-        NegCUDA(a.data_ptr(), out.data_ptr(), a.numel(), a.dtype(),
-                PackLayout(a));
-#else
-        throw std::logic_error("neg: CUDA support is disabled");
-#endif
-    } else {
-        throw std::invalid_argument("neg: unsupported device");
-    }
+    neg_out(a, out);
 
-    if (EnableGrad() && CheckGradDtype(a.dtype())) {
+    if (ShouldRecordGrad({&a}, out.dtype())) {
         auto node = std::make_shared<NegNode>();
-        node->inputs = { a };
+        node->record_inputs({a});
         out.set_grad_node(std::move(node));
     }
 
@@ -243,20 +254,11 @@ Tensor sqrt(const Tensor& x) {
     CheckNotEmpty(x, "sqrt: empty input");
     const bool floating = CheckGradDtype(x.dtype());
     Tensor out(x.shape(), floating ? x.dtype() : Dtype::kFloat32, x.device());
-    if (x.device() == Device::kCPU) {
-        SqrtCPU(x.data_ptr(), out.data_ptr(), x.dtype(), x.shape(), x.stride());
-#ifdef ENABLE_CUDA
-    } else if (x.device() == Device::kCUDA) {
-        SqrtCUDA(x.data_ptr(), out.data_ptr(), x.dtype(), x.numel(),
-                 PackLayout(x));
-#endif
-    } else {
-        throw std::logic_error("sqrt: no backend for this device");
-    }
-    if (EnableGrad() && floating) {
+    sqrt_out(x, out);
+    if (floating && ShouldRecordGrad({&x}, out.dtype())) {
         auto node = std::make_shared<SqrtNode>();
-        node->inputs = {x};
-        node->input_version = x.version();
+        node->record_inputs({x});
+        node->saved_input = SavedTensor(x);
         out.set_grad_node(std::move(node));
     }
     return out;
@@ -266,19 +268,11 @@ Tensor rsqrt(const Tensor& x) {
     CheckNotEmpty(x, "rsqrt: empty input");
     const bool floating = CheckGradDtype(x.dtype());
     Tensor out(x.shape(), floating ? x.dtype() : Dtype::kFloat32, x.device());
-    if (x.device() == Device::kCPU) {
-        RsqrtCPU(x, out);
-#ifdef ENABLE_CUDA
-    } else if (x.device() == Device::kCUDA) {
-        RsqrtCUDA(x, out);
-#endif
-    } else {
-        throw std::logic_error("rsqrt: no backend for this device");
-    }
-    if (EnableGrad() && floating) {
+    rsqrt_out(x, out);
+    if (floating && ShouldRecordGrad({&x}, out.dtype())) {
         auto node = std::make_shared<RsqrtNode>();
-        node->inputs = {x};
-        node->input_version = x.version();
+        node->record_inputs({x});
+        node->saved_input = SavedTensor(x);
         out.set_grad_node(std::move(node));
     }
     return out;
@@ -288,20 +282,11 @@ Tensor exp(const Tensor& x) {
     CheckNotEmpty(x, "exp: empty input");
     const bool floating = CheckGradDtype(x.dtype());
     Tensor out(x.shape(), floating ? x.dtype() : Dtype::kFloat32, x.device());
-    if (x.device() == Device::kCPU) {
-        ExpCPU(x, out);
-#ifdef ENABLE_CUDA
-    } else if (x.device() == Device::kCUDA) {
-        ExpCUDA(x, out);
-#endif
-    } else {
-        throw std::logic_error("exp: no backend for this device");
-    }
-    if (EnableGrad() && floating) {
+    exp_out(x, out);
+    if (floating && ShouldRecordGrad({&x}, out.dtype())) {
         auto node = std::make_shared<ExpNode>();
-        node->inputs = {x};
-        node->y = out.detach();
-        node->output_version = out.version();
+        node->record_inputs({x});
+        node->saved_output = SavedTensor(out, /*is_output=*/true);
         out.set_grad_node(std::move(node));
     }
     return out;
@@ -311,19 +296,11 @@ Tensor log(const Tensor& x) {
     CheckNotEmpty(x, "log: empty input");
     const bool floating = CheckGradDtype(x.dtype());
     Tensor out(x.shape(), floating ? x.dtype() : Dtype::kFloat32, x.device());
-    if (x.device() == Device::kCPU) {
-        LogCPU(x, out);
-#ifdef ENABLE_CUDA
-    } else if (x.device() == Device::kCUDA) {
-        LogCUDA(x, out);
-#endif
-    } else {
-        throw std::logic_error("log: no backend for this device");
-    }
-    if (EnableGrad() && floating) {
+    log_out(x, out);
+    if (floating && ShouldRecordGrad({&x}, out.dtype())) {
         auto node = std::make_shared<LogNode>();
-        node->inputs = {x};
-        node->input_version = x.version();
+        node->record_inputs({x});
+        node->saved_input = SavedTensor(x);
         out.set_grad_node(std::move(node));
     }
     return out;
@@ -354,37 +331,6 @@ Tensor operator/(const Scalar& value, const Tensor& x) { return div(ScalarLike(v
 
 Tensor Tensor::operator-() const { return neg(*this); }
 
-namespace {
-
-template <typename T>
-void RsqrtBackwardTypedCPU(const Tensor& x, const Tensor& output_grad, Tensor& dx) {
-    const auto* input = static_cast<const std::byte*>(x.data_ptr());
-    const auto* grad = static_cast<const std::byte*>(output_grad.data_ptr());
-    auto* output = static_cast<std::byte*>(dx.data_ptr());
-    ForEachOffset(x.shape(), x.stride(), output_grad.stride(),
-        [&](std::size_t xi, std::size_t gi) {
-            T value(0), upstream(0);
-            std::memcpy(&value, input + xi * sizeof(T), sizeof(T));
-            std::memcpy(&upstream, grad + gi * sizeof(T), sizeof(T));
-            const float y = 1.0f / std::sqrt(static_cast<float>(value));
-            // y 和乘法中间结果保持 FP32，最后才写回原 dtype。
-            const T result(((-0.5f * y) * static_cast<float>(upstream)) * y * y);
-            std::memcpy(output, &result, sizeof(T));
-            output += sizeof(T);
-        });
-}
-
-void RsqrtBackwardCPU(const Tensor& x, const Tensor& output_grad, Tensor& dx) {
-    switch (x.dtype()) {
-        case Dtype::kFloat32: RsqrtBackwardTypedCPU<float>(x, output_grad, dx); break;
-        case Dtype::kFloat16: RsqrtBackwardTypedCPU<Float16>(x, output_grad, dx); break;
-        case Dtype::kBFloat16: RsqrtBackwardTypedCPU<BFloat16>(x, output_grad, dx); break;
-        default: throw std::invalid_argument("rsqrt backward: unsupported dtype");
-    }
-}
-
-}  // namespace
-
 std::vector<Tensor> AddNode::backward(const Tensor& output_grad) {
     return {output_grad, output_grad};
 }
@@ -398,48 +344,37 @@ std::vector<Tensor> NegNode::backward(const Tensor& output_grad) {
 }
 
 std::vector<Tensor> SqrtNode::backward(const Tensor& output_grad) {
-    CheckVersion(inputs[0], input_version, "SqrtNode::backward: input modified after forward");
-    const Tensor root = sqrt(inputs[0]);
+    const Tensor root = sqrt(saved_input.unpack("SqrtNode::backward"));
     return {output_grad / (root + root)};
 }
 
 std::vector<Tensor> RsqrtNode::backward(const Tensor& output_grad) {
-    const Tensor& x = inputs[0];
-    CheckVersion(x, input_version, "RsqrtNode::backward: input modified after forward");
+    const Tensor x = saved_input.unpack("RsqrtNode::backward");
     Tensor dx(x.shape(), x.dtype(), x.device());
-    if (x.device() == Device::kCPU) {
-        RsqrtBackwardCPU(x, output_grad, dx);
-#ifdef ENABLE_CUDA
-    } else if (x.device() == Device::kCUDA) {
-        RsqrtBackwardCUDA(x, output_grad, dx);
-#endif
-    } else {
-        throw std::logic_error("rsqrt backward: no backend for this device");
-    }
+    GetKernelTable().rsqrt_backward.call(
+        x.device(), "rsqrt backward", x, output_grad, dx);
     return {dx};
 }
 
 std::vector<Tensor> ExpNode::backward(const Tensor& output_grad) {
-    CheckVersion(y, output_version, "ExpNode::backward: output modified after forward");
+    const Tensor y = saved_output.unpack("ExpNode::backward");
     return {output_grad * y};
 }
 
 std::vector<Tensor> LogNode::backward(const Tensor& output_grad) {
-    CheckVersion(inputs[0], input_version, "LogNode::backward: input modified after forward");
-    return {output_grad / inputs[0]};
+    return {output_grad / saved_input.unpack("LogNode::backward")};
 }
 
 std::vector<Tensor> MulNode::backward(const Tensor& output_grad) {
-    CheckVersion(inputs[0], input_versions[0], "MulNode::backward: input modified after forward");
-    CheckVersion(inputs[1], input_versions[1], "MulNode::backward: input modified after forward");
-    return {mul(output_grad, inputs[1]), mul(output_grad, inputs[0])};
+    const Tensor a = saved_inputs[0].unpack("MulNode::backward");
+    const Tensor b = saved_inputs[1].unpack("MulNode::backward");
+    return {mul(output_grad, b), mul(output_grad, a)};
 }
 
 std::vector<Tensor> DivNode::backward(const Tensor& output_grad) {
-    CheckVersion(inputs[0], input_versions[0], "DivNode::backward: input modified after forward");
-    CheckVersion(inputs[1], input_versions[1], "DivNode::backward: input modified after forward");
-    return {div(output_grad, inputs[1]),
-            -output_grad * ((inputs[0] / inputs[1]) / inputs[1])};
+    const Tensor a = saved_inputs[0].unpack("DivNode::backward");
+    const Tensor b = saved_inputs[1].unpack("DivNode::backward");
+    return {div(output_grad, b), -output_grad * ((a / b) / b)};
 }
 
 }  // namespace mtensor

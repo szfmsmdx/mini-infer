@@ -12,7 +12,7 @@
 
 #include "mini_infer/autograd.h"
 #include "mini_infer/tensor/tensor.h"
-#include "memory/memory.h"
+#include "runtime/memory.h"
 
 namespace {
 
