@@ -61,6 +61,19 @@
 
 `train_gpt` 用 Tiny Shakespeare 训练小型 GPT，只保存最后一份 checkpoint。`chat_gpt` 加载它进行续写。两者当前使用字节 tokenizer，BPE 有独立的编解码和回归测试。[训练说明](examples/nanogpt/README.md)
 
+## PR 的 CI 与审查
+
+- 先开 Draft PR。GitHub Actions 跑 `C++ correctness`；失败时留在 Draft。当前提交的检查通过、且改动准备好审查后，由用户点 **Ready for review**。
+- 启用 [Codex 原生自动审查](https://learn.chatgpt.com/docs/third-party/github#enable-automatic-reviews) 后，Codex GitHub App 会处理符合设置的 PR 事件。需要手动重审时，在 PR 评论 `@codex review`。
+- CI 不修改草稿状态、不代发审查评论、不合并。合入 `main` 后仍跑 C++ 正确性检查。
+
+## Code Review Rules
+
+- 对照相邻代码与本文件的约定，检查命名、include 顺序、公开接口和内部实现的边界，以及 CUDA/CPU 分支、CMake 注册和测试引用是否一致。
+- 检查已有校验、布局遍历、复制和版本检查能否复用。重点跟踪 Tensor 视图、CUDA 分配和其他资源在失败、拷贝、设备迁移和原地写入后的所有权与状态。
+- 沿输入校验、后端执行和反向传播核对数据流。指出具体的行为回归、隐式副作用和不必要的跨模块依赖。
+- 每条发现写清文件与行号、触发条件、实际后果和最小修正建议。没有可操作发现时，明确说明；不把个人风格偏好当作问题。
+
 ## 构建与验证
 
 - C++17，CMake 库目标为 `mini_infer`。公开 include 根目录是 `include/`，库内部使用 `src/`。构建产物放在 Git 忽略的 `build/`。
