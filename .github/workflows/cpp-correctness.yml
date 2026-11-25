@@ -1,4 +1,4 @@
-name: C++ correctness
+name: C++ correctness (Codex probe)
 
 on:
   pull_request:
@@ -26,3 +26,34 @@ jobs:
 
       - name: Run C++ correctness tests
         run: ctest --test-dir build/ci --output-on-failure --parallel 2 --exclude-regex '^precision_cpu_test$'
+
+  request-codex-probe:
+    needs: cpp-correctness
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.number == 9 &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !github.event.pull_request.draft
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    concurrency:
+      group: codex-probe-${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Request review of verified commit
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const pull = context.payload.pull_request;
+            const { owner, repo } = context.repo;
+            const { data: current } = await github.rest.pulls.get({
+              owner, repo, pull_number: pull.number,
+            });
+            if (current.state !== 'open' || current.draft || current.head.sha !== pull.head.sha) {
+              return;
+            }
+            const { data: comment } = await github.rest.issues.createComment({
+              owner, repo, issue_number: pull.number, body: '@codex review',
+            });
+            core.info(`Requested review for ${pull.head.sha}: ${comment.html_url}`);
