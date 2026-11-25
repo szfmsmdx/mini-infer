@@ -42,7 +42,7 @@
 | 目录 | 职责 |
 | --- | --- |
 | `include/mini_infer/` | 公开头文件 |
-| `src/tensor/`、`src/device/` | Tensor 元数据、存储所有权、内存分配和释放 |
+| `src/tensor/`、`src/memory/`、`src/cuda/` | Tensor 元数据、存储所有权、内存分配和释放；CUDA 错误检查宏 |
 | `src/ops/` | 按类别组织算子入口、反向节点和 CPU/CUDA 实现。因果注意力、交叉熵、RoPE 分别在 `attention/`、`loss_fn/`、`position_embedding/` |
 | `src/autograd/` | 建图开关、拓扑排序和梯度累加 |
 | `src/modules/`、`src/layers/` | `Module`、`Linear`、`RMSNorm`；`Embedding` 和 `SimpleDecoderLayer` |

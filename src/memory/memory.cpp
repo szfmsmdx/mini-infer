@@ -4,8 +4,8 @@
 #include <new>
 #include <string>
 
-#include "device/memory.h"
-#include "device/runtime.h"
+#include "memory/memory.h"
+#include "cuda/cuda_check.h"
 #include "utils/logger.h"
 
 namespace mtensor {

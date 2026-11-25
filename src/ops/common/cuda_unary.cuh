@@ -3,8 +3,8 @@
 #include <cuda_runtime.h>
 
 #include "ops/common/cuda_layout.h"
-#include "mini_infer/core/tensor.h"
-#include "device/memory.h"
+#include "mini_infer/tensor/tensor.h"
+#include "cuda/cuda_check.h"
 
 namespace mtensor {
 

@@ -7,7 +7,7 @@
 #include <cuda_runtime.h>
 
 #include "ops/activation/kernels.h"
-#include "mini_infer/core/tensor.h"
+#include "mini_infer/tensor/tensor.h"
 #include "ops/common/cuda_index.cuh"
 #include "ops/common/cuda_unary.cuh"
 

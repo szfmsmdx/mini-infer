@@ -6,7 +6,7 @@
 
 namespace mtensor {
 
-// Convert a logical index to an element offset in the input view.
+// 把逻辑下标转换成输入视图里的元素偏移。
 __device__ inline std::size_t GetNumelIndex(
     std::size_t index, const CUDALayout& layout
 ) {

@@ -5,7 +5,7 @@
 #include <utility>
 #include <vector>
 
-#include "mini_infer/core/tensor.h"
+#include "mini_infer/tensor/tensor.h"
 #include "tensor/check.h"
 #include "tensor/tensor_impl.h"
 #include "mini_infer/autograd.h"
@@ -119,6 +119,7 @@ std::vector<std::size_t> ContiguousStride(ShapeView shape) {
 }  // namespace
 
 Tensor Tensor::MakeView(ShapeView shape, StrideView stride, std::size_t offset_delta) const {
+    if (!impl_) return EmptyWithOptions(dtype(), device());
     const auto parent_offset = impl_->storage_offset;
     if (offset_delta > std::numeric_limits<std::size_t>::max() - parent_offset) {
         throw std::overflow_error("Tensor view: storage offset overflow");

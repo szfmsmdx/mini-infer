@@ -10,7 +10,7 @@
 #include <vector>
 
 #include "mini_infer/autograd.h"
-#include "mini_infer/core/tensor.h"
+#include "mini_infer/tensor/tensor.h"
 
 namespace {
 

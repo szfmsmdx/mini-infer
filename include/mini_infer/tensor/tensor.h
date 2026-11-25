@@ -7,10 +7,10 @@
 #include <stdexcept>
 #include <vector>
 
-#include "mini_infer/core/device.h"
-#include "mini_infer/core/dtype.h"
-#include "mini_infer/core/layout_view.h"
-#include "mini_infer/core/scalar.h"
+#include "mini_infer/tensor/device.h"
+#include "mini_infer/tensor/dtype.h"
+#include "mini_infer/tensor/layout_view.h"
+#include "mini_infer/tensor/scalar.h"
 
 namespace mtensor{
 
@@ -41,7 +41,7 @@ public:
     Tensor& operator=(Tensor&&) noexcept;
 
     // 基础属性：形状、布局、数据类型与设备。
-    // Borrowed views; do not keep them after releasing the owning Tensor.
+    // 返回借用的只读视图；原 Tensor 释放后不要再使用。
     ShapeView shape() const;
     StrideView stride() const;
     int size(std::size_t dim) const;
@@ -145,7 +145,7 @@ private:
     AutogradMetadata& ensure_autograd_metadata();
 
     std::shared_ptr<TensorImpl> impl_;
-    // A noexcept move leaves a storage-less handle with the source options.
+    // noexcept 移动后，源对象成为没有 Storage 的句柄，只保留下面的 dtype 和 device。
     Dtype moved_from_dtype_ = Dtype::kFloat32;
     Device moved_from_device_ = Device::kCPU;
 };

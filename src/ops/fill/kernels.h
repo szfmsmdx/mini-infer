@@ -3,8 +3,8 @@
 #include <cstddef>
 
 #include "ops/common/cuda_layout.h"
-#include "mini_infer/core/layout_view.h"
-#include "mini_infer/core/dtype.h"
+#include "mini_infer/tensor/layout_view.h"
+#include "mini_infer/tensor/dtype.h"
 
 namespace mtensor {
 

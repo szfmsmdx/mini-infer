@@ -61,7 +61,7 @@ add_library(mini_infer STATIC
     src/tensor/check.cpp
     src/tensor/print.cpp
     src/utils/logger.cpp
-    src/device/memory.cpp
+    src/memory/memory.cpp
 )
 
 target_include_directories(mini_infer

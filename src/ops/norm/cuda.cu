@@ -5,9 +5,9 @@
 #include <cuda_runtime.h>
 
 #include "ops/norm/kernels.h"
-#include "mini_infer/core/tensor.h"
+#include "mini_infer/tensor/tensor.h"
 #include "ops/common/cuda_index.cuh"
-#include "device/memory.h"
+#include "cuda/cuda_check.h"
 
 namespace mtensor {
 namespace {

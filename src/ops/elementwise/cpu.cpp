@@ -9,7 +9,7 @@
 
 #include "ops/elementwise/kernels.h"
 #include "ops/common/cpu_iteration.h"
-#include "mini_infer/core/tensor.h"
+#include "mini_infer/tensor/tensor.h"
 
 namespace mtensor {
 namespace {

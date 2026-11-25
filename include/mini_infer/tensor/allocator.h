@@ -3,13 +3,13 @@
 #include <cstddef>
 #include <memory>
 
-#include "mini_infer/core/device.h"
+#include "mini_infer/tensor/device.h"
 
 namespace mtensor {
 
 using DataDeleter = void (*)(void*) noexcept;   // 函数指针
 
-// DataPtr owns one allocation; moving transfers its device and deleter.
+// DataPtr 独占一次分配；移动后，设备和释放函数随之转移。
 class DataPtr {
 public:
     DataPtr(void* data, Device device, DataDeleter deleter) noexcept

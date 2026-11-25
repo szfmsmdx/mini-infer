@@ -16,8 +16,8 @@
 
 #include "bench_common.h"
 #include "ops/matmul/kernels.h"
-#include "mini_infer/core/tensor.h"
-#include "device/memory.h"
+#include "mini_infer/tensor/tensor.h"
+#include "cuda/cuda_check.h"
 
 namespace {
 constexpr int kSamples = 10;

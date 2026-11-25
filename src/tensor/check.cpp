@@ -1,7 +1,7 @@
 #include <stdexcept>
 
 #include "tensor/check.h"
-#include "mini_infer/core/tensor.h"
+#include "mini_infer/tensor/tensor.h"
 
 namespace mtensor {
 

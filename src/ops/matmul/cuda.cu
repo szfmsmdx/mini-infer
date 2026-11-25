@@ -7,7 +7,7 @@
 #include <cuda_runtime.h>
 
 #include "ops/matmul/kernels.h"
-#include "device/memory.h"
+#include "cuda/cuda_check.h"
 
 namespace mtensor {
 namespace {

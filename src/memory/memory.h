@@ -2,7 +2,7 @@
 
 #include <cstddef>
 
-#include "mini_infer/core/allocator.h"
+#include "mini_infer/tensor/allocator.h"
 
 namespace mtensor {
 

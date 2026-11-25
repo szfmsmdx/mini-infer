@@ -2,7 +2,7 @@
 
 #include <cstddef>
 
-#include "mini_infer/core/layout_view.h"
+#include "mini_infer/tensor/layout_view.h"
 
 namespace mtensor {
 

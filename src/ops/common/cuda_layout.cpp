@@ -1,11 +1,11 @@
 #include <algorithm>
 
 #include "ops/common/cuda_layout.h"
-#include "mini_infer/core/tensor.h"
+#include "mini_infer/tensor/tensor.h"
 
 namespace mtensor {
 
-// Only the active dimensions are copied. No device allocations or borrowed pointers.
+// 只拷贝有效的维度。不做设备分配，也不借用指针。
 CUDALayout PackLayout(const Tensor& tensor) {
     CUDALayout result{};
     result.dim = tensor.dim();

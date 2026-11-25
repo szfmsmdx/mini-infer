@@ -11,7 +11,7 @@
 #include "mini_infer/autograd.h"
 #include "ops/copy/nodes.h"
 #include "mini_infer/ops/elementwise.h"
-#include "mini_infer/core/tensor.h"
+#include "mini_infer/tensor/tensor.h"
 
 namespace {
 using namespace mtensor;

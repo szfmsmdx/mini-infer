@@ -7,8 +7,8 @@
 #include <vector>
 
 #include "tensor/print.h"
-#include "mini_infer/core/tensor.h"
-#include "device/runtime.h"
+#include "mini_infer/tensor/tensor.h"
+#include "memory/memory.h"
 #include "tensor/check.h"
 
 namespace mtensor {

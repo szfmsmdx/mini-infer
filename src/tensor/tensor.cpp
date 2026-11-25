@@ -5,8 +5,8 @@
 #include <stdexcept>
 #include <utility>
 
-#include "mini_infer/core/tensor.h"
-#include "device/runtime.h"
+#include "mini_infer/tensor/tensor.h"
+#include "memory/memory.h"
 #include "mini_infer/autograd.h"
 #include "mini_infer/ops/elementwise.h"
 #include "tensor/tensor_impl.h"

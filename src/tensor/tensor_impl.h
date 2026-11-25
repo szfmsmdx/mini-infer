@@ -4,9 +4,9 @@
 #include <cstdint>
 #include <memory>
 
-#include "mini_infer/core/dtype.h"
-#include "mini_infer/core/layout_view.h"
-#include "mini_infer/core/storage.h"
+#include "mini_infer/tensor/dtype.h"
+#include "mini_infer/tensor/layout_view.h"
+#include "mini_infer/tensor/storage.h"
 
 namespace mtensor {
 
@@ -20,9 +20,9 @@ struct TensorImpl {
                std::shared_ptr<std::uint64_t> version = {});
 
     std::shared_ptr<Storage> storage;
-    std::size_t storage_offset;  // elements from Storage base, not from a parent view
+    std::size_t storage_offset;  // 相对 Storage 起点的元素偏移，不是相对父视图
     Dtype dtype;
-    Device empty_device;  // device for storage-less Tensors
+    Device empty_device;  // 仅在没有 Storage 时使用；其余情况以 Storage 的设备为准
     int rank;
     int shape[kMaxDim]{};
     std::size_t stride[kMaxDim]{};

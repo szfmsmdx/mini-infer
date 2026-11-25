@@ -24,7 +24,7 @@ RoPE 的公开声明在 [`mini_infer/ops/position_embedding.h`](../../include/mi
 | 连续布局 | `src/tensor/tensor.cpp`、`layout/layout.cpp` | Tensor 构造和 reshape |
 | `PrepareBinaryInputs()` | `elementwise/elementwise.cpp` | add、sub、mul、div 的检查和广播准备 |
 | `Tensor::MakeView()` | `layout/layout.cpp` | 8 种视图操作的共享存储、独立梯度元数据和元素偏移校验 |
-| `GetAllocator()`、`CopyBytes()` | `src/device/memory.*` | 分配数据、绑定释放器、复制连续字节 |
+| `GetAllocator()`、`CopyBytes()` | `src/memory/memory.*` | 分配数据、绑定释放器、复制连续字节 |
 | `ForEachOffset()` | `common/cpu_iteration.h` | CPU 逐元素算子和 dtype 转换的 stride 遍历 |
 | `LaunchUnary()`、`LaunchBackward()` | `common/cuda_unary.cuh` | 一元算子的 CUDA 启动参数和 stride 准备 |
 
@@ -100,7 +100,7 @@ add(a, b)                                src/ops/elementwise/elementwise.cpp
 
 CUDA 启动函数按 dtype 分发 kernel。输入指针指向各视图的首元素，shape 和 stride 作为 `CUDALayout` 按值传入。
 
-`mini_infer/ops/elementwise.h` 包含 `mini_infer/core/tensor.h`。Tensor 运算符在头文件里声明，在 `src/ops/elementwise/elementwise.cpp` 中转发给对应算子。
+`mini_infer/ops/elementwise.h` 包含 `mini_infer/tensor/tensor.h`。Tensor 运算符在头文件里声明，在 `src/ops/elementwise/elementwise.cpp` 中转发给对应算子。
 
 ### 按 dtype 分发
 

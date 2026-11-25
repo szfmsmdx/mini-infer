@@ -4,12 +4,12 @@
 #include <stdexcept>
 #include <utility>
 
-#include "mini_infer/core/tensor.h"
+#include "mini_infer/tensor/tensor.h"
 #include "tensor/check.h"
 #include "mini_infer/autograd.h"
 #include "ops/copy/nodes.h"
 #include "ops/copy/kernels.h"
-#include "device/runtime.h"
+#include "memory/memory.h"
 #include "tensor/tensor_impl.h"
 
 namespace mtensor {

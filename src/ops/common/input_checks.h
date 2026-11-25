@@ -4,7 +4,7 @@
 #include <stdexcept>
 
 #include "mini_infer/autograd.h"
-#include "mini_infer/core/tensor.h"
+#include "mini_infer/tensor/tensor.h"
 #include "tensor/check.h"
 
 namespace mtensor {

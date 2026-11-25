@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <stdexcept>
 
-#include "mini_infer/core/tensor.h"
+#include "mini_infer/tensor/tensor.h"
 
 namespace mtensor_test {
 

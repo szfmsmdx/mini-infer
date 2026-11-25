@@ -4,7 +4,7 @@
 #include <stdexcept>
 #include <vector>
 
-#include "mini_infer/core/tensor.h"
+#include "mini_infer/tensor/tensor.h"
 #include "mini_infer/autograd.h"
 #include "tensor/check.h"
 #include "tensor/tensor_impl.h"

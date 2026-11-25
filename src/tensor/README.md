@@ -8,10 +8,10 @@
 
 | 位置 | 内容 |
 | --- | --- |
-| `include/mini_infer/core/` | `tensor.h`、`scalar.h`、`dtype.h` |
+| `include/mini_infer/tensor/` | `tensor.h`、`scalar.h`、`dtype.h` |
 | `src/tensor/` | 构造、元数据、校验和打印 |
 | `src/ops/` | `layout/` 管视图，`copy/` 管复制和迁移，`fill/` 管填充和清零 |
-| `src/device/` | CPU/CUDA 内存分配与释放 |
+| `src/memory/` | CPU/CUDA 内存分配、主机与设备之间复制 |
 
 Tensor 拷贝共享同一个 `TensorImpl`；视图创建新 `TensorImpl`，但共享 `Storage` 和写入版本。
 

@@ -6,7 +6,7 @@
 #include <type_traits>
 #include <vector>
 
-#include "mini_infer/core/tensor.h"
+#include "mini_infer/tensor/tensor.h"
 #include "ops/reduction/kernels.h"
 
 namespace mtensor {
