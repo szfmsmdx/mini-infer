@@ -63,9 +63,9 @@
 
 ## PR 的 CI 与审查
 
-- 先开 Draft PR。GitHub Actions 跑 `C++ correctness`；失败时留在 Draft。当前提交的检查通过、且改动准备好审查后，由用户点 **Ready for review**。
-- 启用 [Codex 原生自动审查](https://learn.chatgpt.com/docs/third-party/github#enable-automatic-reviews) 后，Codex GitHub App 会处理符合设置的 PR 事件。需要手动重审时，在 PR 评论 `@codex review`。
-- CI 不修改草稿状态、不代发审查评论、不合并。合入 `main` 后仍跑 C++ 正确性检查。
+- 改动可以审查时，直接创建非 Draft PR。GitHub Actions 跑 `C++ correctness`，Codex GitHub App 根据 PR 创建事件启动原生审查；两者独立运行，审查不等 CI。
+- 在 [Codex 设置](https://learn.chatgpt.com/docs/third-party/github#enable-automatic-reviews) 为本仓库开启自动审查，并确认生效的 `Review trigger` 包含创建 PR。如果仓库使用 `Follow personal preferences`，检查个人触发设置。需要手动补审或重审时，在 PR 评论 `@codex review`。
+- 合入前查看当前提交的测试和审查结果，由用户决定是否合并。Actions 不改变 PR 状态，也不代发审查请求。合入 `main` 后仍跑 C++ 正确性检查。
 
 ## Code Review Rules
 
