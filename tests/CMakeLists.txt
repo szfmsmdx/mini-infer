@@ -238,6 +238,3 @@ if(ENABLE_CUDA)
     add_test(NAME elementwise_cuda_test COMMAND elementwise_cuda_test)
     set_tests_properties(elementwise_cuda_test PROPERTIES SKIP_RETURN_CODE 77)
 endif()
-
-# Temporary failing check for the Codex CI gate experiment.
-add_test(NAME codex_ci_gate_probe COMMAND "${CMAKE_COMMAND}" -E false)
