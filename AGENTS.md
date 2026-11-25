@@ -63,9 +63,9 @@
 
 ## PR 的 CI 与审查
 
-- 改动可以审查时，直接创建非 Draft PR。GitHub Actions 跑 `C++ correctness`，Codex GitHub App 根据 PR 创建事件启动原生审查；两者独立运行，审查不等 CI。
-- 在 [Codex 设置](https://learn.chatgpt.com/docs/third-party/github#enable-automatic-reviews) 为本仓库开启自动审查，并确认生效的 `Review trigger` 包含创建 PR。如果仓库使用 `Follow personal preferences`，检查个人触发设置。
-- 合入前核对 PR 最新提交（head SHA）：`C++ correctness` 已通过，Codex 已完成对同一提交的审查。后续 push 不一定触发重审；如果最新提交还没有启动审查，在 PR 评论 `@codex review` 补审，已在审则等结果。由用户决定是否合并。
+- 改动可以审查时，直接创建非 Draft PR。开 PR 或向 PR 分支推送新提交时，GitHub Actions 跑 `C++ correctness`，Codex GitHub App 发起原生审查。两者独立运行，审查不等 CI。
+- 在 [Codex 的 Code Review 设置](https://chatgpt.com/settings/code-review)中，为 `szfmsmdx/mini-infer` 选择 `All PRs` 和 `On every push`，让后续 push 自动触发重审。
+- 合入前核对 PR 最新提交（head SHA）：`C++ correctness` 已通过，Codex 已完成对同一提交的审查。自动审查未触发时，在 PR 评论 `@codex review` 补审。由用户决定是否合并。
 - Actions 不改变 PR 状态，也不代发审查请求。合入 `main` 后仍跑 C++ 正确性检查。
 
 ## Code Review Rules
