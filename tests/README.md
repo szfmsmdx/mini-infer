@@ -2,6 +2,8 @@
 
 正确性测试在 `tests/CMakeLists.txt` 注册到 CTest。与 ggml 对比的性能程序由 `tests/benchmarks/CMakeLists.txt` 按需构建。
 
+GitHub 的 [C++ correctness](../.github/workflows/cpp-correctness.yml) 在 PR 和推送到 `main` 时运行。该任务不启用 CUDA 或 Python，并跳过 `precision_cpu_test`。
+
 | 目录 | 内容 |
 | --- | --- |
 | `tensor/` | Tensor、布局、标量和 dtype |
