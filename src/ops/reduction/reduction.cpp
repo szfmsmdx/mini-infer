@@ -25,8 +25,7 @@ Tensor sum(const Tensor& input) {
                input.stride(), input.numel());
     } else if (input.device() == Device::kCUDA) {
 #ifdef ENABLE_CUDA
-        SumCUDA(input.data_ptr(), result.data_ptr(), input.dtype(), input.shape_cuda(),
-                input.stride_cuda(), input.dim(), input.numel());
+        SumCUDA(input.data_ptr(), result.data_ptr(), input.dtype(), PackLayout(input), input.numel());
 #else
         throw std::logic_error("sum: CUDA support is disabled");
 #endif
@@ -49,7 +48,7 @@ Tensor sum(const Tensor& input, int dim, bool keepdim) {
 
     const bool floating = CheckGradDtype(input.dtype());
 
-    auto output_shape = input.shape();
+    auto output_shape = input.shape().to_vector();
     if (keepdim) output_shape[dim] = 1;
     else output_shape.erase(output_shape.begin() + dim);
     
@@ -59,8 +58,7 @@ Tensor sum(const Tensor& input, int dim, bool keepdim) {
                input.stride(), input.numel(), dim);
     } else if (input.device() == Device::kCUDA) {
 #ifdef ENABLE_CUDA
-        SumCUDA(input.data_ptr(), result.data_ptr(), input.dtype(), input.shape_cuda(),
-                input.stride_cuda(), input.dim(), result.numel(), dim);
+        SumCUDA(input.data_ptr(), result.data_ptr(), input.dtype(), PackLayout(input), result.numel(), dim);
 #else
         throw std::logic_error("sum: CUDA support is disabled");
 #endif
@@ -149,7 +147,7 @@ Tensor ReduceExtrema(const Tensor& input, std::optional<int> dim, bool keepdim, 
         CheckDim(axis, input.shape().size(), "max/min: dim out of range");
         for (int i = axis + 1; i < input.dim(); ++i) inner_size *= input.size(i);
 
-        output_shape = input.shape();
+        output_shape = input.shape().to_vector();
         if (keepdim) output_shape[axis] = 1;
         else output_shape.erase(output_shape.begin() + axis);
     }
@@ -209,7 +207,7 @@ std::vector<Tensor> SumNode::backward(const Tensor& output_grad) {
         return {output_grad.broadcast(input_shape)};
     }
 
-    auto grad_shape = input_shape;
+    auto grad_shape = input_shape.to_vector();
     grad_shape[dim] = 1;
 
     Tensor grad = output_grad.reshape(grad_shape);

@@ -6,7 +6,7 @@
 #include <limits>
 #include <stdexcept>
 
-#include "mini_infer/tensor.h"
+#include "mini_infer/tensor/tensor.h"
 
 namespace {
 

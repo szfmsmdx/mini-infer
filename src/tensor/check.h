@@ -4,7 +4,8 @@
 #include <cstdint>
 #include <vector>
 
-#include "mini_infer/dtype.h"
+#include "mini_infer/tensor/layout_view.h"
+#include "mini_infer/tensor/dtype.h"
 
 namespace mtensor {
 class Tensor;
@@ -15,7 +16,6 @@ void CheckSameShape(const Tensor& a, const Tensor& b, const char* message);
 void CheckSameDtype(const Tensor& a, const Tensor& b, const char* message);
 void CheckSameDevice(const Tensor& a, const Tensor& b, const char* message);
 void CheckFloatingDtype(Dtype dtype, const char* message);
-void CheckNonnegativeShape(const std::vector<int>& shape, const char* message);
 
 // 指针检查抛 logic_error；维度必须在 [0, ndim) 内，否则抛 out_of_range。
 void CheckDataPointer(const Tensor& tensor, const char* message);
@@ -23,6 +23,6 @@ void CheckVersion(const Tensor& tensor, std::uint64_t expected, const char* mess
 void CheckDim(int dim, std::size_t ndim, const char* message);
 void CheckBroadcastWritable(const Tensor& tensor);
 void CheckPermutation(const std::vector<int>& dims, std::size_t ndim);
-void CheckBroadcastTarget(const std::vector<int>& shape, const std::vector<int>& target_shape);
+void CheckBroadcastTarget(ShapeView shape, ShapeView target_shape);
 
 }  // namespace mtensor

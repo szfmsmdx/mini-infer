@@ -9,7 +9,8 @@
 #include <utility>
 #include <vector>
 
-#include "mini_infer/tensor.h"
+#include "mini_infer/autograd.h"
+#include "mini_infer/tensor/tensor.h"
 
 namespace {
 
@@ -176,6 +177,40 @@ void TestSharedCopies() {
     CheckValues<float>(assigned, {4, 4, 4});
     assigned.zero_();  // 原对象释放后，最后一个共享持有者仍能读写。
     CheckValues<float>(assigned, {0, 0, 0});
+}
+
+void TestRankLimitAndNestedOffset() {
+    mtensor::NogradNode guard;
+    const std::vector<int> shape8(8, 1);
+    const std::vector<int> shape9(9, 1);
+    Tensor wide(shape8, Dtype::kFloat32);
+    Check(wide.dim() == 8 && wide.numel() == 1, "rank 8 must be supported");
+    const auto rejects = [](auto make) {
+        try {
+            (void)make();
+        } catch (const std::invalid_argument&) {
+            return;
+        }
+        throw std::runtime_error("rank 9 must be rejected");
+    };
+    rejects([&] { return Tensor(shape9, Dtype::kFloat32); });
+    rejects([&] { return wide.unsqueeze(0); });
+    rejects([&] { return wide.reshape(shape9); });
+    rejects([&] { return wide.broadcast(shape9); });
+
+    float values[] = {0, 1, 2, 3, 4, 5};
+    Tensor source(values, {2, 3}, Dtype::kFloat32);
+    Tensor copy = source;
+    Check(copy.shape().data() == source.shape().data(), "copy must share layout");
+    Tensor row = source[1];
+    Tensor tail = row.narrow(0, 1, 2).unsqueeze(0);
+    Check(tail.shape() == std::vector<int>({1, 2}), "nested view shape");
+    Check(tail.data_ptr() == static_cast<float*>(source.data_ptr()) + 4, "nested view offset");
+    Check(tail.detach().data_ptr() == tail.data_ptr(), "detach must retain the view offset");
+    source = Tensor();
+    row = Tensor();
+    copy = Tensor();
+    CheckValues<float>(tail, {4, 5});
 }
 
 void TestMove() {
@@ -572,6 +607,7 @@ int main() {
         TestScalar();
         TestSharedCopies();
         TestMove();
+        TestRankLimitAndNestedOffset();
         TestViewsAndLifetime();
         TestClone();
         TestCopyElements();

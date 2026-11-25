@@ -4,7 +4,7 @@
 #include <functional>
 #include <vector>
 
-#include "mini_infer/tensor.h"
+#include "mini_infer/tensor/tensor.h"
 
 namespace mtensor {
 

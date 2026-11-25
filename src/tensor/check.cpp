@@ -1,7 +1,7 @@
 #include <stdexcept>
 
 #include "tensor/check.h"
-#include "mini_infer/tensor.h"
+#include "mini_infer/tensor/tensor.h"
 
 namespace mtensor {
 
@@ -24,12 +24,6 @@ void CheckSameDevice(const Tensor& a, const Tensor& b, const char* message) {
 void CheckFloatingDtype(Dtype dtype, const char* message) {
     if (dtype != Dtype::kFloat32 && dtype != Dtype::kFloat16 && dtype != Dtype::kBFloat16)
         throw std::invalid_argument(message);
-}
-
-void CheckNonnegativeShape(const std::vector<int>& shape, const char* message) {
-    for (int dimension : shape) {
-        if (dimension < 0) throw std::invalid_argument(message);
-    }
 }
 
 void CheckDataPointer(const Tensor& tensor, const char* message) {
@@ -68,7 +62,7 @@ void CheckPermutation(const std::vector<int>& dims, std::size_t ndim) {
     }
 }
 
-void CheckBroadcastTarget(const std::vector<int>& shape, const std::vector<int>& target_shape) {
+void CheckBroadcastTarget(ShapeView shape, ShapeView target_shape) {
     if (shape.size() > target_shape.size()) {
         throw std::invalid_argument("broadcast: target rank is too small");
     }

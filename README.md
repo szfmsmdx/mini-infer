@@ -17,7 +17,8 @@ mini_infer/
 │   ├── tokenizer/       # 字节 tokenizer 和 BPE
 │   ├── optim/           # SGD、Adam 的参数更新与优化器状态
 │   ├── autograd/        # 建图开关与反向引擎
-│   ├── device/          # 内存分配与释放
+│   ├── memory/          # CPU/CUDA 内存分配、主机与设备之间复制
+│   ├── cuda/            # CUDA 错误检查宏
 │   └── utils/           # 日志
 ├── tests/               # CPU/CUDA 正确性测试与独立 benchmark
 ├── examples/nanogpt/    # 字符级 GPT 的训练、续写和语料准备
@@ -27,7 +28,7 @@ mini_infer/
 └── README.md
 ```
 
-链接 CMake 目标 `mini_infer` 后，可通过 `#include "mini_infer/tensor.h"` 使用 Tensor。算子后端与具体反向节点的头文件位于 `src/`，供库内部使用。
+链接 CMake 目标 `mini_infer` 后，可通过 `#include "mini_infer/tensor/tensor.h"` 使用 Tensor。算子后端与具体反向节点的头文件位于 `src/`，供库内部使用。
 
 模块说明见 [Tensor](src/tensor/README.md)、[算子](src/ops/README.md)、[网络模块](src/modules/README.md)、[Autograd](src/autograd/README.md) 和 [测试](tests/README.md)。
 

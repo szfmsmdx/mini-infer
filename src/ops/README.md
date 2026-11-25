@@ -21,10 +21,10 @@ RoPE 的公开声明在 [`mini_infer/ops/position_embedding.h`](../../include/mi
 
 | 公共步骤 | 位置 | 调用范围 |
 | --- | --- | --- |
-| `ContiguousStride()` | `layout/layout.cpp` | Tensor 构造、reshape、clone 和设备迁移 |
+| 连续布局 | `src/tensor/tensor.cpp`、`layout/layout.cpp` | Tensor 构造和 reshape |
 | `PrepareBinaryInputs()` | `elementwise/elementwise.cpp` | add、sub、mul、div 的检查和广播准备 |
-| `Tensor::MakeView()` | `layout/layout.cpp` | 8 种视图操作的共享存储、独立梯度元数据和 CUDA 布局初始化 |
-| `AllocateStorage()` | `src/device/memory.*` | 构造、clone 和跨设备迁移的数据分配与释放器绑定 |
+| `Tensor::MakeView()` | `layout/layout.cpp` | 8 种视图操作的共享存储、独立梯度元数据和元素偏移校验 |
+| `GetAllocator()`、`CopyBytes()` | `src/memory/memory.*` | 分配数据、绑定释放器、复制连续字节 |
 | `ForEachOffset()` | `common/cpu_iteration.h` | CPU 逐元素算子和 dtype 转换的 stride 遍历 |
 | `LaunchUnary()`、`LaunchBackward()` | `common/cuda_unary.cuh` | 一元算子的 CUDA 启动参数和 stride 准备 |
 
@@ -98,9 +98,9 @@ add(a, b)                                src/ops/elementwise/elementwise.cpp
 
 `elementwise/elementwise.cpp` 检查参数、分配输出，再按 device 调用后端。`AddCPU()` / `SubCPU()` / `MulCPU()` / `DivCPU()` 是 CPU 入口，`AddCUDA()` / `SubCUDA()` / `MulCUDA()` / `DivCUDA()` 在启用 CUDA 的构建中调用。
 
-CUDA 启动函数按 dtype 分发 kernel，读取设备上的 shape 和各输入的 stride。
+CUDA 启动函数按 dtype 分发 kernel。输入指针指向各视图的首元素，shape 和 stride 作为 `CUDALayout` 按值传入。
 
-`mini_infer/ops/elementwise.h` 包含 `mini_infer/tensor.h`。Tensor 运算符在头文件里声明，在 `src/ops/elementwise/elementwise.cpp` 中转发给对应算子。
+`mini_infer/ops/elementwise.h` 包含 `mini_infer/tensor/tensor.h`。Tensor 运算符在头文件里声明，在 `src/ops/elementwise/elementwise.cpp` 中转发给对应算子。
 
 ### 按 dtype 分发
 
@@ -109,14 +109,14 @@ CUDA 启动函数按 dtype 分发 kernel，读取设备上的 shape 和各输入
 ```cpp
 // kernels.h：内部后端入口。
 void AddCPU(const void* a, const void* b, void* out, Dtype dtype,
-            const std::vector<int>& shape, const std::vector<std::size_t>& a_stride,
-            const std::vector<std::size_t>& b_stride, const std::vector<std::size_t>& out_stride);
+            ShapeView shape, StrideView a_stride,
+            StrideView b_stride, StrideView out_stride);
 
 // src/ops/elementwise/cpu.cpp：匿名命名空间内的计算模板。
 template <typename T>
-void AddTypedCPU(const void* a, const void* b, void* out, const std::vector<int>& shape,
-                 const std::vector<std::size_t>& a_stride, const std::vector<std::size_t>& b_stride,
-                 const std::vector<std::size_t>& out_stride);
+void AddTypedCPU(const void* a, const void* b, void* out, ShapeView shape,
+                 StrideView a_stride, StrideView b_stride,
+                 StrideView out_stride);
 ```
 
 `AddTypedCPU<T>()` 的定义放在 `src/ops/elementwise/cpu.cpp` 的匿名命名空间内，由同文件的 `AddCPU()` 实例化调用。跨文件只调用普通入口，避免模板定义不可见导致链接错误。输入指针只读、输出指针可写，均不转移所有权；模板按 shape 和 stride 遍历并计算，不负责分配、形状检查或设备选择。减、乘、除使用对应的内部模板函数。

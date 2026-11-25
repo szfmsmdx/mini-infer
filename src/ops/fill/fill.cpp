@@ -4,9 +4,10 @@
 #include <stdexcept>
 #include <vector>
 
-#include "mini_infer/tensor.h"
+#include "mini_infer/tensor/tensor.h"
 #include "mini_infer/autograd.h"
 #include "tensor/check.h"
+#include "tensor/tensor_impl.h"
 #include "ops/fill/kernels.h"
 
 namespace mtensor {
@@ -18,7 +19,7 @@ Tensor& Tensor::fill_(const Scalar& value) {
     CheckBroadcastWritable(*this);
     CheckDataPointer(*this, "Tensor::fill_: null data pointer");
 
-    switch (dtype_) {
+    switch (dtype()) {
         case Dtype::kFloat32: {
             const float converted = value.to<float>();
             return FillValue(&converted);
@@ -66,24 +67,24 @@ Tensor& Tensor::fill_(const Tensor& value) {
     }
     CheckBroadcastWritable(*this);
 
-    if (device_ == Device::kCPU) {
+    if (device() == Device::kCPU) {
         // 先保存填充值，避免 value 与目标共享存储时被覆盖。
         std::vector<std::byte> saved_value(element_size());
-        std::memcpy(saved_value.data(), value.data_ptr_, element_size());
+        std::memcpy(saved_value.data(), value.data_ptr(), element_size());
         update_version();
-        FillCPU(data_ptr_, shape_, stride_, element_size(), saved_value.data());
-    } else if (device_ == Device::kCUDA) {
+        FillCPU(data_ptr(), shape(), stride(), element_size(), saved_value.data());
+    } else if (device() == Device::kCUDA) {
 #ifdef ENABLE_CUDA
-        if (storage_ == value.storage_) {
+        if (impl_->storage == value.impl_->storage) {
             NogradNode guard;
             Tensor saved_value = value.clone();
             update_version();
-            FillCUDAFromDevice(data_ptr_, numel(), element_size(), saved_value.data_ptr_,
-                               shape_cuda_.get(), stride_cuda_.get(), dim());
+            FillCUDAFromDevice(data_ptr(), numel(), element_size(), saved_value.data_ptr(),
+                               PackLayout(*this));
         } else {
             update_version();
-            FillCUDAFromDevice(data_ptr_, numel(), element_size(), value.data_ptr_,
-                               shape_cuda_.get(), stride_cuda_.get(), dim());
+            FillCUDAFromDevice(data_ptr(), numel(), element_size(), value.data_ptr(),
+                               PackLayout(*this));
         }
 #else
         throw std::logic_error("Tensor::fill_: CUDA support is disabled");
@@ -95,13 +96,13 @@ Tensor& Tensor::fill_(const Tensor& value) {
 }
 
 Tensor& Tensor::FillValue(const void* host_value) {
-    if (device_ == Device::kCPU) {
+    if (device() == Device::kCPU) {
         update_version();
-        FillCPU(data_ptr_, shape_, stride_, element_size(), host_value);
-    } else if (device_ == Device::kCUDA) {
+        FillCPU(data_ptr(), shape(), stride(), element_size(), host_value);
+    } else if (device() == Device::kCUDA) {
 #ifdef ENABLE_CUDA
         update_version();
-        FillCUDA(data_ptr_, numel(), dtype_, host_value, shape_cuda_.get(), stride_cuda_.get(), dim());
+        FillCUDA(data_ptr(), numel(), dtype(), host_value, PackLayout(*this));
 #else
         throw std::logic_error("Tensor::fill_: CUDA support is disabled");
 #endif
@@ -119,14 +120,13 @@ Tensor& Tensor::zero_() {
     const std::size_t bytes = nbytes();
     if(bytes > 0){
         CheckBroadcastWritable(*this);
-        if (device_ == Device::kCPU) {
+        if (device() == Device::kCPU) {
             update_version();
-            ZeroCPU(data_ptr_, shape_, stride_, element_size());
-        } else if (device_ == Device::kCUDA) {
+            ZeroCPU(data_ptr(), shape(), stride(), element_size());
+        } else if (device() == Device::kCUDA) {
 #ifdef ENABLE_CUDA
             update_version();
-            ZeroCUDA(data_ptr_, shape_cuda_.get(), stride_cuda_.get(),
-                     dim(), numel(), element_size());
+            ZeroCUDA(data_ptr(), PackLayout(*this), numel(), element_size());
 #else
             throw std::logic_error("Tensor::zero_: CUDA support is disabled");
 #endif
@@ -137,13 +137,13 @@ Tensor& Tensor::zero_() {
     return *this;
 }
 
-Tensor full(const std::vector<int>& shape, const Scalar& value, Dtype dtype, Device device) {
+Tensor full(ShapeView shape, const Scalar& value, Dtype dtype, Device device) {
     Tensor result(shape, dtype, device);
     result.fill_(value);
     return result;
 }
 
-Tensor full(const std::vector<int>& shape, const Tensor& value, Dtype dtype, Device device) {
+Tensor full(ShapeView shape, const Tensor& value, Dtype dtype, Device device) {
     Tensor result(shape, dtype, device);
     result.fill_(value);
     return result;

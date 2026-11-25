@@ -5,7 +5,7 @@
 #include <stdexcept>
 
 #include "ops/activation/kernels.h"
-#include "mini_infer/tensor.h"
+#include "mini_infer/tensor/tensor.h"
 #include "ops/common/cpu_iteration.h"
 
 namespace mtensor {

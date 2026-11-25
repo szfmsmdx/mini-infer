@@ -3,7 +3,7 @@
 #include <cuda_runtime.h>
 
 #include "mini_infer/ops/loss_fn.h"
-#include "device/memory.h"
+#include "cuda/cuda_check.h"
 
 namespace mtensor {
 namespace {

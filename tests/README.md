@@ -54,7 +54,7 @@ ctest --test-dir build/tests -C Release --output-on-failure
 | `elementwise_cpu_test` | `add()` / `sub()` / `mul()` / `div()` / `neg()` 的 Float32、整数回绕与除零边界、FP16/BF16、无穷与 NaN、零维标量与索引视图、输入不变、输出独立，以及空对象、shape、dtype 错误 |
 | `dtype_encode_test` | FP16/BF16 编码、舍入、特殊值、所有非 NaN 编码往返，以及 16 位 Tensor 填充 |
 | `autograd_cuda_test` | 跨设备双向及链式反向、建图开关、整数 dtype、非连续输入的节点连接 |
-| `tensor_cuda_metadata_test` | CUDA 构造、迁移、clone、索引、narrow 和 reshape 的 shape/stride 设备副本；CPU、空对象与标量；拷贝、移动及共享生命周期 |
+| `tensor_cuda_metadata_test` | CUDA 布局按值传参：8 维非连续输入、9 维拒绝、嵌套视图偏移、转置和零维标量 |
 | `tensor_cuda_test` | CUDA 内存、构造、索引视图、所有权、clone、copy_、8 种 dtype 双向 to 与原始编码保留、迁移赋值和共享生命周期、标量/空对象迁移、填充、清零、打印及异常 |
 | `elementwise_cuda_test` | 8 种 dtype 的 add/sub/mul/div/neg 与 CPU 结果逐字节对照；覆盖 stride 视图、标量、线程块边界、整数回绕与除零、FP16/BF16 特殊值及错误输入 |
 

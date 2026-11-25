@@ -23,7 +23,7 @@
 #include "mini_infer/tokenizer/tokenizer.h"
 #include "utils/logger.h"
 #ifdef ENABLE_CUDA
-#include "device/memory.h"
+#include "cuda/cuda_check.h"
 #endif
 
 namespace {

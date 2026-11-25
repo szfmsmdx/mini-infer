@@ -4,7 +4,7 @@
 #include <vector>
 #include <optional>
 
-#include "mini_infer/tensor.h"
+#include "mini_infer/tensor/tensor.h"
 
 namespace mtensor{
 // 一个 Tensor 的自动微分状态；同一个 Tensor 的所有拷贝共享。

@@ -5,9 +5,9 @@
 #include <cuda_runtime.h>
 
 #include "ops/norm/kernels.h"
-#include "mini_infer/tensor.h"
+#include "mini_infer/tensor/tensor.h"
 #include "ops/common/cuda_index.cuh"
-#include "device/memory.h"
+#include "cuda/cuda_check.h"
 
 namespace mtensor {
 namespace {
@@ -16,28 +16,28 @@ namespace {
 template <typename T>
 __global__ void RMSNormKernel(
     const T* x, const T* weight, T* output,
-    const int* shape, const std::size_t* x_stride,
-    std::size_t weight_stride, int ndim, std::size_t rows, float eps
+    CUDALayout x_layout,
+    std::size_t weight_stride, std::size_t rows, float eps
 ) {
     const std::size_t row =
         static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (row >= rows) return;
 
-    const int features = shape[ndim - 1];
-    const std::size_t offset = GetNumelIndex(row * features, shape, x_stride, ndim);
+    const int features = x_layout.shape[x_layout.dim - 1];
+    const std::size_t offset = GetNumelIndex(row * features, x_layout);
     const auto* x_row = x + offset;
     auto* output_row = output + row * features;
 
     float sum_squares = 0.0f;
     for (int j = 0; j < features; ++j) {
-        const float x_value = static_cast<float>(x_row[j * x_stride[ndim - 1]]);
+        const float x_value = static_cast<float>(x_row[j * x_layout.stride[x_layout.dim - 1]]);
         sum_squares += x_value * x_value;
     }
     const float mean_square = sum_squares / static_cast<float>(features);
     const float inv_rms = rsqrtf(mean_square + eps);
 
     for (int j = 0; j < features; ++j) {
-        const float x_value = static_cast<float>(x_row[j * x_stride[ndim - 1]]);
+        const float x_value = static_cast<float>(x_row[j * x_layout.stride[x_layout.dim - 1]]);
         const float weight_value = static_cast<float>(weight[j * weight_stride]);
         output_row[j] = static_cast<T>((x_value * inv_rms) * weight_value);
     }
@@ -52,8 +52,8 @@ void LaunchRMSNorm(const Tensor& x, const Tensor& weight, float eps, Tensor& out
     const auto* scale = static_cast<const T*>(weight.data_ptr());
     auto* result = static_cast<T*>(output.data_ptr());
     RMSNormKernel<T><<<blocks, threads>>>(
-        input, scale, result, x.shape_cuda(), x.stride_cuda(),
-        weight.stride()[0], x.dim(), rows, eps);
+        input, scale, result, PackLayout(x),
+        weight.stride()[0], rows, eps);
     CUDA_CHECK(cudaGetLastError());
 }
 
@@ -73,23 +73,23 @@ namespace {
 template <typename T>
 __global__ void RMSNormInputBackwardKernel(
     const T* x, const T* weight, const T* grad, T* dx, float* row_inv_rms,
-    const int* shape, const std::size_t* x_stride, const std::size_t* grad_stride,
-    std::size_t weight_stride, int ndim, std::size_t rows, float eps
+    CUDALayout x_layout, CUDALayout grad_layout,
+    std::size_t weight_stride, std::size_t rows, float eps
 ) {
     const std::size_t row =
         static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (row >= rows) return;
 
-    const int features = shape[ndim - 1];
-    const auto* x_row = x + GetNumelIndex(row * features, shape, x_stride, ndim);
-    const auto* grad_row = grad + GetNumelIndex(row * features, shape, grad_stride, ndim);
+    const int features = x_layout.shape[x_layout.dim - 1];
+    const auto* x_row = x + GetNumelIndex(row * features, x_layout);
+    const auto* grad_row = grad + GetNumelIndex(row * features, grad_layout);
     auto* dx_row = dx + row * features;
 
     float sum_squares = 0.0f;
     float sum_grad_weight_x = 0.0f;
     for (int j = 0; j < features; ++j) {
-        const float x_value = static_cast<float>(x_row[j * x_stride[ndim - 1]]);
-        const float grad_value = static_cast<float>(grad_row[j * grad_stride[ndim - 1]]);
+        const float x_value = static_cast<float>(x_row[j * x_layout.stride[x_layout.dim - 1]]);
+        const float grad_value = static_cast<float>(grad_row[j * grad_layout.stride[grad_layout.dim - 1]]);
         const float weight_value = static_cast<float>(weight[j * weight_stride]);
         sum_squares += x_value * x_value;
         sum_grad_weight_x += grad_value * weight_value * x_value;
@@ -101,8 +101,8 @@ __global__ void RMSNormInputBackwardKernel(
         (sum_grad_weight_x / static_cast<float>(features));
 
     for (int j = 0; j < features; ++j) {
-        const float x_value = static_cast<float>(x_row[j * x_stride[ndim - 1]]);
-        const float grad_value = static_cast<float>(grad_row[j * grad_stride[ndim - 1]]);
+        const float x_value = static_cast<float>(x_row[j * x_layout.stride[x_layout.dim - 1]]);
+        const float grad_value = static_cast<float>(grad_row[j * grad_layout.stride[grad_layout.dim - 1]]);
         const float weight_value = static_cast<float>(weight[j * weight_stride]);
         const float dx_value = grad_value * weight_value * inv_rms - x_value * correction;
         dx_row[j] = static_cast<T>(dx_value);
@@ -113,19 +113,19 @@ __global__ void RMSNormInputBackwardKernel(
 template <typename T>
 __global__ void RMSNormWeightBackwardKernel(
     const T* x, const T* grad, const float* row_inv_rms, T* dw,
-    const int* shape, const std::size_t* x_stride, const std::size_t* grad_stride,
-    int ndim, std::size_t rows
+    CUDALayout x_layout, CUDALayout grad_layout,
+    std::size_t rows
 ) {
     const std::size_t j =
         static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-    const int features = shape[ndim - 1];
+    const int features = x_layout.shape[x_layout.dim - 1];
     if (j >= features) return;
 
     float weight_grad = 0.0f;
     for (std::size_t row = 0; row < rows; ++row) {
         const std::size_t index = row * features + j;
-        const std::size_t x_offset = GetNumelIndex(index, shape, x_stride, ndim);
-        const std::size_t grad_offset = GetNumelIndex(index, shape, grad_stride, ndim);
+        const std::size_t x_offset = GetNumelIndex(index, x_layout);
+        const std::size_t grad_offset = GetNumelIndex(index, grad_layout);
         const float x_value = static_cast<float>(x[x_offset]);
         const float grad_value = static_cast<float>(grad[grad_offset]);
         weight_grad += grad_value * x_value * row_inv_rms[row];
@@ -138,7 +138,7 @@ void LaunchRMSNormBackward(const Tensor& x, const Tensor& weight, const Tensor& 
                            float eps, Tensor& dx, Tensor& dw) {
     const int features = x.size(x.dim() - 1);
     const std::size_t rows = x.numel() / features;
-    auto row_shape = x.shape();
+    auto row_shape = x.shape().to_vector();
     row_shape.back() = 1;
     Tensor row_inv_rms(row_shape, Dtype::kFloat32, x.device());
     constexpr unsigned int threads = 256;
@@ -151,15 +151,15 @@ void LaunchRMSNormBackward(const Tensor& x, const Tensor& weight, const Tensor& 
     auto* input_grad = static_cast<T*>(dx.data_ptr());
     auto* inv_rms = static_cast<float*>(row_inv_rms.data_ptr());
     RMSNormInputBackwardKernel<T><<<row_blocks, threads>>>(
-        input, scale, grad, input_grad, inv_rms, x.shape_cuda(), x.stride_cuda(),
-        output_grad.stride_cuda(), weight.stride()[0], x.dim(), rows, eps);
+        input, scale, grad, input_grad, inv_rms, PackLayout(x),
+        PackLayout(output_grad), weight.stride()[0], rows, eps);
     CUDA_CHECK(cudaGetLastError());
 
     // 同一 stream 按序执行，第二个 kernel 读取第一个 kernel 写入的 inv_rms。
     auto* weight_grad = static_cast<T*>(dw.data_ptr());
     RMSNormWeightBackwardKernel<T><<<feature_blocks, threads>>>(
-        input, grad, inv_rms, weight_grad, x.shape_cuda(), x.stride_cuda(),
-        output_grad.stride_cuda(), x.dim(), rows);
+        input, grad, inv_rms, weight_grad, PackLayout(x),
+        PackLayout(output_grad), rows);
     CUDA_CHECK(cudaGetLastError());
 }
 

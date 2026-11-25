@@ -2,13 +2,12 @@
 #include <cstdint>
 #include <stdexcept>
 #include <type_traits>
-#include <vector>
 #include <cuda_bf16.h>
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
 
 #include "ops/matmul/kernels.h"
-#include "device/memory.h"
+#include "cuda/cuda_check.h"
 
 namespace mtensor {
 namespace {
@@ -81,8 +80,8 @@ __global__ void MatmulIntegerKernel(const void* a, const void* b, void* output,
 }  // namespace
 
 void MatmulCUDA(const void* a, const void* b, void* output, Dtype dtype,
-                int m, int k, int n, const std::vector<std::size_t>& a_stride,
-                const std::vector<std::size_t>& b_stride) {
+                int m, int k, int n, StrideView a_stride,
+                StrideView b_stride) {
     if (m == 0 || n == 0) return;
     const std::size_t numel = static_cast<std::size_t>(m) * n;
     const MatrixStride lhs_stride{a_stride[0], a_stride[1]};

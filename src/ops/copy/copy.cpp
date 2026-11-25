@@ -4,12 +4,13 @@
 #include <stdexcept>
 #include <utility>
 
-#include "mini_infer/tensor.h"
+#include "mini_infer/tensor/tensor.h"
 #include "tensor/check.h"
 #include "mini_infer/autograd.h"
 #include "ops/copy/nodes.h"
 #include "ops/copy/kernels.h"
-#include "device/memory.h"
+#include "memory/memory.h"
+#include "tensor/tensor_impl.h"
 
 namespace mtensor {
 
@@ -35,33 +36,32 @@ Tensor& Tensor::copy_(const Tensor& src) {
     }
     CheckBroadcastWritable(*this);
 
-    if (data_ptr_ == src.data_ptr_ && stride_ == src.stride_) {
+    if (data_ptr() == src.data_ptr() && stride() == src.stride()) {
         return *this;
     }
 
-    if (storage_ == src.storage_) {
+    if (impl_->storage == src.impl_->storage) {
         if (!is_contiguous() || !src.is_contiguous()) {
             throw std::invalid_argument("Tensor::copy_: shared non-contiguous storage is not supported");
         }
-        const auto* storage_ptr = static_cast<const std::byte*>(storage_.get());
-        const auto* dst_bytes = static_cast<const std::byte*>(data_ptr_);
-        const auto* src_bytes = static_cast<const std::byte*>(src.data_ptr_);
-        const auto dst_offset = static_cast<std::size_t>(dst_bytes - storage_ptr);
-        const auto src_offset = static_cast<std::size_t>(src_bytes - storage_ptr);
-        const std::size_t distance = dst_offset > src_offset ? dst_offset - src_offset : src_offset - dst_offset;
-        if (distance < nbytes()) {
+        const auto dst_offset = impl_->storage_offset;
+        const auto src_offset = src.impl_->storage_offset;
+        const auto distance = dst_offset > src_offset ? dst_offset - src_offset : src_offset - dst_offset;
+        if (distance < numel()) {
             throw std::invalid_argument("Tensor::copy_: overlapping storage is not supported");
         }
     }
 
-    if (device_ == Device::kCPU) {
+    if (is_contiguous() && src.is_contiguous()) {
         update_version();
-        CopyCPU(data_ptr_, src.data_ptr_, shape_, stride_, src.stride_, element_size());
-    } else if (device_ == Device::kCUDA) {
+        CopyBytes(data_ptr(), device(), src.data_ptr(), src.device(), nbytes());
+    } else if (device() == Device::kCPU) {
+        update_version();
+        CopyCPU(data_ptr(), src.data_ptr(), shape(), stride(), src.stride(), element_size());
+    } else if (device() == Device::kCUDA) {
 #ifdef ENABLE_CUDA
         update_version();
-        CopyCUDA(data_ptr_, src.data_ptr_, shape_cuda_.get(), stride_cuda_.get(),
-                 src.stride_cuda_.get(), dim(), numel(), element_size());
+        CopyCUDA(data_ptr(), src.data_ptr(), PackLayout(*this), PackLayout(src), numel(), element_size());
 #else
         throw std::logic_error("Tensor::copy_: CUDA support is disabled");
 #endif
@@ -72,7 +72,7 @@ Tensor& Tensor::copy_(const Tensor& src) {
 }
 
 Tensor Tensor::to(Device device) const {
-    if (device == device_) {
+    if (device == this->device()) {
         return *this;
     }
     if (device != Device::kCPU && device != Device::kCUDA) {
@@ -84,30 +84,14 @@ Tensor Tensor::to(Device device) const {
     }
 
 #ifdef ENABLE_CUDA
-    Tensor result;
-    result.shape_ = shape_;
-    result.stride_ = ContiguousStride(shape_);
-    result.dtype_ = dtype_;
-    result.device_ = device;
+    if (empty()) return EmptyWithOptions(dtype(), device);
 
-    const std::size_t bytes = nbytes();
-    if (bytes == 0) {
-        return result;
-    }
-    if (device == Device::kCPU) {
-        result.storage_ = AllocateStorage(bytes, Device::kCPU);
-        result.data_ptr_ = result.storage_.get();
-        CopyCUDAToHost(result.data_ptr_, data_ptr_, bytes);
-    } else {
-        result.storage_ = AllocateStorage(bytes, Device::kCUDA);
-        result.data_ptr_ = result.storage_.get();
-        CopyHostToCUDA(result.data_ptr_, data_ptr_, bytes);
-        result.InitCUDAMetadata();
-    }
-    if (EnableGrad() && CheckGradDtype(dtype_)) {
+    Tensor result(shape(), dtype(), device);
+    CopyBytes(result.data_ptr(), device, data_ptr(), this->device(), nbytes());
+    if (EnableGrad() && CheckGradDtype(dtype())) {
         auto node = std::make_shared<ToDeviceNode>();
         node->inputs = {*this};
-        node->input_device = device_;
+        node->input_device = this->device();
         result.set_grad_node(node);
     }
     return result;
@@ -117,25 +101,20 @@ Tensor Tensor::to(Device device) const {
 }
 
 Tensor Tensor::to(Dtype dtype) const {
-    if (dtype == dtype_) return *this;
+    if (dtype == this->dtype()) return *this;
 
-    const bool to_float32 = dtype == Dtype::kFloat32 && dtype_size(dtype_) != 0;
-    const bool from_float32 = dtype_ == Dtype::kFloat32 && CheckGradDtype(dtype);
+    const bool to_float32 = dtype == Dtype::kFloat32 && dtype_size(this->dtype()) != 0;
+    const bool from_float32 = this->dtype() == Dtype::kFloat32 && CheckGradDtype(dtype);
     if (!to_float32 && !from_float32) {
         throw std::invalid_argument("Tensor::to: unsupported dtype conversion");
     }
 
-    if (empty()) {
-        Tensor result;
-        result.dtype_ = dtype;
-        result.device_ = device_;
-        return result;
-    }
+    if (empty()) return EmptyWithOptions(dtype, device());
 
-    Tensor result(shape_, dtype, device_);
-    if (device_ == Device::kCPU) {
+    Tensor result(shape(), dtype, device());
+    if (device() == Device::kCPU) {
         CastCPU(*this, result);
-    } else if (device_ == Device::kCUDA) {
+    } else if (device() == Device::kCUDA) {
 #ifdef ENABLE_CUDA
         CastCUDA(*this, result);
 #else
@@ -145,7 +124,7 @@ Tensor Tensor::to(Dtype dtype) const {
         throw std::invalid_argument("Tensor::to: unsupported device");
     }
 
-    if (EnableGrad() && CheckGradDtype(dtype_)) {
+    if (EnableGrad() && CheckGradDtype(this->dtype())) {
         auto node = std::make_shared<ToDtypeNode>();
         node->inputs = {*this};
         result.set_grad_node(node);
@@ -159,35 +138,23 @@ Tensor Tensor::clone() const {
         Tensor b = a.clone();
     */
 
-    Tensor result;
-    result.shape_ = shape_;
-    result.stride_ = ContiguousStride(shape_);
-    result.dtype_ = dtype_;
-    result.device_ = device_;
-
-    const std::size_t bytes = nbytes();
-    if(bytes > 0){
-        if (device_ == Device::kCPU) {
-            result.storage_ = AllocateStorage(bytes, Device::kCPU);
-            result.data_ptr_ = result.storage_.get();
-            CopyCPU(result.data_ptr_, data_ptr_, shape_, result.stride_, stride_, element_size());
-        } else if (device_ == Device::kCUDA) {
+    Tensor result = empty() ? EmptyWithOptions(dtype(), device()) : Tensor(shape(), dtype(), device());
+    if (!empty()) {
+        if (is_contiguous()) {
+            CopyBytes(result.data_ptr(), device(), data_ptr(), device(), nbytes());
+        } else if (device() == Device::kCPU) {
+            CopyCPU(result.data_ptr(), data_ptr(), shape(), result.stride(), stride(), element_size());
+        } else {
 #ifdef ENABLE_CUDA
-            result.storage_ = AllocateStorage(bytes, Device::kCUDA);
-            result.data_ptr_ = result.storage_.get();
-            result.InitCUDAMetadata();
-            CopyCUDA(result.data_ptr_, data_ptr_, shape_cuda_.get(),
-                     result.stride_cuda_.get(), stride_cuda_.get(),
-                     dim(), numel(), element_size());
+            CopyCUDA(result.data_ptr(), data_ptr(), PackLayout(result), PackLayout(*this),
+                     numel(), element_size());
 #else
             throw std::logic_error("Tensor::clone: CUDA support is disabled");
 #endif
-        } else {
-            throw std::invalid_argument("Tensor::clone: unsupported device");
         }
     }
 
-    if(EnableGrad() && CheckGradDtype(dtype_)) {
+    if(EnableGrad() && CheckGradDtype(dtype())) {
         auto node = std::make_shared<CloneNode>();
         node->inputs = { *this };
         result.set_grad_node(node);

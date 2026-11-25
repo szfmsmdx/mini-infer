@@ -1,0 +1,32 @@
+#pragma once
+
+#include <cstddef>
+#include <memory>
+
+#include "mini_infer/tensor/device.h"
+
+namespace mtensor {
+
+using DataDeleter = void (*)(void*) noexcept;   // 函数指针
+
+// DataPtr 独占一次分配；移动后，设备和释放函数随之转移。
+class DataPtr {
+public:
+    DataPtr(void* data, Device device, DataDeleter deleter) noexcept
+        : data_(data, deleter), device_(device) {}
+
+    void* get() const noexcept { return data_.get(); }
+    Device device() const noexcept { return device_; }
+
+private:
+    std::unique_ptr<void, DataDeleter> data_;
+    Device device_;
+};
+
+class Allocator {
+public:
+    virtual ~Allocator() = default;
+    virtual DataPtr allocate(std::size_t nbytes) const = 0;
+};
+
+}  // namespace mtensor

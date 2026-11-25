@@ -73,7 +73,7 @@ Tensor ScalarLike(const Scalar& value, const Tensor& x) {
     return full({}, value, x.dtype(), x.device());
 }
 
-std::vector<int> BroadcastShape(const std::vector<int>& a, const std::vector<int>& b) {
+std::vector<int> BroadcastShape(ShapeView a, ShapeView b) {
     const std::size_t ndim = a.size() > b.size() ? a.size() : b.size();
     std::vector<int> shape(ndim, 1);
     for (std::size_t i = 0; i < ndim; ++i) {
@@ -111,7 +111,7 @@ Tensor add(const Tensor& a, const Tensor& b){
     } else if (a.device() == Device::kCUDA) {
 #ifdef ENABLE_CUDA
         AddCUDA(lhs.data_ptr(), rhs.data_ptr(), out.data_ptr(), out.numel(), a.dtype(),
-                out.shape_cuda(), lhs.stride_cuda(), rhs.stride_cuda(), out.dim());
+                PackLayout(lhs), PackLayout(rhs));
 #else
         throw std::logic_error("add: CUDA support is disabled");
 #endif
@@ -139,7 +139,7 @@ Tensor sub(const Tensor& a, const Tensor& b){
     } else if (a.device() == Device::kCUDA) {
 #ifdef ENABLE_CUDA
         SubCUDA(lhs.data_ptr(), rhs.data_ptr(), out.data_ptr(), out.numel(), a.dtype(),
-                out.shape_cuda(), lhs.stride_cuda(), rhs.stride_cuda(), out.dim());
+                PackLayout(lhs), PackLayout(rhs));
 #else
         throw std::logic_error("sub: CUDA support is disabled");
 #endif
@@ -166,7 +166,7 @@ Tensor mul(const Tensor& a, const Tensor& b){
     } else if (a.device() == Device::kCUDA) {
 #ifdef ENABLE_CUDA
         MulCUDA(lhs.data_ptr(), rhs.data_ptr(), out.data_ptr(), out.numel(), a.dtype(),
-                out.shape_cuda(), lhs.stride_cuda(), rhs.stride_cuda(), out.dim());
+                PackLayout(lhs), PackLayout(rhs));
 #else
         throw std::logic_error("mul: CUDA support is disabled");
 #endif
@@ -195,7 +195,7 @@ Tensor div(const Tensor& a, const Tensor& b){
     } else if (a.device() == Device::kCUDA) {
 #ifdef ENABLE_CUDA
         DivCUDA(lhs.data_ptr(), rhs.data_ptr(), out.data_ptr(), out.numel(), a.dtype(),
-                out.shape_cuda(), lhs.stride_cuda(), rhs.stride_cuda(), out.dim());
+                PackLayout(lhs), PackLayout(rhs));
 #else
         throw std::logic_error("div: CUDA support is disabled");
 #endif
@@ -222,7 +222,7 @@ Tensor neg(const Tensor& a){
     } else if (a.device() == Device::kCUDA) {
 #ifdef ENABLE_CUDA
         NegCUDA(a.data_ptr(), out.data_ptr(), a.numel(), a.dtype(),
-                a.shape_cuda(), a.stride_cuda(), a.dim());
+                PackLayout(a));
 #else
         throw std::logic_error("neg: CUDA support is disabled");
 #endif
@@ -248,7 +248,7 @@ Tensor sqrt(const Tensor& x) {
 #ifdef ENABLE_CUDA
     } else if (x.device() == Device::kCUDA) {
         SqrtCUDA(x.data_ptr(), out.data_ptr(), x.dtype(), x.numel(),
-                 x.shape_cuda(), x.stride_cuda(), x.dim());
+                 PackLayout(x));
 #endif
     } else {
         throw std::logic_error("sqrt: no backend for this device");

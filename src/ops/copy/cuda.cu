@@ -7,9 +7,9 @@
 #include <device_launch_parameters.h>
 
 #include "ops/copy/kernels.h"
-#include "mini_infer/tensor.h"
+#include "mini_infer/tensor/tensor.h"
 #include "ops/common/cuda_index.cuh"
-#include "device/memory.h"
+#include "cuda/cuda_check.h"
 
 namespace mtensor {
 
@@ -29,11 +29,10 @@ __device__ float ReadFloat(const void* data, Dtype dtype, std::size_t offset) {
 }
 
 __global__ void CastKernel(const void* input, void* output, Dtype in_dtype, Dtype out_dtype,
-                           const int* shape, const std::size_t* stride, int ndim,
-                           std::size_t count, bool contiguous) {
+                           CUDALayout layout, std::size_t count) {
     const std::size_t i = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i >= count) return;
-    const std::size_t offset = contiguous ? i : GetNumelIndex(i, shape, stride, ndim);
+    const std::size_t offset = GetNumelIndex(i, layout);
     if (out_dtype == Dtype::kFloat32) {
         static_cast<float*>(output)[i] = ReadFloat(input, in_dtype, offset);
     } else {
@@ -45,36 +44,24 @@ __global__ void CastKernel(const void* input, void* output, Dtype in_dtype, Dtyp
 
 }  // namespace
 
-__global__ void CopyKernel(std::byte* dst, const std::byte* src, const int* shape,
-                                  const std::size_t* dst_stride, const std::size_t* src_stride,
-                                  int ndim, int numel, std::size_t element_size) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void CopyKernel(std::byte* dst, const std::byte* src, CUDALayout dst_layout, CUDALayout src_layout, std::size_t numel, std::size_t element_size) {
+    const std::size_t idx = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (idx < numel) {
-        const auto dst_offset = GetNumelIndex(idx, shape, dst_stride, ndim) * element_size;
-        const auto src_offset = GetNumelIndex(idx, shape, src_stride, ndim) * element_size;
+        const auto dst_offset = GetNumelIndex(idx, dst_layout) * element_size;
+        const auto src_offset = GetNumelIndex(idx, src_layout) * element_size;
         memcpy(dst + dst_offset, src + src_offset, element_size);
     }
 }
 
-void CopyCUDA(void* destination, const void* source, const int* shape,
-                     const std::size_t* dst_stride, const std::size_t* src_stride,
-                     int ndim, std::size_t numel, std::size_t element_size) {
+void CopyCUDA(void* destination, const void* source, CUDALayout dst_layout, CUDALayout src_layout, std::size_t numel, std::size_t element_size) {
     if (numel == 0) return;
     constexpr unsigned int threads = 256;
     const auto blocks = static_cast<unsigned int>((numel - 1) / threads + 1);
     auto* dst = static_cast<std::byte*>(destination);
     const auto* src = static_cast<const std::byte*>(source);
     CopyKernel<<<blocks, threads>>>(
-        dst, src, shape, dst_stride, src_stride, ndim, numel, element_size);
+        dst, src, dst_layout, src_layout, numel, element_size);
     CUDA_CHECK(cudaGetLastError());
-}
-
-void CopyHostToCUDA(void* destination, const void* source, std::size_t bytes) {
-    CUDA_CHECK(cudaMemcpy(destination, source, bytes, cudaMemcpyHostToDevice));
-}
-
-void CopyCUDAToHost(void* destination, const void* source, std::size_t bytes) {
-    CUDA_CHECK(cudaMemcpy(destination, source, bytes, cudaMemcpyDeviceToHost));
 }
 
 void CastCUDA(const Tensor& input, Tensor& output) {
@@ -82,7 +69,7 @@ void CastCUDA(const Tensor& input, Tensor& output) {
     const auto blocks = static_cast<unsigned int>((input.numel() - 1) / threads + 1);
     CastKernel<<<blocks, threads>>>(
         input.data_ptr(), output.data_ptr(), input.dtype(), output.dtype(),
-        input.shape_cuda(), input.stride_cuda(), input.dim(), input.numel(), input.is_contiguous());
+        PackLayout(input), input.numel());
     CUDA_CHECK(cudaGetLastError());
 }
 

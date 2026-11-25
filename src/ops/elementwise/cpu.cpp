@@ -9,7 +9,7 @@
 
 #include "ops/elementwise/kernels.h"
 #include "ops/common/cpu_iteration.h"
-#include "mini_infer/tensor.h"
+#include "mini_infer/tensor/tensor.h"
 
 namespace mtensor {
 namespace {
@@ -87,10 +87,10 @@ T NegValue(T value) {
 template <typename T>
 void AddTypedCPU(
     const void* a, const void* b, void* output,
-    const std::vector<int>& shape,
-    const std::vector<std::size_t>& a_stride,
-    const std::vector<std::size_t>& b_stride,
-    const std::vector<std::size_t>& output_stride
+    ShapeView shape,
+    StrideView a_stride,
+    StrideView b_stride,
+    StrideView output_stride
 ) {
     const auto* lhs = static_cast<const T*>(a);
     const auto* rhs = static_cast<const T*>(b);
@@ -107,8 +107,8 @@ void AddTypedCPU(
 
 template <float (*Decode)(const void*), std::uint16_t (*Encode)(float)>
 void AddHalfCPU(const void* a, const void* b, void* output,
-                const std::vector<int>& shape, const std::vector<std::size_t>& a_stride,
-                const std::vector<std::size_t>& b_stride, const std::vector<std::size_t>& output_stride) {
+                ShapeView shape, StrideView a_stride,
+                StrideView b_stride, StrideView output_stride) {
     const auto* lhs = static_cast<const std::uint16_t*>(a);
     const auto* rhs = static_cast<const std::uint16_t*>(b);
     auto* result = static_cast<std::uint16_t*>(output);
@@ -123,10 +123,10 @@ void AddHalfCPU(const void* a, const void* b, void* output,
 template <typename T>
 void SubTypedCPU(
     const void* a, const void* b, void* output,
-    const std::vector<int>& shape,
-    const std::vector<std::size_t>& a_stride,
-    const std::vector<std::size_t>& b_stride,
-    const std::vector<std::size_t>& output_stride
+    ShapeView shape,
+    StrideView a_stride,
+    StrideView b_stride,
+    StrideView output_stride
 ) {
     const auto* lhs = static_cast<const T*>(a);
     const auto* rhs = static_cast<const T*>(b);
@@ -143,8 +143,8 @@ void SubTypedCPU(
 
 template <float (*Decode)(const void*), std::uint16_t (*Encode)(float)>
 void SubHalfCPU(const void* a, const void* b, void* output,
-                const std::vector<int>& shape, const std::vector<std::size_t>& a_stride,
-                const std::vector<std::size_t>& b_stride, const std::vector<std::size_t>& output_stride) {
+                ShapeView shape, StrideView a_stride,
+                StrideView b_stride, StrideView output_stride) {
     const auto* lhs = static_cast<const std::uint16_t*>(a);
     const auto* rhs = static_cast<const std::uint16_t*>(b);
     auto* result = static_cast<std::uint16_t*>(output);
@@ -159,10 +159,10 @@ void SubHalfCPU(const void* a, const void* b, void* output,
 template <typename T>
 void MulTypedCPU(
     const void* a, const void* b, void* output,
-    const std::vector<int>& shape,
-    const std::vector<std::size_t>& a_stride,
-    const std::vector<std::size_t>& b_stride,
-    const std::vector<std::size_t>& output_stride
+    ShapeView shape,
+    StrideView a_stride,
+    StrideView b_stride,
+    StrideView output_stride
 ) {
     const auto* lhs = static_cast<const T*>(a);
     const auto* rhs = static_cast<const T*>(b);
@@ -179,8 +179,8 @@ void MulTypedCPU(
 
 template <float (*Decode)(const void*), std::uint16_t (*Encode)(float)>
 void MulHalfCPU(const void* a, const void* b, void* output,
-                const std::vector<int>& shape, const std::vector<std::size_t>& a_stride,
-                const std::vector<std::size_t>& b_stride, const std::vector<std::size_t>& output_stride) {
+                ShapeView shape, StrideView a_stride,
+                StrideView b_stride, StrideView output_stride) {
     const auto* lhs = static_cast<const std::uint16_t*>(a);
     const auto* rhs = static_cast<const std::uint16_t*>(b);
     auto* result = static_cast<std::uint16_t*>(output);
@@ -195,10 +195,10 @@ void MulHalfCPU(const void* a, const void* b, void* output,
 template <typename T>
 void DivTypedCPU(
     const void* a, const void* b, void* output,
-    const std::vector<int>& shape,
-    const std::vector<std::size_t>& a_stride,
-    const std::vector<std::size_t>& b_stride,
-    const std::vector<std::size_t>& output_stride
+    ShapeView shape,
+    StrideView a_stride,
+    StrideView b_stride,
+    StrideView output_stride
 ) {
     const auto* lhs = static_cast<const T*>(a);
     const auto* rhs = static_cast<const T*>(b);
@@ -215,8 +215,8 @@ void DivTypedCPU(
 
 template <float (*Decode)(const void*), std::uint16_t (*Encode)(float)>
 void DivHalfCPU(const void* a, const void* b, void* output,
-                const std::vector<int>& shape, const std::vector<std::size_t>& a_stride,
-                const std::vector<std::size_t>& b_stride, const std::vector<std::size_t>& output_stride) {
+                ShapeView shape, StrideView a_stride,
+                StrideView b_stride, StrideView output_stride) {
     const auto* lhs = static_cast<const std::uint16_t*>(a);
     const auto* rhs = static_cast<const std::uint16_t*>(b);
     auto* result = static_cast<std::uint16_t*>(output);
@@ -229,9 +229,9 @@ void DivHalfCPU(const void* a, const void* b, void* output,
 }
 
 template <typename T>
-void NegTypedCPU(const void* a, void* output, const std::vector<int>& shape,
-                 const std::vector<std::size_t>& a_stride,
-                 const std::vector<std::size_t>& output_stride) {
+void NegTypedCPU(const void* a, void* output, ShapeView shape,
+                 StrideView a_stride,
+                 StrideView output_stride) {
     const auto* input = static_cast<const T*>(a);
     auto* result = static_cast<T*>(output);
     ForEachOffset(shape, a_stride, output_stride,
@@ -240,9 +240,9 @@ void NegTypedCPU(const void* a, void* output, const std::vector<int>& shape,
         });
 }
 
-void NegHalfCPU(const void* a, void* output, const std::vector<int>& shape,
-                const std::vector<std::size_t>& a_stride,
-                const std::vector<std::size_t>& output_stride) {
+void NegHalfCPU(const void* a, void* output, ShapeView shape,
+                StrideView a_stride,
+                StrideView output_stride) {
     const auto* a_bytes = static_cast<const std::byte*>(a);
     auto* output_bytes = static_cast<std::byte*>(output);
     ForEachOffset(shape, a_stride, output_stride,
@@ -254,8 +254,8 @@ void NegHalfCPU(const void* a, void* output, const std::vector<int>& shape,
         });
 }
 template <typename Input, typename Output>
-void SqrtTypedCPU(const void* input, void* output, const std::vector<int>& shape,
-                  const std::vector<std::size_t>& stride) {
+void SqrtTypedCPU(const void* input, void* output, ShapeView shape,
+                  StrideView stride) {
     const auto* src = static_cast<const std::byte*>(input);
     auto* dst = static_cast<std::byte*>(output);
     ForEachOffset(shape, stride,
@@ -311,8 +311,8 @@ void ExpLogTypedCPU(const Tensor& x, Tensor& out) {
 }  // namespace
 
 void AddCPU(const void* a, const void* b, void* output, Dtype dtype,
-            const std::vector<int>& shape, const std::vector<std::size_t>& a_stride,
-            const std::vector<std::size_t>& b_stride, const std::vector<std::size_t>& output_stride) {
+            ShapeView shape, StrideView a_stride,
+            StrideView b_stride, StrideView output_stride) {
     switch (dtype) {
         case Dtype::kFloat16:
             AddHalfCPU<DecodeFloat16, EncodeFloat16>(a, b, output, shape, a_stride, b_stride, output_stride);
@@ -343,8 +343,8 @@ void AddCPU(const void* a, const void* b, void* output, Dtype dtype,
 }
 
 void SubCPU(const void* a, const void* b, void* output, Dtype dtype,
-            const std::vector<int>& shape, const std::vector<std::size_t>& a_stride,
-            const std::vector<std::size_t>& b_stride, const std::vector<std::size_t>& output_stride) {
+            ShapeView shape, StrideView a_stride,
+            StrideView b_stride, StrideView output_stride) {
     switch (dtype) {
         case Dtype::kFloat16:
             SubHalfCPU<DecodeFloat16, EncodeFloat16>(a, b, output, shape, a_stride, b_stride, output_stride);
@@ -375,8 +375,8 @@ void SubCPU(const void* a, const void* b, void* output, Dtype dtype,
 }
 
 void MulCPU(const void* a, const void* b, void* output, Dtype dtype,
-            const std::vector<int>& shape, const std::vector<std::size_t>& a_stride,
-            const std::vector<std::size_t>& b_stride, const std::vector<std::size_t>& output_stride) {
+            ShapeView shape, StrideView a_stride,
+            StrideView b_stride, StrideView output_stride) {
     switch (dtype) {
         case Dtype::kFloat16:
             MulHalfCPU<DecodeFloat16, EncodeFloat16>(a, b, output, shape, a_stride, b_stride, output_stride);
@@ -407,8 +407,8 @@ void MulCPU(const void* a, const void* b, void* output, Dtype dtype,
 }
 
 void DivCPU(const void* a, const void* b, void* output, Dtype dtype,
-            const std::vector<int>& shape, const std::vector<std::size_t>& a_stride,
-            const std::vector<std::size_t>& b_stride, const std::vector<std::size_t>& output_stride) {
+            ShapeView shape, StrideView a_stride,
+            StrideView b_stride, StrideView output_stride) {
     switch (dtype) {
         case Dtype::kFloat16:
             DivHalfCPU<DecodeFloat16, EncodeFloat16>(a, b, output, shape, a_stride, b_stride, output_stride);
@@ -439,8 +439,8 @@ void DivCPU(const void* a, const void* b, void* output, Dtype dtype,
 }
 
 void NegCPU(const void* a, void* output, Dtype dtype,
-            const std::vector<int>& shape, const std::vector<std::size_t>& a_stride,
-            const std::vector<std::size_t>& output_stride) {
+            ShapeView shape, StrideView a_stride,
+            StrideView output_stride) {
     switch (dtype) {
         case Dtype::kFloat16:
         case Dtype::kBFloat16: NegHalfCPU(a, output, shape, a_stride, output_stride); break;
@@ -466,8 +466,8 @@ void NegCPU(const void* a, void* output, Dtype dtype,
     }
 }
 
-void SqrtCPU(const void* input, void* output, Dtype dtype, const std::vector<int>& shape,
-             const std::vector<std::size_t>& stride) {
+void SqrtCPU(const void* input, void* output, Dtype dtype, ShapeView shape,
+             StrideView stride) {
     switch (dtype) {
         case Dtype::kFloat32: SqrtTypedCPU<float, float>(input, output, shape, stride); break;
         case Dtype::kFloat16: SqrtTypedCPU<Float16, Float16>(input, output, shape, stride); break;

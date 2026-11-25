@@ -7,10 +7,10 @@
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
 
-#include "mini_infer/tensor.h"
+#include "mini_infer/tensor/tensor.h"
 #include "ops/reduction/kernels.h"
 #include "ops/common/cuda_index.cuh"
-#include "device/memory.h"
+#include "cuda/cuda_check.h"
 
 namespace mtensor {
 namespace {
@@ -63,8 +63,7 @@ __device__ unsigned long long ReadInteger(const void* input, Dtype dtype, std::s
 // 每个 warp 负责一段输入，warp 内的线程以 32 为步长累加。
 template <typename T>
 __global__ void SumKernel(const void* input, void* output, Dtype dtype,
-                          const int* shape, const std::size_t* stride,
-                          int ndim, std::size_t numel) {
+                          CUDALayout layout, std::size_t numel) {
     __shared__ T shared[kWarpSize];
     int idx = threadIdx.x;
     int warp = idx / kWarpSize;
@@ -76,7 +75,7 @@ __global__ void SumKernel(const void* input, void* output, Dtype dtype,
     // 单个线程 sum
     T value = 0;
     for (std::size_t i = warp_start + lane; i < warp_end && i < numel; i += kWarpSize) {
-        const std::size_t offset = GetNumelIndex(i, shape, stride, ndim);
+        const std::size_t offset = GetNumelIndex(i, layout);
         if constexpr (std::is_same_v<T, float>) {
             value += ReadFloat(input, dtype, offset);
         } else {
@@ -105,22 +104,21 @@ __global__ void SumKernel(const void* input, void* output, Dtype dtype,
 // 每个线程负责一个输出元素；相邻线程沿输出逻辑顺序读取输入。
 template <typename T>
 __global__ void SumKernel(const void* input, void* output, Dtype dtype,
-                             const int* shape, const std::size_t* stride,
-                             int ndim, std::size_t output_numel, int dim) {
+                             CUDALayout layout, std::size_t output_numel, int dim) {
     const std::size_t out = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (out >= output_numel) return;
     std::size_t index = out;
     std::size_t base = 0;
-    for (int axis = ndim - 1; axis >= 0; --axis) {
+    for (int axis = layout.dim - 1; axis >= 0; --axis) {
         if (axis == dim) continue;
-        base += (index % shape[axis]) * stride[axis];
-        index /= shape[axis];
+        base += (index % layout.shape[axis]) * layout.stride[axis];
+        index /= layout.shape[axis];
     }
 
     // 单线程 sum
     T value = 0;
-    for (int j = 0; j < shape[dim]; ++j) {
-        const std::size_t offset = base + j * stride[dim];
+    for (int j = 0; j < layout.shape[dim]; ++j) {
+        const std::size_t offset = base + j * layout.stride[dim];
         if constexpr (std::is_same_v<T, float>) value += ReadFloat(input, dtype, offset);
         else value += ReadInteger(input, dtype, offset);
     }
@@ -172,7 +170,7 @@ __device__ std::size_t GroupStart(std::size_t group, std::size_t count, std::siz
 // 一个 block 合作归约一组，等值时保留最早元素的原始编码。
 template <typename T>
 __global__ void ExtremaKernel(const void* input, void* output, Dtype dtype,
-                              const int* shape, const std::size_t* stride, int ndim, bool contiguous,
+                              CUDALayout layout,
                               std::size_t groups, std::size_t count, std::size_t inner_size,
                               std::size_t element_size, bool maximum) {
     __shared__ T best_values[kExtremaThreads];
@@ -184,7 +182,7 @@ __global__ void ExtremaKernel(const void* input, void* output, Dtype dtype,
         T best_value{};
         for (std::size_t j = tid; j < count; j += kExtremaThreads) {
             const std::size_t i = start + j * inner_size;
-            const std::size_t offset = contiguous ? i : GetNumelIndex(i, shape, stride, ndim);
+            const std::size_t offset = GetNumelIndex(i, layout);
             const T value = ReadExtrema<T>(input, dtype, offset);
             if (best == count || PreferExtrema(value, j, best_value, best, maximum)) {
                 best = j;
@@ -208,7 +206,7 @@ __global__ void ExtremaKernel(const void* input, void* output, Dtype dtype,
         }
         if (tid == 0) {
             const std::size_t i = start + best_indices[0] * inner_size;
-            const std::size_t offset = contiguous ? i : GetNumelIndex(i, shape, stride, ndim);
+            const std::size_t offset = GetNumelIndex(i, layout);
             const auto* bytes = static_cast<const std::byte*>(input);
             auto* result = static_cast<std::byte*>(output);
             memcpy(result + group * element_size, bytes + offset * element_size, element_size);
@@ -218,8 +216,8 @@ __global__ void ExtremaKernel(const void* input, void* output, Dtype dtype,
 }
 
 __device__ bool MatchesExtrema(const void* input, Dtype dtype, std::size_t i, float best,
-                                const int* shape, const std::size_t* stride, int ndim, bool contiguous) {
-    const float value = ReadFloat(input, dtype, contiguous ? i : GetNumelIndex(i, shape, stride, ndim));
+                                const CUDALayout& layout) {
+    const float value = ReadFloat(input, dtype, GetNumelIndex(i, layout));
     return value == best || (isnan(value) && isnan(best));
 }
 
@@ -230,8 +228,7 @@ __device__ void WriteFloat(void* output, Dtype dtype, std::size_t i, float value
 }
 
 __global__ void ExtremaGradKernel(const void* input, const void* extrema, const void* grad, void* input_grad,
-                                  Dtype dtype, const int* shape, const std::size_t* stride,
-                                  int ndim, bool contiguous, std::size_t groups, std::size_t count,
+                                  Dtype dtype, CUDALayout layout, std::size_t groups, std::size_t count,
                                   std::size_t inner_size) {
     __shared__ std::size_t tie_counts[kExtremaThreads];
     const unsigned int tid = threadIdx.x;
@@ -240,7 +237,7 @@ __global__ void ExtremaGradKernel(const void* input, const void* extrema, const 
         const float best = ReadFloat(extrema, dtype, group);
         std::size_t ties = 0;
         for (std::size_t j = tid; j < count; j += kExtremaThreads) {
-            ties += MatchesExtrema(input, dtype, start + j * inner_size, best, shape, stride, ndim, contiguous);
+            ties += MatchesExtrema(input, dtype, start + j * inner_size, best, layout);
         }
         tie_counts[tid] = ties;
         __syncthreads();
@@ -251,7 +248,7 @@ __global__ void ExtremaGradKernel(const void* input, const void* extrema, const 
         const float share = ReadFloat(grad, dtype, group) / static_cast<float>(tie_counts[0]);
         for (std::size_t j = tid; j < count; j += kExtremaThreads) {
             const std::size_t i = start + j * inner_size;
-            const bool matches = MatchesExtrema(input, dtype, i, best, shape, stride, ndim, contiguous);
+            const bool matches = MatchesExtrema(input, dtype, i, best, layout);
             WriteFloat(input_grad, dtype, i, matches ? share : 0.0f);
         }
         __syncthreads();
@@ -260,30 +257,28 @@ __global__ void ExtremaGradKernel(const void* input, const void* extrema, const 
 
 }  // namespace
 
-void SumCUDA(const void* input, void* output, Dtype dtype, const int* shape,
-             const std::size_t* stride, int ndim, std::size_t numel) {
+void SumCUDA(const void* input, void* output, Dtype dtype, CUDALayout layout, std::size_t numel) {
     const bool floating = dtype == Dtype::kFloat32 || dtype == Dtype::kFloat16 ||
                           dtype == Dtype::kBFloat16;
     if (floating) {
-        SumKernel<float><<<1, kThreads>>>(input, output, dtype, shape, stride, ndim, numel);
+        SumKernel<float><<<1, kThreads>>>(input, output, dtype, layout, numel);
     } else {
-        SumKernel<unsigned long long><<<1, kThreads>>>(input, output, dtype, shape, stride, ndim, numel);
+        SumKernel<unsigned long long><<<1, kThreads>>>(input, output, dtype, layout, numel);
     }
     CUDA_CHECK(cudaGetLastError());
 }
 
-void SumCUDA(const void* input, void* output, Dtype dtype, const int* shape,
-             const std::size_t* stride, int ndim, std::size_t output_numel, int dim) {
+void SumCUDA(const void* input, void* output, Dtype dtype, CUDALayout layout, std::size_t output_numel, int dim) {
     constexpr int threads = 256;
     const unsigned int blocks = static_cast<unsigned int>((output_numel + threads - 1) / threads);
     const bool floating = dtype == Dtype::kFloat32 || dtype == Dtype::kFloat16 ||
                           dtype == Dtype::kBFloat16;
     if (floating) {
         SumKernel<float><<<blocks, threads>>>(
-            input, output, dtype, shape, stride, ndim, output_numel, dim);
+            input, output, dtype, layout, output_numel, dim);
     } else {
         SumKernel<unsigned long long><<<blocks, threads>>>(
-            input, output, dtype, shape, stride, ndim, output_numel, dim);
+            input, output, dtype, layout, output_numel, dim);
     }
     CUDA_CHECK(cudaGetLastError());
 }
@@ -295,12 +290,12 @@ void ExtremaCUDA(const Tensor& input, Tensor& output, std::size_t inner_size, bo
     const auto blocks = static_cast<unsigned int>(std::min<std::size_t>(groups, 65535));
     if (dtype == Dtype::kFloat32 || dtype == Dtype::kFloat16 || dtype == Dtype::kBFloat16) {
         ExtremaKernel<float><<<blocks, kExtremaThreads>>>(
-            input.data_ptr(), output.data_ptr(), dtype, input.shape_cuda(), input.stride_cuda(),
-            input.dim(), input.is_contiguous(), groups, count, inner_size, input.element_size(), maximum);
+            input.data_ptr(), output.data_ptr(), dtype, PackLayout(input),
+            groups, count, inner_size, input.element_size(), maximum);
     } else {
         ExtremaKernel<std::int64_t><<<blocks, kExtremaThreads>>>(
-            input.data_ptr(), output.data_ptr(), dtype, input.shape_cuda(), input.stride_cuda(),
-            input.dim(), input.is_contiguous(), groups, count, inner_size, input.element_size(), maximum);
+            input.data_ptr(), output.data_ptr(), dtype, PackLayout(input),
+            groups, count, inner_size, input.element_size(), maximum);
     }
     CUDA_CHECK(cudaGetLastError());
 }
@@ -311,7 +306,7 @@ void ExtremaGradCUDA(const Tensor& input, const Tensor& extrema, const Tensor& g
     const auto blocks = static_cast<unsigned int>(std::min<std::size_t>(groups, 65535));
     ExtremaGradKernel<<<blocks, kExtremaThreads>>>(
         input.data_ptr(), extrema.data_ptr(), grad.data_ptr(), input_grad.data_ptr(), input.dtype(),
-        input.shape_cuda(), input.stride_cuda(), input.dim(), input.is_contiguous(), groups,
+        PackLayout(input), groups,
         input.numel() / groups, inner_size);
     CUDA_CHECK(cudaGetLastError());
 }

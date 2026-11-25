@@ -61,7 +61,7 @@ add_library(mini_infer STATIC
     src/tensor/check.cpp
     src/tensor/print.cpp
     src/utils/logger.cpp
-    src/device/memory.cpp
+    src/memory/memory.cpp
 )
 
 target_include_directories(mini_infer
@@ -71,6 +71,7 @@ target_include_directories(mini_infer
 
 if(ENABLE_CUDA)
     target_sources(mini_infer PRIVATE
+        src/ops/common/cuda_layout.cpp
         src/ops/activation/cuda.cu
         src/ops/elementwise/cuda.cu
         src/ops/norm/cuda.cu

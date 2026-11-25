@@ -6,15 +6,15 @@
 #include <type_traits>
 #include <vector>
 
-#include "mini_infer/tensor.h"
+#include "mini_infer/tensor/tensor.h"
 #include "ops/reduction/kernels.h"
 
 namespace mtensor {
 namespace {
 
 // 将连续的逻辑下标转换成实际存储中的元素偏移。
-std::size_t ElementOffset(std::size_t index, const std::vector<int>& shape,
-                          const std::vector<std::size_t>& stride) {
+std::size_t ElementOffset(std::size_t index, ShapeView shape,
+                          StrideView stride) {
     std::size_t offset = 0;
     for (std::size_t i = shape.size(); i > 0; --i) {
         const std::size_t dimension = static_cast<std::size_t>(shape[i - 1]);
@@ -98,8 +98,8 @@ void WriteFloat(void* output, Dtype dtype, std::size_t offset, float value) {
 
 }  // namespace
 
-void SumCPU(const void* input, void* output, Dtype dtype, const std::vector<int>& shape,
-            const std::vector<std::size_t>& stride, std::size_t numel) {
+void SumCPU(const void* input, void* output, Dtype dtype, ShapeView shape,
+            StrideView stride, std::size_t numel) {
     const auto* bytes = static_cast<const std::byte*>(input);
     float float_sum = 0.0f;
     // 用无符号加法实现 Int64 固定位宽回绕，避免有符号溢出。
@@ -142,8 +142,8 @@ void SumCPU(const void* input, void* output, Dtype dtype, const std::vector<int>
     }
 }
 
-void SumCPU(const void* input, void* output, Dtype dtype, const std::vector<int>& shape,
-            const std::vector<std::size_t>& stride, std::size_t numel, int dim) {
+void SumCPU(const void* input, void* output, Dtype dtype, ShapeView shape,
+            StrideView stride, std::size_t numel, int dim) {
     const std::size_t count = numel / static_cast<std::size_t>(shape[dim]);
     const std::vector<int> reduction_shape{shape[dim]};
     const std::vector<std::size_t> reduction_stride{stride[dim]};
