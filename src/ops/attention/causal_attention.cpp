@@ -20,13 +20,13 @@ class CausalAttentionNode : public AutogradNode {
 public:
     int heads = 0;
     SavedTensor saved_inputs[3];
-    SavedTensor saved_probabilities;
+    SavedTensor saved_softmax_prob;
 
     std::vector<Tensor> backward(const Tensor& output_grad) override {
         const Tensor q = saved_inputs[0].unpack("causal_attention Q");
         const Tensor k = saved_inputs[1].unpack("causal_attention K");
         const Tensor v = saved_inputs[2].unpack("causal_attention V");
-        const Tensor probabilities = saved_probabilities.unpack("causal_attention probabilities");
+        const Tensor prob = saved_softmax_prob.unpack("causal_attention softmax prob");
         Tensor dq(q.shape(), q.dtype(), q.device());
         Tensor dk(k.shape(), k.dtype(), k.device());
         Tensor dv(v.shape(), v.dtype(), v.device());
@@ -36,7 +36,7 @@ public:
         const Tensor packed_grad = Packed(output_grad);
         GetKernelTable().causal_attention_backward.call(
             q.device(), "causal_attention backward", packed_q, packed_k, packed_v,
-            heads, probabilities, packed_grad, dq, dk, dv);
+            heads, prob, packed_grad, dq, dk, dv);
         return {dq, dk, dv};
     }
 };
@@ -55,12 +55,12 @@ Tensor causal_attention(const Tensor& q, const Tensor& k, const Tensor& v, int h
     CheckSameDevice(q, v, "causal_attention V and Q must be on the same device");
     HeadWidth(q.size(1), heads);
 
-    Tensor probabilities({heads, q.size(0), q.size(0)}, q.dtype(), q.device());
+    Tensor prob({heads, q.size(0), q.size(0)}, q.dtype(), q.device());
     Tensor output(q.shape(), q.dtype(), q.device());
     const Tensor packed_q = Packed(q), packed_k = Packed(k), packed_v = Packed(v);
     GetKernelTable().causal_attention.call(
         q.device(), "causal_attention", packed_q, packed_k, packed_v,
-        heads, probabilities, output);
+        heads, prob, output);
     if (ShouldRecordGrad({&q, &k, &v}, output.dtype())) {
         auto node = std::make_shared<CausalAttentionNode>();
         node->record_inputs({q, k, v});
@@ -68,7 +68,7 @@ Tensor causal_attention(const Tensor& q, const Tensor& k, const Tensor& v, int h
         node->saved_inputs[0] = SavedTensor(q);
         node->saved_inputs[1] = SavedTensor(k);
         node->saved_inputs[2] = SavedTensor(v);
-        node->saved_probabilities = SavedTensor(probabilities, /*is_output=*/true);
+        node->saved_softmax_prob = SavedTensor(prob, /*is_output=*/true);
         output.set_grad_node(std::move(node));
     }
     return output;

@@ -16,9 +16,9 @@ void CrossEntropyRowsCPU(const Tensor& logits, const Tensor& targets, Tensor& ro
 void CrossEntropyGradCPU(const Tensor& logits, const Tensor& targets,
                          const Tensor& grad, Tensor& logits_grad);
 void CausalAttentionCPU(const Tensor& q, const Tensor& k, const Tensor& v, int heads,
-                        Tensor& probabilities, Tensor& output);
+                        Tensor& prob, Tensor& output);
 void CausalAttentionGradCPU(const Tensor& q, const Tensor& k, const Tensor& v, int heads,
-                            const Tensor& probabilities, const Tensor& grad,
+                            const Tensor& prob, const Tensor& grad,
                             Tensor& dq, Tensor& dk, Tensor& dv);
 void RMSNormCPU(const Tensor& x, const Tensor& weight, float eps, Tensor& output);
 void RMSNormBackwardCPU(const Tensor& x, const Tensor& weight, const Tensor& grad,
@@ -108,14 +108,14 @@ void RegisterCPUKernels(KernelTable& table) {
         });
     table.causal_attention.register_fn(Device::kCPU,
         +[](DeviceContext&, const Tensor& q, const Tensor& k, const Tensor& v,
-            int heads, Tensor& probabilities, Tensor& out) {
-            CausalAttentionCPU(q, k, v, heads, probabilities, out);
+            int heads, Tensor& prob, Tensor& out) {
+            CausalAttentionCPU(q, k, v, heads, prob, out);
         });
     table.causal_attention_backward.register_fn(Device::kCPU,
         +[](DeviceContext&, const Tensor& q, const Tensor& k, const Tensor& v, int heads,
-            const Tensor& probabilities, const Tensor& grad,
+            const Tensor& prob, const Tensor& grad,
             Tensor& dq, Tensor& dk, Tensor& dv) {
-            CausalAttentionGradCPU(q, k, v, heads, probabilities, grad, dq, dk, dv);
+            CausalAttentionGradCPU(q, k, v, heads, prob, grad, dq, dk, dv);
         });
     table.rms_norm.register_fn(Device::kCPU,
         +[](DeviceContext&, const Tensor& x, const Tensor& weight, float eps, Tensor& out) {

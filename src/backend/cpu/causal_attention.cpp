@@ -18,14 +18,14 @@ float ReadMatrix(const Tensor& x, int row, int col) {
 }  // namespace
 
 void CausalAttentionCPU(const Tensor& q, const Tensor& k, const Tensor& v, int heads,
-                        Tensor& probabilities, Tensor& output) {
+                        Tensor& prob, Tensor& output) {
     const int length = q.size(0);
     const int channels = q.size(1);
     const int head_width = channels / heads;
     const float scale = 1.0f / std::sqrt(static_cast<float>(head_width));
-    auto* probs = static_cast<float*>(probabilities.data_ptr());
+    auto* prob_data = static_cast<float*>(prob.data_ptr());
     auto* result = static_cast<float*>(output.data_ptr());
-    std::fill(probs, probs + probabilities.numel(), 0.0f);
+    std::fill(prob_data, prob_data + prob.numel(), 0.0f);
     std::vector<float> scores(length);
     for (int head = 0; head < heads; ++head) {
         const int begin = head * head_width;
@@ -47,13 +47,13 @@ void CausalAttentionCPU(const Tensor& q, const Tensor& k, const Tensor& v, int h
             }
             for (int key = 0; key <= row; ++key) {
                 const float p = scores[key] / denominator;
-                probs[(static_cast<std::size_t>(head) * length + row) * length + key] = p;
+                prob_data[(static_cast<std::size_t>(head) * length + row) * length + key] = p;
             }
             for (int col = 0; col < head_width; ++col) {
                 float value = 0.0f;
                 for (int key = 0; key <= row; ++key) {
-                    value += probs[(static_cast<std::size_t>(head) * length + row) *
-                                   length + key] * ReadMatrix(v, key, begin + col);
+                    value += prob_data[(static_cast<std::size_t>(head) * length + row) *
+                                       length + key] * ReadMatrix(v, key, begin + col);
                 }
                 result[static_cast<std::size_t>(row) * channels + begin + col] = value;
             }
@@ -62,13 +62,13 @@ void CausalAttentionCPU(const Tensor& q, const Tensor& k, const Tensor& v, int h
 }
 
 void CausalAttentionGradCPU(const Tensor& q, const Tensor& k, const Tensor& v, int heads,
-                            const Tensor& probabilities, const Tensor& grad,
+                            const Tensor& prob, const Tensor& grad,
                             Tensor& dq, Tensor& dk, Tensor& dv) {
     const int length = q.size(0);
     const int channels = q.size(1);
     const int head_width = channels / heads;
     const float scale = 1.0f / std::sqrt(static_cast<float>(head_width));
-    const auto* probs = static_cast<const float*>(probabilities.data_ptr());
+    const auto* prob_data = static_cast<const float*>(prob.data_ptr());
     auto* q_grad = static_cast<float*>(dq.data_ptr());
     auto* k_grad = static_cast<float*>(dk.data_ptr());
     auto* v_grad = static_cast<float*>(dv.data_ptr());
@@ -86,16 +86,16 @@ void CausalAttentionGradCPU(const Tensor& q, const Tensor& k, const Tensor& v, i
                     value += ReadMatrix(grad, row, begin + col) *
                              ReadMatrix(v, key, begin + col);
                     v_grad[static_cast<std::size_t>(key) * channels + begin + col] +=
-                        probs[(static_cast<std::size_t>(head) * length + row) *
-                              length + key] * ReadMatrix(grad, row, begin + col);
+                        prob_data[(static_cast<std::size_t>(head) * length + row) *
+                                  length + key] * ReadMatrix(grad, row, begin + col);
                 }
                 dp[key] = value;
-                weighted += probs[(static_cast<std::size_t>(head) * length + row) *
-                                  length + key] * value;
+                weighted += prob_data[(static_cast<std::size_t>(head) * length + row) *
+                                      length + key] * value;
             }
             for (int key = 0; key <= row; ++key) {
-                const float p = probs[(static_cast<std::size_t>(head) * length + row) *
-                                      length + key];
+                const float p = prob_data[(static_cast<std::size_t>(head) * length + row) *
+                                          length + key];
                 const float ds = (p * scale) * (dp[key] - weighted);
                 for (int col = 0; col < head_width; ++col) {
                     q_grad[static_cast<std::size_t>(row) * channels + begin + col] +=

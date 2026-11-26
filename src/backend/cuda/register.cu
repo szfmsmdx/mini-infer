@@ -18,9 +18,9 @@ void CrossEntropyCUDA(const Tensor& logits, const Tensor& targets, Tensor& row_l
 void CrossEntropyGradCUDA(const Tensor& logits, const Tensor& targets,
                           const Tensor& grad, Tensor& logits_grad);
 void CausalAttentionCUDA(const Tensor& q, const Tensor& k, const Tensor& v, int heads,
-                         Tensor& probabilities, Tensor& output);
+                         Tensor& prob, Tensor& output);
 void CausalAttentionGradCUDA(const Tensor& q, const Tensor& k, const Tensor& v, int heads,
-                             const Tensor& probabilities, const Tensor& grad,
+                             const Tensor& prob, const Tensor& grad,
                              Tensor& dq, Tensor& dk, Tensor& dv);
 }
 
@@ -106,14 +106,14 @@ void RegisterCUDAKernels(KernelTable& table) {
         });
     table.causal_attention.register_fn(Device::kCUDA,
         +[](DeviceContext&, const Tensor& q, const Tensor& k, const Tensor& v,
-            int heads, Tensor& probabilities, Tensor& out) {
-            CausalAttentionCUDA(q, k, v, heads, probabilities, out);
+            int heads, Tensor& prob, Tensor& out) {
+            CausalAttentionCUDA(q, k, v, heads, prob, out);
         });
     table.causal_attention_backward.register_fn(Device::kCUDA,
         +[](DeviceContext&, const Tensor& q, const Tensor& k, const Tensor& v, int heads,
-            const Tensor& probabilities, const Tensor& grad,
+            const Tensor& prob, const Tensor& grad,
             Tensor& dq, Tensor& dk, Tensor& dv) {
-            CausalAttentionGradCUDA(q, k, v, heads, probabilities, grad, dq, dk, dv);
+            CausalAttentionGradCUDA(q, k, v, heads, prob, grad, dq, dk, dv);
         });
     table.rms_norm.register_fn(Device::kCUDA,
         +[](DeviceContext&, const Tensor& x, const Tensor& weight, float eps, Tensor& out) {
