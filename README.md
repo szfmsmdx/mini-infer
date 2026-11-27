@@ -61,3 +61,5 @@ SGD 和 Adam 支持 CPU/CUDA 的 FP32 参数。模型和优化器共享权重 Te
 - [ ] 补独立的 Softmax 等基础算子，将 BPE 接入 GPT。
 - [ ] 推理区分 prefill 和 decode，加入 KV Cache，再实现请求调度和 continuous batching。
 - [ ] 测量延迟、吞吐和显存占用，再按结果做算子融合、量化和并行。
+
+本次文档变更用于验证 CI 的覆盖率特批流程。
