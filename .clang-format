@@ -1,0 +1,14 @@
+BasedOnStyle: LLVM
+Standard: c++17
+IndentWidth: 4
+AccessModifierOffset: -4
+NamespaceIndentation: None
+BreakBeforeBraces: Attach
+ColumnLimit: 0
+PointerAlignment: Left
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: true
+AllowShortFunctionsOnASingleLine: Inline
+ReflowComments: false
+# Keep the implementation header first within the project's dependency-ordered group.
+SortIncludes: Never

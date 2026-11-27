@@ -1,0 +1,34 @@
+name: Mark tested draft ready
+on:
+  workflow_run:
+    workflows: ["C++ correctness"]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  ready:
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.path == '.github/workflows/cpp-correctness.yml'
+    runs-on: ubuntu-24.04
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      # This privileged workflow uses default-branch code only. Never check out the PR here.
+      - name: Mark the matching open draft ready for review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          FORK: ${{ github.event.workflow_run.head_repository.full_name }}
+        run: |
+          number=$(gh api "repos/$REPO/commits/$SHA/pulls" --paginate --slurp | jq -r \
+            --arg sha "$SHA" --arg branch "$BRANCH" --arg fork "$FORK" \
+            '[.[][] | select(.state == "open" and .draft and .base.ref == "main" and
+             .head.sha == $sha and .head.ref == $branch and .head.repo.full_name == $fork)]
+             | if length == 1 then .[0].number else empty end')
+          if [[ -n "$number" ]]; then gh pr ready "$number" --repo "$REPO"; fi
