@@ -7,10 +7,10 @@
                 <mxCell id="l4" value="L4 模型、训练与推理应用层（共享权重与算子，区分训练态 / KV Cache 推理态）" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=10;spacingTop=6;fontSize=13;fontStyle=1;fillColor=#f5f5f5;strokeColor=#666666;dashed=1;" vertex="1" parent="1">
                     <mxGeometry x="60" y="40" width="1540" height="190" as="geometry"/>
                 </mxCell>
-                <mxCell id="l4_mod" value="&lt;b&gt;modules &amp;amp; layers&lt;/b&gt;&lt;br&gt;Module / Linear / RMSNorm&lt;br&gt;Embedding / SimpleDecoderLayer" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+                <mxCell id="l4_mod" value="&lt;b&gt;modules&lt;/b&gt;&lt;br&gt;Module / Linear / RMSNorm&lt;br&gt;Embedding" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
                     <mxGeometry x="90" y="90" width="260" height="110" as="geometry"/>
                 </mxCell>
-                <mxCell id="l4_model" value="&lt;b&gt;models &amp;amp; init&lt;/b&gt;&lt;br&gt;GPT / ModelConfig / GPTCheckpoint&lt;br&gt;weight_init (Kaiming / Normal)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+                <mxCell id="l4_model" value="&lt;b&gt;models &amp;amp; init&lt;/b&gt;&lt;br&gt;GPT / ModelConfig / GPTCheckpoint&lt;br&gt;models/layers: SimpleDecoderLayer&lt;br&gt;weight_init (Kaiming / Normal)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
                     <mxGeometry x="380" y="90" width="260" height="110" as="geometry"/>
                 </mxCell>
                 <mxCell id="l4_train" value="&lt;b&gt;optim (训练)&lt;/b&gt;&lt;br&gt;Optimizer / SGD / Adam&lt;br&gt;在 NoGradGuard 下原地更新参数" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">

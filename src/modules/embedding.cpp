@@ -4,14 +4,14 @@
 #include <utility>
 #include <vector>
 
-#include "mini_infer/layers/embedding.h"
+#include "mini_infer/modules/embedding.h"
 #include "mini_infer/ops/embedding.h"
 #include "mini_infer/init.h"
 
 namespace mtensor {
 
 Embedding::Embedding(int vocab_size, int channels, Device device, WeightInitializer initializer)
-    : vocab_size_(vocab_size), channels_(channels), device_(device),
+    : Module("Embedding"), vocab_size_(vocab_size), channels_(channels), device_(device),
       initializer_(std::move(initializer)) {
     init();
 }
@@ -31,7 +31,7 @@ void Embedding::init() {
     }
     weight_ = Tensor(values.data(), {vocab_size_, channels_}, Dtype::kFloat32, device_);
     weight_.requires_grad_(true);
-    register_parameter(weight_);
+    register_parameter("weight", weight_);
 }
 
 Tensor Embedding::forward(const Tensor& indices) {

@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "mini_infer/autograd.h"
+#include "mini_infer/runtime/memory_pool.h"
 #include "mini_infer/tensor/tensor.h"
 
 namespace {
@@ -601,6 +602,13 @@ void TestNarrow() {
 
 int main() {
     try {
+#ifndef ENABLE_CUDA
+        mtensor::EmptyCUDACache();
+        const auto stats = mtensor::GetCUDAMemoryStats();
+        Check(stats.allocated_bytes == 0 && stats.cached_bytes == 0 &&
+                  stats.allocations == 0 && stats.cache_hits == 0,
+              "CPU-only build must report an empty CUDA pool");
+#endif
         TestEmptyTensor();
         TestConstruction();
         TestAllDtypeStorage();

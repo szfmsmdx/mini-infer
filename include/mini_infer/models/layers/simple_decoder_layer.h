@@ -1,6 +1,6 @@
 #pragma once
 
-#include <vector>
+#include <memory>
 
 #include "mini_infer/modules/module.h"
 #include "mini_infer/modules/linear.h"
@@ -17,17 +17,15 @@ public:
     Tensor forward(const Tensor& x) override;
 
 private:
-    void append_child_parameters(std::vector<Tensor>& result) const override;
-
     int heads_;
-    RMSNorm attention_norm_;
-    Linear q_;
-    Linear k_;
-    Linear v_;
-    Linear attention_projection_;
-    RMSNorm mlp_norm_;
-    Linear expand_;
-    Linear contract_;
+    std::shared_ptr<RMSNorm> attention_norm_;
+    std::shared_ptr<Linear> q_;
+    std::shared_ptr<Linear> k_;
+    std::shared_ptr<Linear> v_;
+    std::shared_ptr<Linear> attention_projection_;
+    std::shared_ptr<RMSNorm> mlp_norm_;
+    std::shared_ptr<Linear> expand_;
+    std::shared_ptr<Linear> contract_;
 };
 
 }  // namespace mtensor

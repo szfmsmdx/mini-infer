@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "mini_infer/autograd.h"
+#include "mini_infer/runtime/memory_pool.h"
 #include "mini_infer/tensor/tensor.h"
 #include "runtime/memory.h"
 
@@ -75,6 +76,39 @@ void TestMemory() {
     mtensor::CopyBytes(owner.get(), Device::kCUDA, &input, Device::kCPU, sizeof(input));
     mtensor::CopyBytes(&output, Device::kCPU, owner.get(), Device::kCUDA, sizeof(output));
     Check(output == input, "Allocated CUDA memory could not round-trip data");
+}
+
+void TestMemoryPool() {
+    mtensor::EmptyCUDACache();
+    const std::int32_t value = 42;
+    Tensor live(&value, {}, Dtype::kInt32, Device::kCUDA);
+    const auto start = mtensor::GetCUDAMemoryStats();
+    std::size_t block_bytes = 0;
+    {
+        Tensor temporary(&value, {}, Dtype::kInt32, Device::kCUDA);
+        const auto active = mtensor::GetCUDAMemoryStats();
+        Check(active.allocated_bytes >= start.allocated_bytes + temporary.nbytes() &&
+                  active.allocations == start.allocations + 1 && active.cache_hits == start.cache_hits,
+              "Fresh allocation must increase active bytes and allocation count");
+        block_bytes = active.allocated_bytes - start.allocated_bytes;
+    }
+    const auto released = mtensor::GetCUDAMemoryStats();
+    Check(released.allocated_bytes == start.allocated_bytes && released.cached_bytes == block_bytes,
+          "Released block must move from active to cached bytes");
+    CheckCuda(cudaDeviceSynchronize());  // 等归还时记录的 event 完成，块才可复用。
+    {
+        Tensor reused(&value, {}, Dtype::kInt32, Device::kCUDA);
+        const auto hit = mtensor::GetCUDAMemoryStats();
+        Check(hit.cached_bytes == 0 && hit.allocated_bytes == start.allocated_bytes + block_bytes &&
+                  hit.cache_hits == start.cache_hits + 1 && hit.allocations == start.allocations + 2,
+              "Reusing the cached block must record one hit");
+    }
+    mtensor::EmptyCUDACache();
+    const auto cleared = mtensor::GetCUDAMemoryStats();
+    Check(cleared.cached_bytes == 0 && cleared.allocated_bytes == start.allocated_bytes &&
+              cleared.cache_hits == start.cache_hits + 1 && cleared.allocations == start.allocations + 2,
+          "Clearing the cache must preserve active bytes and cumulative counters");
+    CheckValues<std::int32_t>(live, {value});
 }
 
 template <typename T>
@@ -591,6 +625,7 @@ int main() {
         CheckCuda(status);
         mtensor::NogradNode guard;
         TestMemory();
+        TestMemoryPool();
         TestConstructionAndViews();
         TestOwnership();
         TestCloneAndCopy();

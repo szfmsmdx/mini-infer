@@ -46,9 +46,10 @@
 | `src/ops/` | 按类别组织算子入口和反向节点；校验参数、准备输出并通过 `KernelTable` 分发 |
 | `src/backend/` | 不建图的计算实现；按 CPU、CUDA 组织，同一设备的前后向放在同一文件 |
 | `src/autograd/` | 建图开关、拓扑排序和梯度累加 |
-| `src/modules/`、`src/layers/` | `Module`、`Linear`、`RMSNorm`；`Embedding` 和 `SimpleDecoderLayer` |
+| `src/modules/` | `Module` 基类和持有权重、复用算子的组件：`Linear`、`RMSNorm`、`Embedding` |
 | `src/init/` | 参数初始化：正态、均匀和 Kaiming |
-| `src/models/`、`src/tokenizer/` | GPT 和 checkpoint；字节 tokenizer 和 BPE |
+| `src/models/`、`src/models/layers/` | 组合模块实现整模型和模型层：GPT 与 checkpoint、`SimpleDecoderLayer` |
+| `src/tokenizer/` | 字节 tokenizer 和 BPE |
 | `src/optim/`、`src/utils/` | SGD 和 Adam；Logger |
 | `examples/`、`tests/` | 训练与生成示例；正确性、精度和 ggml 性能测试 |
 

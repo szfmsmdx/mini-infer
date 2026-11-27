@@ -12,13 +12,14 @@ namespace mtensor {
 
 Linear::Linear(int in_features, int out_features, bool bias, Device device,
                WeightInitializer initializer)
-    : in_features_(in_features), out_features_(out_features), use_bias_(bias), device_(device),
+    : Module("Linear"),
+      in_features_(in_features), out_features_(out_features), use_bias_(bias), device_(device),
       initializer_(std::move(initializer)) {
     init();
 }
 
 Linear::Linear(Tensor weight, std::optional<Tensor> bias)
-    : use_bias_(bias.has_value()), device_(weight.device()),
+    : Module("Linear"), use_bias_(bias.has_value()), device_(weight.device()),
       weight_(std::move(weight)), bias_(std::move(bias)) {
     if (weight_.dim() != 2) {
         throw std::invalid_argument("Linear: weight must have shape [out_features, in_features]");
@@ -55,8 +56,8 @@ void Linear::init() {
 }
 
 void Linear::register_parameters() {
-    register_parameter(weight_);
-    if (bias_) register_parameter(*bias_);
+    register_parameter("weight", weight_);
+    if (bias_) register_parameter("bias", *bias_);
 }
 
 Tensor Linear::forward(const Tensor& x) {
