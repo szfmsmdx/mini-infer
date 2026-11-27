@@ -161,6 +161,14 @@ void RegisterCPUKernels(KernelTable& table) {
             SumCPU(x.data_ptr(), out.data_ptr(), x.dtype(),
                    x.shape(), x.stride(), x.numel(), dim);
         });
+    table.mean.register_fn(Device::kCPU,
+        +[](DeviceContext&, const Tensor& x, int dim, bool keepdim, Tensor& out) {
+            MeanCPU(x, dim, keepdim, out);
+        });
+    table.mean_backward.register_fn(Device::kCPU,
+        +[](DeviceContext&, const Tensor& x, const Tensor& grad, int dim, Tensor& dx) {
+            MeanBackwardCPU(x, grad, dim, dx);
+        });
     table.extrema.register_fn(Device::kCPU,
         +[](DeviceContext&, const Tensor& x, Tensor& out,
             std::size_t inner_size, bool maximum) {

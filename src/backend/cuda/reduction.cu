@@ -8,6 +8,7 @@
 #include <cuda_runtime.h>
 
 #include "mini_infer/tensor/tensor.h"
+#include "mini_infer/ops/elementwise.h"
 #include "ops/reduction/kernels.h"
 #include "backend/common/cuda_index.cuh"
 #include "runtime/cuda_check.h"
@@ -281,6 +282,22 @@ void SumCUDA(const void* input, void* output, Dtype dtype, CUDALayout layout, st
             input, output, dtype, layout, output_numel, dim);
     }
     CUDA_CHECK(cudaGetLastError());
+}
+
+void MeanCUDA(const Tensor& input, int dim, bool keepdim, Tensor& out) {
+    const Tensor total = dim == -1 ? input.sum() : input.sum(dim, keepdim);
+    const float count = static_cast<float>(dim == -1 ? input.numel() : input.size(dim));
+    const Tensor scale = full({}, 1.0f / count, input.dtype(), input.device());
+    mul_out(total, scale.broadcast(out.shape()), out);
+}
+
+void MeanBackwardCUDA(const Tensor& input, const Tensor& output_grad, int dim, Tensor& dx) {
+    const float count = static_cast<float>(dim == -1 ? input.numel() : input.size(dim));
+    Tensor scaled_grad = output_grad * (1.0f / count);
+    if (dim >= 0 && scaled_grad.dim() != input.dim()) {
+        scaled_grad = scaled_grad.unsqueeze(dim);
+    }
+    dx = scaled_grad.broadcast(input.shape());
 }
 
 void ExtremaCUDA(const Tensor& input, Tensor& output, std::size_t inner_size, bool maximum) {

@@ -158,6 +158,14 @@ void RegisterCUDAKernels(KernelTable& table) {
         +[](DeviceContext&, const Tensor& x, int dim, Tensor& out) {
             SumCUDA(x.data_ptr(), out.data_ptr(), x.dtype(), PackLayout(x), out.numel(), dim);
         });
+    table.mean.register_fn(Device::kCUDA,
+        +[](DeviceContext&, const Tensor& x, int dim, bool keepdim, Tensor& out) {
+            MeanCUDA(x, dim, keepdim, out);
+        });
+    table.mean_backward.register_fn(Device::kCUDA,
+        +[](DeviceContext&, const Tensor& x, const Tensor& grad, int dim, Tensor& dx) {
+            MeanBackwardCUDA(x, grad, dim, dx);
+        });
     table.extrema.register_fn(Device::kCUDA,
         +[](DeviceContext&, const Tensor& x, Tensor& out,
             std::size_t inner_size, bool maximum) {

@@ -46,6 +46,8 @@ using UnaryBackwardKernel = void (*)(DeviceContext&, const Tensor&, const Tensor
 using SoftmaxKernel = void (*)(DeviceContext&, const Tensor&, int, Tensor&);
 using SoftmaxBackwardKernel = void (*)(DeviceContext&, const Tensor&, const Tensor&, int, Tensor&);
 using SumDimKernel = void (*)(DeviceContext&, const Tensor&, int, Tensor&);
+using MeanKernel = void (*)(DeviceContext&, const Tensor&, int, bool, Tensor&);
+using MeanBackwardKernel = void (*)(DeviceContext&, const Tensor&, const Tensor&, int, Tensor&);
 using ExtremaKernel = void (*)(DeviceContext&, const Tensor&, Tensor&, std::size_t, bool);
 using ExtremaBackwardKernel = void (*)(DeviceContext&, const Tensor&, const Tensor&,
                                        const Tensor&, Tensor&, std::size_t);
@@ -96,6 +98,8 @@ struct KernelTable {
     KernelSlot<ZeroKernel> zero;
     KernelSlot<UnaryKernel> sum_all;
     KernelSlot<SumDimKernel> sum_dim;
+    KernelSlot<MeanKernel> mean;
+    KernelSlot<MeanBackwardKernel> mean_backward;
     KernelSlot<ExtremaKernel> extrema;
     KernelSlot<ExtremaBackwardKernel> extrema_backward;
     KernelSlot<UnaryBackwardKernel> sigmoid_backward;
