@@ -42,8 +42,14 @@ struct KernelSlot {
 
 using UnaryKernel = void (*)(DeviceContext&, const Tensor&, Tensor&);
 using BinaryKernel = void (*)(DeviceContext&, const Tensor&, const Tensor&, Tensor&);
+using BinaryBackwardKernel = void (*)(DeviceContext&, const Tensor&, const Tensor&,
+                                      const Tensor&, Tensor&, Tensor&);
 using UnaryBackwardKernel = void (*)(DeviceContext&, const Tensor&, const Tensor&, Tensor&);
+using SoftmaxKernel = void (*)(DeviceContext&, const Tensor&, int, Tensor&);
+using SoftmaxBackwardKernel = void (*)(DeviceContext&, const Tensor&, const Tensor&, int, Tensor&);
 using SumDimKernel = void (*)(DeviceContext&, const Tensor&, int, Tensor&);
+using MeanKernel = void (*)(DeviceContext&, const Tensor&, int, bool, Tensor&);
+using MeanBackwardKernel = void (*)(DeviceContext&, const Tensor&, const Tensor&, int, Tensor&);
 using ExtremaKernel = void (*)(DeviceContext&, const Tensor&, Tensor&, std::size_t, bool);
 using ExtremaBackwardKernel = void (*)(DeviceContext&, const Tensor&, const Tensor&,
                                        const Tensor&, Tensor&, std::size_t);
@@ -72,14 +78,24 @@ struct KernelTable {
     KernelSlot<UnaryKernel> rsqrt;
     KernelSlot<UnaryKernel> exp;
     KernelSlot<UnaryKernel> log;
+    KernelSlot<UnaryKernel> sub_backward;
+    KernelSlot<BinaryBackwardKernel> mul_backward;
+    KernelSlot<BinaryBackwardKernel> div_backward;
+    KernelSlot<UnaryKernel> neg_backward;
+    KernelSlot<UnaryBackwardKernel> sqrt_backward;
     KernelSlot<UnaryBackwardKernel> rsqrt_backward;
+    KernelSlot<UnaryBackwardKernel> exp_backward;
+    KernelSlot<UnaryBackwardKernel> log_backward;
     KernelSlot<UnaryKernel> sigmoid;
     KernelSlot<UnaryKernel> silu;
+    KernelSlot<SoftmaxKernel> softmax;
+    KernelSlot<SoftmaxBackwardKernel> softmax_backward;
     KernelSlot<BinaryKernel> matmul;
+    KernelSlot<BinaryBackwardKernel> matmul_backward;
     KernelSlot<BinaryKernel> embedding;
     KernelSlot<BinaryKernel> embedding_backward;
     KernelSlot<RoPEKernel> rope;
-    KernelSlot<BinaryKernel> cross_entropy_rows;
+    KernelSlot<BinaryKernel> cross_entropy;
     KernelSlot<TernaryBackwardKernel> cross_entropy_backward;
     KernelSlot<AttentionKernel> causal_attention;
     KernelSlot<AttentionBackwardKernel> causal_attention_backward;
@@ -92,6 +108,8 @@ struct KernelTable {
     KernelSlot<ZeroKernel> zero;
     KernelSlot<UnaryKernel> sum_all;
     KernelSlot<SumDimKernel> sum_dim;
+    KernelSlot<MeanKernel> mean;
+    KernelSlot<MeanBackwardKernel> mean_backward;
     KernelSlot<ExtremaKernel> extrema;
     KernelSlot<ExtremaBackwardKernel> extrema_backward;
     KernelSlot<UnaryBackwardKernel> sigmoid_backward;

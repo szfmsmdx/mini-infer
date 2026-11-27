@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "ops/matmul/kernels.h"
+#include "mini_infer/ops/matmul.h"
 
 namespace mtensor {
 namespace {
@@ -107,6 +108,12 @@ void MatmulCPU(const void* a, const void* b, void* output, Dtype dtype,
         default:
             throw std::invalid_argument("MatmulCPU: unsupported dtype");
     }
+}
+
+void MatmulBackwardCPU(const Tensor& a, const Tensor& b, const Tensor& grad,
+                       Tensor& da, Tensor& db) {
+    matmul_out(grad, b.transpose(0, 1), da);
+    matmul_out(a.transpose(0, 1), grad, db);
 }
 
 }  // namespace mtensor

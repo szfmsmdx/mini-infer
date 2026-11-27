@@ -29,6 +29,7 @@ add_library(mini_infer STATIC
     src/backend/cpu/register.cpp
     src/backend/cpu/embedding.cpp
     src/backend/cpu/rope.cpp
+    src/backend/cpu/cross_entropy.cpp
     src/backend/cpu/causal_attention.cpp
     src/backend/cpu/norm.cpp
     src/autograd/autograd.cpp

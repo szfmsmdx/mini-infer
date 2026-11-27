@@ -12,6 +12,8 @@ void EmbeddingCPU(const Tensor& weight, const Tensor& indices, Tensor& output);
 void EmbeddingGradCPU(const Tensor& grad, const Tensor& indices, Tensor& weight_grad);
 void RoPECPU(const Tensor& x, int head_width, float base, bool inverse,
              int pos_offset, Tensor& output);
+void CrossEntropyCPU(const Tensor& logits, const Tensor& targets, Tensor& row_losses);
+void CrossEntropyBackwardCPU(const Tensor& logits, const Tensor& targets, const Tensor& grad, Tensor& dx);
 void CausalAttentionCPU(const Tensor& q, const Tensor& k, const Tensor& v, int heads,
                         Tensor& prob, Tensor& output);
 void CausalAttentionGradCPU(const Tensor& q, const Tensor& k, const Tensor& v, int heads,
@@ -60,9 +62,39 @@ void RegisterCPUKernels(KernelTable& table) {
         +[](DeviceContext&, const Tensor& x, Tensor& out) { ExpCPU(x, out); });
     table.log.register_fn(Device::kCPU,
         +[](DeviceContext&, const Tensor& x, Tensor& out) { LogCPU(x, out); });
+    table.sub_backward.register_fn(Device::kCPU,
+        +[](DeviceContext&, const Tensor& grad, Tensor& db) {
+            SubBackwardCPU(grad, db);
+        });
+    table.mul_backward.register_fn(Device::kCPU,
+        +[](DeviceContext&, const Tensor& a, const Tensor& b, const Tensor& grad,
+            Tensor& da, Tensor& db) {
+            MulBackwardCPU(a, b, grad, da, db);
+        });
+    table.div_backward.register_fn(Device::kCPU,
+        +[](DeviceContext&, const Tensor& a, const Tensor& b, const Tensor& grad,
+            Tensor& da, Tensor& db) {
+            DivBackwardCPU(a, b, grad, da, db);
+        });
+    table.neg_backward.register_fn(Device::kCPU,
+        +[](DeviceContext&, const Tensor& grad, Tensor& dx) {
+            NegBackwardCPU(grad, dx);
+        });
+    table.sqrt_backward.register_fn(Device::kCPU,
+        +[](DeviceContext&, const Tensor& x, const Tensor& grad, Tensor& dx) {
+            SqrtBackwardCPU(x, grad, dx);
+        });
     table.rsqrt_backward.register_fn(Device::kCPU,
         +[](DeviceContext&, const Tensor& x, const Tensor& grad, Tensor& dx) {
             RsqrtBackwardCPU(x, grad, dx);
+        });
+    table.exp_backward.register_fn(Device::kCPU,
+        +[](DeviceContext&, const Tensor& y, const Tensor& grad, Tensor& dx) {
+            ExpBackwardCPU(y, grad, dx);
+        });
+    table.log_backward.register_fn(Device::kCPU,
+        +[](DeviceContext&, const Tensor& x, const Tensor& grad, Tensor& dx) {
+            LogBackwardCPU(x, grad, dx);
         });
     table.sigmoid.register_fn(Device::kCPU,
         +[](DeviceContext&, const Tensor& x, Tensor& out) { SigmoidCPU(x, out); });
@@ -76,10 +108,21 @@ void RegisterCPUKernels(KernelTable& table) {
         +[](DeviceContext&, const Tensor& x, const Tensor& grad, Tensor& dx) {
             SiluBackwardCPU(x, grad, dx);
         });
+    table.softmax.register_fn(Device::kCPU,
+        +[](DeviceContext&, const Tensor& x, int dim, Tensor& prob) { SoftmaxCPU(x, dim, prob); });
+    table.softmax_backward.register_fn(Device::kCPU,
+        +[](DeviceContext&, const Tensor& prob, const Tensor& grad, int dim, Tensor& dx) {
+            SoftmaxBackwardCPU(prob, grad, dim, dx);
+        });
     table.matmul.register_fn(Device::kCPU,
         +[](DeviceContext&, const Tensor& a, const Tensor& b, Tensor& out) {
             MatmulCPU(a.data_ptr(), b.data_ptr(), out.data_ptr(), a.dtype(),
                       a.size(0), a.size(1), b.size(1), a.stride(), b.stride());
+        });
+    table.matmul_backward.register_fn(Device::kCPU,
+        +[](DeviceContext&, const Tensor& a, const Tensor& b, const Tensor& grad,
+            Tensor& da, Tensor& db) {
+            MatmulBackwardCPU(a, b, grad, da, db);
         });
     table.embedding.register_fn(Device::kCPU,
         +[](DeviceContext&, const Tensor& weight, const Tensor& indices, Tensor& out) {
@@ -93,6 +136,15 @@ void RegisterCPUKernels(KernelTable& table) {
         +[](DeviceContext&, const Tensor& x, int head_width, float base,
             bool inverse, int pos_offset, Tensor& out) {
             RoPECPU(x, head_width, base, inverse, pos_offset, out);
+        });
+    table.cross_entropy.register_fn(Device::kCPU,
+        +[](DeviceContext&, const Tensor& logits, const Tensor& targets, Tensor& rows) {
+            CrossEntropyCPU(logits, targets, rows);
+        });
+    table.cross_entropy_backward.register_fn(Device::kCPU,
+        +[](DeviceContext&, const Tensor& logits, const Tensor& targets,
+            const Tensor& grad, Tensor& dx) {
+            CrossEntropyBackwardCPU(logits, targets, grad, dx);
         });
     table.causal_attention.register_fn(Device::kCPU,
         +[](DeviceContext&, const Tensor& q, const Tensor& k, const Tensor& v,
@@ -143,6 +195,14 @@ void RegisterCPUKernels(KernelTable& table) {
         +[](DeviceContext&, const Tensor& x, int dim, Tensor& out) {
             SumCPU(x.data_ptr(), out.data_ptr(), x.dtype(),
                    x.shape(), x.stride(), x.numel(), dim);
+        });
+    table.mean.register_fn(Device::kCPU,
+        +[](DeviceContext&, const Tensor& x, int dim, bool keepdim, Tensor& out) {
+            MeanCPU(x, dim, keepdim, out);
+        });
+    table.mean_backward.register_fn(Device::kCPU,
+        +[](DeviceContext&, const Tensor& x, const Tensor& grad, int dim, Tensor& dx) {
+            MeanBackwardCPU(x, grad, dim, dx);
         });
     table.extrema.register_fn(Device::kCPU,
         +[](DeviceContext&, const Tensor& x, Tensor& out,

@@ -7,6 +7,7 @@
 #include "ops/activation/kernels.h"
 #include "mini_infer/tensor/tensor.h"
 #include "backend/common/cpu_iteration.h"
+#include "mini_infer/ops/elementwise.h"
 
 namespace mtensor {
 namespace {
@@ -140,6 +141,17 @@ void SiluBackwardCPU(const Tensor& x, const Tensor& output_grad, Tensor& dx) {
         case Dtype::kBFloat16: SiluBackwardTypedCPU<BFloat16>(x, output_grad, dx); break;
         default: throw std::invalid_argument("silu backward: unsupported dtype");
     }
+}
+
+void SoftmaxCPU(const Tensor& x, int dim, Tensor& prob) {
+    const Tensor weights = (x - x.max(dim, /*keepdim=*/true)).exp();
+    const Tensor sum = weights.sum(dim, /*keepdim=*/true);
+    div_out(weights, sum.broadcast(x.shape()), prob);
+}
+
+void SoftmaxBackwardCPU(const Tensor& prob, const Tensor& output_grad, int dim, Tensor& dx) {
+    const Tensor weighted = prob * output_grad;
+    sub_out(weighted, prob * weighted.sum(dim, /*keepdim=*/true), dx);
 }
 
 }  // namespace mtensor

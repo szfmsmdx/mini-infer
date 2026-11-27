@@ -9,7 +9,7 @@
 
 #include "ops/elementwise/kernels.h"
 #include "backend/common/cpu_iteration.h"
-#include "mini_infer/tensor/tensor.h"
+#include "mini_infer/ops/elementwise.h"
 
 namespace mtensor {
 namespace {
@@ -546,6 +546,40 @@ void RsqrtBackwardCPU(const Tensor& x, const Tensor& output_grad, Tensor& dx) {
         case Dtype::kBFloat16: RsqrtBackwardTypedCPU<BFloat16>(x, output_grad, dx); break;
         default: throw std::invalid_argument("rsqrt backward: unsupported dtype");
     }
+}
+
+void SubBackwardCPU(const Tensor& grad, Tensor& db) {
+    // 左侧梯度直接传回，这里只计算右侧。
+    neg_out(grad, db);
+}
+
+void MulBackwardCPU(const Tensor& a, const Tensor& b, const Tensor& grad,
+                    Tensor& da, Tensor& db) {
+    mul_out(grad, b, da);
+    mul_out(grad, a, db);
+}
+
+void DivBackwardCPU(const Tensor& a, const Tensor& b, const Tensor& grad,
+                    Tensor& da, Tensor& db) {
+    div_out(grad, b, da);
+    mul_out(neg(grad), (a / b) / b, db);
+}
+
+void NegBackwardCPU(const Tensor& grad, Tensor& dx) {
+    neg_out(grad, dx);
+}
+
+void SqrtBackwardCPU(const Tensor& x, const Tensor& grad, Tensor& dx) {
+    const Tensor root = sqrt(x);
+    div_out(grad, root + root, dx);
+}
+
+void ExpBackwardCPU(const Tensor& y, const Tensor& grad, Tensor& dx) {
+    mul_out(grad, y, dx);
+}
+
+void LogBackwardCPU(const Tensor& x, const Tensor& grad, Tensor& dx) {
+    div_out(grad, x, dx);
 }
 
 }  // namespace mtensor

@@ -1,13 +1,12 @@
 #include <memory>
 #include <stdexcept>
 #include <utility>
-#include <cstdint>
+#include <vector>
 
 #include "mini_infer/ops/matmul.h"
 #include "backend/dispatch.h"
-#include "ops/matmul/kernels.h"
-#include "tensor/check.h"
 #include "mini_infer/autograd.h"
+#include "tensor/check.h"
 
 namespace mtensor {
 
@@ -74,9 +73,11 @@ Tensor Tensor::matmul(const Tensor& other) const {
 std::vector<Tensor> MatmulNode::backward(const Tensor& output_grad) {
     const Tensor a = saved_inputs[0].unpack("MatmulNode::backward: left input");
     const Tensor b = saved_inputs[1].unpack("MatmulNode::backward: right input");
-    return {
-        output_grad.matmul(b.transpose(0, 1)), a.transpose(0, 1).matmul(output_grad)
-    };
+    Tensor da(a.shape(), a.dtype(), a.device());
+    Tensor db(b.shape(), b.dtype(), b.device());
+    GetKernelTable().matmul_backward.call(
+        a.device(), "matmul backward", a, b, output_grad, da, db);
+    return {da, db};
 }
 
 }  // namespace mtensor

@@ -7,6 +7,8 @@
 
 namespace mtensor {
 
+class Tensor;
+
 // 输入是二维矩阵，步长以元素为单位；输出连续存储。
 void MatmulCPU(const void* a, const void* b, void* output, Dtype dtype,
                int m, int k, int n, StrideView a_stride,
@@ -15,5 +17,10 @@ void MatmulCPU(const void* a, const void* b, void* output, Dtype dtype,
 void MatmulCUDA(const void* a, const void* b, void* output, Dtype dtype,
                 int m, int k, int n, StrideView a_stride,
                 StrideView b_stride);
+
+void MatmulBackwardCPU(const Tensor& a, const Tensor& b, const Tensor& grad,
+                       Tensor& da, Tensor& db);
+void MatmulBackwardCUDA(const Tensor& a, const Tensor& b, const Tensor& grad,
+                        Tensor& da, Tensor& db);
 
 }  // namespace mtensor

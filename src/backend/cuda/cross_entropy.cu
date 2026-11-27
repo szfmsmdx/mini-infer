@@ -2,7 +2,7 @@
 #include <cstdint>
 #include <cuda_runtime.h>
 
-#include "mini_infer/ops/loss_fn.h"
+#include "mini_infer/tensor/tensor.h"
 #include "runtime/cuda_check.h"
 
 namespace mtensor {
@@ -39,8 +39,8 @@ __global__ void CrossEntropyKernel(const float* logits, const std::int32_t* ids,
     losses[i] = (maximum - row[ids[i]]) + logf(SumShiftedExp(row, width, maximum));
 }
 
-__global__ void CrossEntropyGradKernel(const float* logits, const std::int32_t* ids,
-                                       const float* grad, int length, int width, float* result) {
+__global__ void CrossEntropyBackwardKernel(const float* logits, const std::int32_t* ids,
+                                            const float* grad, int length, int width, float* result) {
     const std::size_t i = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i >= length) return;
     const std::size_t offset = i * width;
@@ -57,6 +57,7 @@ __global__ void CrossEntropyGradKernel(const float* logits, const std::int32_t* 
 }  // namespace
 
 void CrossEntropyCUDA(const Tensor& logits, const Tensor& targets, Tensor& row_losses) {
+    // 写出每行的损失，取平均由调用层负责。
     const auto* scores = static_cast<const float*>(logits.data_ptr());
     const auto* ids = static_cast<const std::int32_t*>(targets.data_ptr());
     auto* losses = static_cast<float*>(row_losses.data_ptr());
@@ -65,13 +66,13 @@ void CrossEntropyCUDA(const Tensor& logits, const Tensor& targets, Tensor& row_l
     CUDA_CHECK(cudaGetLastError());
 }
 
-void CrossEntropyGradCUDA(const Tensor& logits, const Tensor& targets,
-                          const Tensor& grad, Tensor& logits_grad) {
+void CrossEntropyBackwardCUDA(const Tensor& logits, const Tensor& targets,
+                              const Tensor& grad, Tensor& logits_grad) {
     const auto* scores = static_cast<const float*>(logits.data_ptr());
     const auto* ids = static_cast<const std::int32_t*>(targets.data_ptr());
     const auto* upstream = static_cast<const float*>(grad.data_ptr());
     auto* scores_grad = static_cast<float*>(logits_grad.data_ptr());
-    CrossEntropyGradKernel<<<Blocks(logits.size(0)), kThreads>>>(
+    CrossEntropyBackwardKernel<<<Blocks(logits.size(0)), kThreads>>>(
         scores, ids, upstream, logits.size(0), logits.size(1), scores_grad);
     CUDA_CHECK(cudaGetLastError());
 }

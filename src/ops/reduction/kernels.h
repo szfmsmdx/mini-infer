@@ -22,6 +22,12 @@ void SumCUDA(const void* input, void* output, Dtype dtype, CUDALayout layout, st
 // 按维度求和，output 指向连续输出，output_numel 为输出元素个数。
 void SumCUDA(const void* input, void* output, Dtype dtype, CUDALayout layout, std::size_t output_numel, int dim);
 
+// dim 为 -1 时归约全部元素；反向返回广播视图。
+void MeanCPU(const Tensor& input, int dim, bool keepdim, Tensor& out);
+void MeanBackwardCPU(const Tensor& input, const Tensor& output_grad, int dim, Tensor& dx);
+void MeanCUDA(const Tensor& input, int dim, bool keepdim, Tensor& out);
+void MeanBackwardCUDA(const Tensor& input, const Tensor& output_grad, int dim, Tensor& dx);
+
 // inner_size 是归约维之后的逻辑元素数；全量归约时为 1。
 void ExtremaCPU(const Tensor& input, Tensor& output, std::size_t inner_size, bool maximum);
 void ExtremaCUDA(const Tensor& input, Tensor& output, std::size_t inner_size, bool maximum);

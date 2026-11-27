@@ -7,6 +7,7 @@
 #include <cuda_runtime.h>
 
 #include "ops/matmul/kernels.h"
+#include "mini_infer/ops/matmul.h"
 #include "runtime/cuda_check.h"
 
 namespace mtensor {
@@ -123,6 +124,12 @@ void MatmulCUDA(const void* a, const void* b, void* output, Dtype dtype,
             throw std::invalid_argument("MatmulCUDA: unsupported dtype");
     }
     CUDA_CHECK(cudaGetLastError());
+}
+
+void MatmulBackwardCUDA(const Tensor& a, const Tensor& b, const Tensor& grad,
+                        Tensor& da, Tensor& db) {
+    matmul_out(grad, b.transpose(0, 1), da);
+    matmul_out(a.transpose(0, 1), grad, db);
 }
 
 }  // namespace mtensor

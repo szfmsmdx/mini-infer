@@ -11,7 +11,6 @@
 #include "mini_infer/autograd.h"
 #include "ops/reduction/nodes.h"
 #include "ops/reduction/kernels.h"
-#include "mini_infer/ops/elementwise.h"
 
 namespace mtensor {
 
@@ -63,21 +62,57 @@ Tensor Tensor::sum(int dim, bool keepdim) const {
     return mtensor::sum(*this, dim, keepdim);
 }
 
-Tensor mean(const Tensor& input) {
+namespace {
+
+class MeanNode : public AutogradNode {
+public:
+    int dim = -1;
+
+    std::vector<Tensor> backward(const Tensor& output_grad) override {
+        NogradNode guard;
+        const Tensor& input = inputs[0];
+        Tensor dx;
+        GetKernelTable().mean_backward.call(input.device(), "mean backward", input, output_grad, dim, dx);
+        return {dx};
+    }
+};
+
+Tensor ReduceMean(const Tensor& input, std::optional<int> dim, bool keepdim) {
     CheckFloatingDtype(input.dtype(), "mean: input must have floating dtype");
-    Tensor total = sum(input);
-    Tensor scale = full(total.shape(), 1.0f / static_cast<float>(input.numel()),
-                        input.dtype(), input.device());
-    return mul(total, scale);
+    CheckNotEmpty(input, "mean: input must not be empty");
+    int axis = -1;
+    std::vector<int> output_shape;
+    if (dim) {
+        axis = *dim;
+        if (axis < 0) axis += input.dim();
+        CheckDim(axis, input.shape().size(), "mean: dim out of range");
+        output_shape = input.shape().to_vector();
+        if (keepdim) output_shape[axis] = 1;
+        else output_shape.erase(output_shape.begin() + axis);
+    }
+
+    Tensor output(output_shape, input.dtype(), input.device());
+    {
+        NogradNode guard;
+        GetKernelTable().mean.call(input.device(), "mean", input, axis, keepdim, output);
+    }
+    if (ShouldRecordGrad({&input}, output.dtype())) {
+        auto node = std::make_shared<MeanNode>();
+        node->record_inputs({input});
+        node->dim = axis;
+        output.set_grad_node(node);
+    }
+    return output;
+}
+
+}  // namespace
+
+Tensor mean(const Tensor& input) {
+    return ReduceMean(input, std::nullopt, false);
 }
 
 Tensor mean(const Tensor& input, int dim, bool keepdim) {
-    CheckFloatingDtype(input.dtype(), "mean: input must have floating dtype");
-    Tensor total = sum(input, dim, keepdim);
-    if (dim < 0) dim += input.dim();
-    Tensor scale = full(total.shape(), 1.0f / static_cast<float>(input.size(dim)),
-                        input.dtype(), input.device());
-    return mul(total, scale);
+    return ReduceMean(input, dim, keepdim);
 }
 
 Tensor Tensor::mean() const {

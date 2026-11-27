@@ -15,8 +15,8 @@ void EmbeddingGradCUDA(const Tensor& grad, const Tensor& indices, Tensor& weight
 void RoPECUDA(const Tensor& x, int head_width, float base, bool inverse,
               int pos_offset, Tensor& output);
 void CrossEntropyCUDA(const Tensor& logits, const Tensor& targets, Tensor& row_losses);
-void CrossEntropyGradCUDA(const Tensor& logits, const Tensor& targets,
-                          const Tensor& grad, Tensor& logits_grad);
+void CrossEntropyBackwardCUDA(const Tensor& logits, const Tensor& targets,
+                              const Tensor& grad, Tensor& logits_grad);
 void CausalAttentionCUDA(const Tensor& q, const Tensor& k, const Tensor& v, int heads,
                          Tensor& prob, Tensor& output);
 void CausalAttentionGradCUDA(const Tensor& q, const Tensor& k, const Tensor& v, int heads,
@@ -61,9 +61,39 @@ void RegisterCUDAKernels(KernelTable& table) {
         +[](DeviceContext&, const Tensor& x, Tensor& out) { ExpCUDA(x, out); });
     table.log.register_fn(Device::kCUDA,
         +[](DeviceContext&, const Tensor& x, Tensor& out) { LogCUDA(x, out); });
+    table.sub_backward.register_fn(Device::kCUDA,
+        +[](DeviceContext&, const Tensor& grad, Tensor& db) {
+            SubBackwardCUDA(grad, db);
+        });
+    table.mul_backward.register_fn(Device::kCUDA,
+        +[](DeviceContext&, const Tensor& a, const Tensor& b, const Tensor& grad,
+            Tensor& da, Tensor& db) {
+            MulBackwardCUDA(a, b, grad, da, db);
+        });
+    table.div_backward.register_fn(Device::kCUDA,
+        +[](DeviceContext&, const Tensor& a, const Tensor& b, const Tensor& grad,
+            Tensor& da, Tensor& db) {
+            DivBackwardCUDA(a, b, grad, da, db);
+        });
+    table.neg_backward.register_fn(Device::kCUDA,
+        +[](DeviceContext&, const Tensor& grad, Tensor& dx) {
+            NegBackwardCUDA(grad, dx);
+        });
+    table.sqrt_backward.register_fn(Device::kCUDA,
+        +[](DeviceContext&, const Tensor& x, const Tensor& grad, Tensor& dx) {
+            SqrtBackwardCUDA(x, grad, dx);
+        });
     table.rsqrt_backward.register_fn(Device::kCUDA,
         +[](DeviceContext&, const Tensor& x, const Tensor& grad, Tensor& dx) {
             RsqrtBackwardCUDA(x, grad, dx);
+        });
+    table.exp_backward.register_fn(Device::kCUDA,
+        +[](DeviceContext&, const Tensor& y, const Tensor& grad, Tensor& dx) {
+            ExpBackwardCUDA(y, grad, dx);
+        });
+    table.log_backward.register_fn(Device::kCUDA,
+        +[](DeviceContext&, const Tensor& x, const Tensor& grad, Tensor& dx) {
+            LogBackwardCUDA(x, grad, dx);
         });
     table.sigmoid.register_fn(Device::kCUDA,
         +[](DeviceContext&, const Tensor& x, Tensor& out) { SigmoidCUDA(x, out); });
@@ -77,10 +107,21 @@ void RegisterCUDAKernels(KernelTable& table) {
         +[](DeviceContext&, const Tensor& x, const Tensor& grad, Tensor& dx) {
             SiluBackwardCUDA(x, grad, dx);
         });
+    table.softmax.register_fn(Device::kCUDA,
+        +[](DeviceContext&, const Tensor& x, int dim, Tensor& prob) { SoftmaxCUDA(x, dim, prob); });
+    table.softmax_backward.register_fn(Device::kCUDA,
+        +[](DeviceContext&, const Tensor& prob, const Tensor& grad, int dim, Tensor& dx) {
+            SoftmaxBackwardCUDA(prob, grad, dim, dx);
+        });
     table.matmul.register_fn(Device::kCUDA,
         +[](DeviceContext&, const Tensor& a, const Tensor& b, Tensor& out) {
             MatmulCUDA(a.data_ptr(), b.data_ptr(), out.data_ptr(), a.dtype(),
                        a.size(0), a.size(1), b.size(1), a.stride(), b.stride());
+        });
+    table.matmul_backward.register_fn(Device::kCUDA,
+        +[](DeviceContext&, const Tensor& a, const Tensor& b, const Tensor& grad,
+            Tensor& da, Tensor& db) {
+            MatmulBackwardCUDA(a, b, grad, da, db);
         });
     table.embedding.register_fn(Device::kCUDA,
         +[](DeviceContext&, const Tensor& weight, const Tensor& indices, Tensor& out) {
@@ -95,14 +136,14 @@ void RegisterCUDAKernels(KernelTable& table) {
             bool inverse, int pos_offset, Tensor& out) {
             RoPECUDA(x, head_width, base, inverse, pos_offset, out);
         });
-    table.cross_entropy_rows.register_fn(Device::kCUDA,
+    table.cross_entropy.register_fn(Device::kCUDA,
         +[](DeviceContext&, const Tensor& logits, const Tensor& targets, Tensor& rows) {
             CrossEntropyCUDA(logits, targets, rows);
         });
     table.cross_entropy_backward.register_fn(Device::kCUDA,
         +[](DeviceContext&, const Tensor& logits, const Tensor& targets,
             const Tensor& grad, Tensor& dx) {
-            CrossEntropyGradCUDA(logits, targets, grad, dx);
+            CrossEntropyBackwardCUDA(logits, targets, grad, dx);
         });
     table.causal_attention.register_fn(Device::kCUDA,
         +[](DeviceContext&, const Tensor& q, const Tensor& k, const Tensor& v,
@@ -151,6 +192,14 @@ void RegisterCUDAKernels(KernelTable& table) {
     table.sum_dim.register_fn(Device::kCUDA,
         +[](DeviceContext&, const Tensor& x, int dim, Tensor& out) {
             SumCUDA(x.data_ptr(), out.data_ptr(), x.dtype(), PackLayout(x), out.numel(), dim);
+        });
+    table.mean.register_fn(Device::kCUDA,
+        +[](DeviceContext&, const Tensor& x, int dim, bool keepdim, Tensor& out) {
+            MeanCUDA(x, dim, keepdim, out);
+        });
+    table.mean_backward.register_fn(Device::kCUDA,
+        +[](DeviceContext&, const Tensor& x, const Tensor& grad, int dim, Tensor& dx) {
+            MeanBackwardCUDA(x, grad, dim, dx);
         });
     table.extrema.register_fn(Device::kCUDA,
         +[](DeviceContext&, const Tensor& x, Tensor& out,

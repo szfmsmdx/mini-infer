@@ -13,7 +13,7 @@
 | `copy/`、`fill/`、`layout/` | 存储复制、设备和 dtype 转换、填充与视图 |
 | `common/` | 输入校验、CPU/CUDA stride 索引 |
 
-普通算子按类别放置入口和反向节点。逐元素、矩阵乘等算子使用同目录的 `cpu.cpp`、`cuda.cu`；因果注意力、词嵌入、交叉熵和 RoPE 各用同名的 `.cpp`、`.cu`。
+算子入口和反向节点按类别放在 `src/ops/`，计算实现放在 `src/backend/cpu/` 和 `src/backend/cuda/`。同一设备上的前后向放在同一个实现文件，例如 `elementwise.cpp` 和 `elementwise.cu`。
 
 RoPE 的公开声明在 [`mini_infer/ops/position_embedding.h`](../../include/mini_infer/ops/position_embedding.h)。
 
@@ -74,7 +74,9 @@ CPU 和 CUDA 逐元素运算支持不同 stride 的非连续输入；CUDA 输出
 | `silu(x)` | `SiluNode` | FP32 计算 `s = 1 / (1 + exp(-x))`，再计算 `(G * s) * (1 + x * (1 - s))`，最后写回原 dtype |
 | `rsqrt(x)` | `RsqrtNode` | 正数输入：令 `y = 1 / sqrt(x)`，逐元素计算 `dX = -0.5 * G * y³` |
 
-表中的 `G` 是引擎传入的上游梯度。反向在 `NogradNode` 下执行，不会继续建图。`rsqrt` 的反向在 `ops/elementwise/elementwise.cpp` 和 `ops/elementwise/cuda.cu` 中逐元素执行：`y` 和 `((-0.5 * y) * G) * y * y` 的中间结果保持 FP32，最后一次写回原 dtype，避免低精度中间 Tensor 反复舍入。
+表中的 `G` 是引擎传入的上游梯度。反向在 `NogradNode` 下执行，不会继续建图。逐元素算子的梯度计算通过 `KernelTable` 分发给 [CPU](../backend/cpu/elementwise.cpp) 或 [CUDA](../backend/cuda/elementwise.cu)，只传递梯度的部分留在 Node（例如 `add` 的两个输入和 `sub` 的左侧）。
+
+`rsqrt` 的反向在后端逐元素执行：`y` 和 `((-0.5 * y) * G) * y * y` 的中间结果保持 FP32，最后一次写回原 dtype，避免低精度中间 Tensor 反复舍入。
 
 ## 分发流程
 
@@ -85,18 +87,15 @@ Tensor::operator+                         src/ops/elementwise/elementwise.cpp
   ↓
 add(a, b)                                src/ops/elementwise/elementwise.cpp
   ├─ 检查输入 shape、dtype、device 和空状态
-  ├─ 分配与输入具有相同元数据的独立输出
-  ├─ CPU：调用 AddCPU(...)                src/ops/elementwise/cpu.cpp
-  │    ├─ 根据 dtype 分发
-  │    ├─ 普通数值类型：AddTypedCPU<T>(...)，按 stride 遍历
-  │    └─ FP16/BF16：解码为 float → 计算 → 编码并写回
-  └─ CUDA：调用 AddCUDA(...)              src/ops/elementwise/cuda.cu
-             按各输入 stride 计算偏移并写入连续输出
+  ├─ 对齐输入 shape，分配连续输出
+  └─ add_out → KernelTable::add
+       ├─ AddCPU(...)                    src/backend/cpu/elementwise.cpp
+       └─ AddCUDA(...)                   src/backend/cuda/elementwise.cu
 ```
 
 ### 按 device 分发
 
-`elementwise/elementwise.cpp` 检查参数、分配输出，再按 device 调用后端。`AddCPU()` / `SubCPU()` / `MulCPU()` / `DivCPU()` 是 CPU 入口，`AddCUDA()` / `SubCUDA()` / `MulCUDA()` / `DivCUDA()` 在启用 CUDA 的构建中调用。
+`elementwise/elementwise.cpp` 检查参数、分配输出，再通过 `KernelTable` 按 device 调用已注册的后端函数。
 
 CUDA 启动函数按 dtype 分发 kernel。输入指针指向各视图的首元素，shape 和 stride 作为 `CUDALayout` 按值传入。
 
@@ -112,16 +111,16 @@ void AddCPU(const void* a, const void* b, void* out, Dtype dtype,
             ShapeView shape, StrideView a_stride,
             StrideView b_stride, StrideView out_stride);
 
-// src/ops/elementwise/cpu.cpp：匿名命名空间内的计算模板。
+// src/backend/cpu/elementwise.cpp：匿名命名空间内的计算模板。
 template <typename T>
 void AddTypedCPU(const void* a, const void* b, void* out, ShapeView shape,
                  StrideView a_stride, StrideView b_stride,
                  StrideView out_stride);
 ```
 
-`AddTypedCPU<T>()` 的定义放在 `src/ops/elementwise/cpu.cpp` 的匿名命名空间内，由同文件的 `AddCPU()` 实例化调用。跨文件只调用普通入口，避免模板定义不可见导致链接错误。输入指针只读、输出指针可写，均不转移所有权；模板按 shape 和 stride 遍历并计算，不负责分配、形状检查或设备选择。减、乘、除使用对应的内部模板函数。
+`AddTypedCPU<T>()` 由同文件的 `AddCPU()` 实例化调用。输入指针只读、输出指针可写，均不转移所有权；模板按 shape 和 stride 遍历并计算，不负责分配、形状检查或设备选择。减、乘、除使用对应的内部模板函数。
 
-- CPU 路径在 `src/ops/elementwise/cpu.cpp` 中用 `switch` 选择普通数值类型，再调用 `AddTypedCPU<float>()`、`AddTypedCPU<std::int32_t>()` 等实例。
+- CPU 入口用 `switch` 选择 `AddTypedCPU<float>()`、`AddTypedCPU<std::int32_t>()` 等实例。
 - CUDA 启动入口按 dtype 选择普通数值类型或半精度 kernel。
 - `void*` 只描述地址；必须根据 dtype 转换成正确的元素指针，输入使用只读指针，输出使用可写指针。
 
@@ -135,12 +134,14 @@ FP16/BF16 使用 16 位编码，不能直接将编码作为整数参与浮点运
 ## 已实现的计算
 
 - `sqrt()`、`rsqrt()`、`exp()`、`log()`、`sigmoid()`、`silu()` 支持 stride。整数输入提升到 FP32。
-- `softmax(x, dim)` 支持 CPU/CUDA 的 8 种 dtype，默认沿最后一维计算。减最大值、指数、求和和除法都在 FP32 中完成；浮点输出保留 dtype，整数先转 FP32 后计算、不建反向节点。低精度输入的反向用未舍入的 FP32 概率计算梯度，最后转回输入 dtype。
-- `sum()` 支持全元素和指定维度归约。浮点用 FP32 累加，结果保持输入 dtype。整数结果为 Int64，按 64 位回绕。`mean()` 支持全元素和指定维度。
+- `softmax(x, dim)` 支持 CPU/CUDA 的 8 种 dtype，默认沿最后一维计算。[CPU](../backend/cpu/activation.cpp) 和 [CUDA](../backend/cuda/activation.cu) 分别复用各自的基础算子，前后向都通过 `KernelTable` 分发。减最大值、指数、求和和除法都在 FP32 中完成；浮点输出保留 dtype，整数先转 FP32 后计算、不建反向节点。低精度输入的反向用未舍入的 FP32 概率计算梯度，最后转回输入 dtype。
+- `sum()` 支持全元素和指定维度归约。浮点用 FP32 累加，结果保持输入 dtype。整数结果为 Int64，按 64 位回绕。
+- `mean()` 支持全元素和指定维度归约。前后向都通过 `KernelTable` 分发；后端前向复用 `sum()` 和乘法，反向缩放上游梯度后广播，不物化输入大小的梯度缓冲区。
 - `max()`、`min()` 支持 CPU/CUDA 的全元素和指定维度归约，沿用负维度和 `keepdim`。支持非连续输入，只返回极值，保留输入 dtype 和 device；浮点输入的并列极值平分上游梯度。归约组含 NaN 时返回 NaN，反向只在该组的 NaN 之间平分梯度。
-- 二维 `matmul()` 的 CPU/CUDA 前向支持 8 种 dtype。浮点反向计算 `dA = G @ Bᵀ` 和 `dB = Aᵀ @ G`。
+- 二维 `matmul()` 的 CPU/CUDA 前向支持 8 种 dtype。浮点反向通过 `KernelTable` 分发，后端复用 `matmul_out` 计算 `dA = G @ Bᵀ` 和 `dB = Aᵀ @ G`。
 - FP16/BF16 RMSNorm 在 CPU 上用 `to(Dtype::kFloat32)` 和 Tensor 操作，在 CUDA 上用专用 kernel。两条路径都在 FP32 中计算，最后才写回低精度输出和梯度。SiLU 前向用 double 处理 `x < -80` 的负尾，反向使用 FP32。[精度排查](../../note/code/算子精度问题.md)
 - 词嵌入、RoPE、因果注意力和交叉熵均接入 CPU/CUDA 前向及反向。[GPT 示例](../../examples/nanogpt/README.md)
+- 交叉熵在 [CPU](../backend/cpu/cross_entropy.cpp) 和 [CUDA](../backend/cuda/cross_entropy.cu) 各有一个前后向实现文件。CPU 反向复用后端 Softmax；调用层不区分设备，统一查表。
 - CPU 因果注意力用 `narrow` 按头和可见前缀取视图，前向复用 `matmul` 和 `softmax`，反向用 Tensor 运算累加 K/V 梯度；CUDA 使用专用 kernel。
 
 ## 待办
