@@ -43,6 +43,8 @@ struct KernelSlot {
 using UnaryKernel = void (*)(DeviceContext&, const Tensor&, Tensor&);
 using BinaryKernel = void (*)(DeviceContext&, const Tensor&, const Tensor&, Tensor&);
 using UnaryBackwardKernel = void (*)(DeviceContext&, const Tensor&, const Tensor&, Tensor&);
+using SoftmaxKernel = void (*)(DeviceContext&, const Tensor&, int, Tensor&);
+using SoftmaxBackwardKernel = void (*)(DeviceContext&, const Tensor&, const Tensor&, int, Tensor&);
 using SumDimKernel = void (*)(DeviceContext&, const Tensor&, int, Tensor&);
 using ExtremaKernel = void (*)(DeviceContext&, const Tensor&, Tensor&, std::size_t, bool);
 using ExtremaBackwardKernel = void (*)(DeviceContext&, const Tensor&, const Tensor&,
@@ -75,11 +77,13 @@ struct KernelTable {
     KernelSlot<UnaryBackwardKernel> rsqrt_backward;
     KernelSlot<UnaryKernel> sigmoid;
     KernelSlot<UnaryKernel> silu;
+    KernelSlot<SoftmaxKernel> softmax;
+    KernelSlot<SoftmaxBackwardKernel> softmax_backward;
     KernelSlot<BinaryKernel> matmul;
     KernelSlot<BinaryKernel> embedding;
     KernelSlot<BinaryKernel> embedding_backward;
     KernelSlot<RoPEKernel> rope;
-    KernelSlot<BinaryKernel> cross_entropy_rows;
+    KernelSlot<BinaryKernel> cross_entropy;
     KernelSlot<TernaryBackwardKernel> cross_entropy_backward;
     KernelSlot<AttentionKernel> causal_attention;
     KernelSlot<AttentionBackwardKernel> causal_attention_backward;

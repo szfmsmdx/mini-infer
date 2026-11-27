@@ -135,12 +135,13 @@ FP16/BF16 使用 16 位编码，不能直接将编码作为整数参与浮点运
 ## 已实现的计算
 
 - `sqrt()`、`rsqrt()`、`exp()`、`log()`、`sigmoid()`、`silu()` 支持 stride。整数输入提升到 FP32。
-- `softmax(x, dim)` 支持 CPU/CUDA 的 8 种 dtype，默认沿最后一维计算。减最大值、指数、求和和除法都在 FP32 中完成；浮点输出保留 dtype，整数先转 FP32 后计算、不建反向节点。低精度输入的反向用未舍入的 FP32 概率计算梯度，最后转回输入 dtype。
+- `softmax(x, dim)` 支持 CPU/CUDA 的 8 种 dtype，默认沿最后一维计算。[CPU](../backend/cpu/activation.cpp) 和 [CUDA](../backend/cuda/activation.cu) 分别复用各自的基础算子，前后向都通过 `KernelTable` 分发。减最大值、指数、求和和除法都在 FP32 中完成；浮点输出保留 dtype，整数先转 FP32 后计算、不建反向节点。低精度输入的反向用未舍入的 FP32 概率计算梯度，最后转回输入 dtype。
 - `sum()` 支持全元素和指定维度归约。浮点用 FP32 累加，结果保持输入 dtype。整数结果为 Int64，按 64 位回绕。`mean()` 支持全元素和指定维度。
 - `max()`、`min()` 支持 CPU/CUDA 的全元素和指定维度归约，沿用负维度和 `keepdim`。支持非连续输入，只返回极值，保留输入 dtype 和 device；浮点输入的并列极值平分上游梯度。归约组含 NaN 时返回 NaN，反向只在该组的 NaN 之间平分梯度。
 - 二维 `matmul()` 的 CPU/CUDA 前向支持 8 种 dtype。浮点反向计算 `dA = G @ Bᵀ` 和 `dB = Aᵀ @ G`。
 - FP16/BF16 RMSNorm 在 CPU 上用 `to(Dtype::kFloat32)` 和 Tensor 操作，在 CUDA 上用专用 kernel。两条路径都在 FP32 中计算，最后才写回低精度输出和梯度。SiLU 前向用 double 处理 `x < -80` 的负尾，反向使用 FP32。[精度排查](../../note/code/算子精度问题.md)
 - 词嵌入、RoPE、因果注意力和交叉熵均接入 CPU/CUDA 前向及反向。[GPT 示例](../../examples/nanogpt/README.md)
+- 交叉熵在 [CPU](../backend/cpu/cross_entropy.cpp) 和 [CUDA](../backend/cuda/cross_entropy.cu) 各有一个前后向实现文件。CPU 反向复用后端 Softmax；调用层不区分设备，统一查表。
 - CPU 因果注意力用 `narrow` 按头和可见前缀取视图，前向复用 `matmul` 和 `softmax`，反向用 Tensor 运算累加 K/V 梯度；CUDA 使用专用 kernel。
 
 ## 待办

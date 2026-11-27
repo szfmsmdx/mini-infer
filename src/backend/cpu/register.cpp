@@ -12,6 +12,8 @@ void EmbeddingCPU(const Tensor& weight, const Tensor& indices, Tensor& output);
 void EmbeddingGradCPU(const Tensor& grad, const Tensor& indices, Tensor& weight_grad);
 void RoPECPU(const Tensor& x, int head_width, float base, bool inverse,
              int pos_offset, Tensor& output);
+void CrossEntropyCPU(const Tensor& logits, const Tensor& targets, Tensor& row_losses);
+void CrossEntropyBackwardCPU(const Tensor& logits, const Tensor& targets, const Tensor& grad, Tensor& dx);
 void CausalAttentionCPU(const Tensor& q, const Tensor& k, const Tensor& v, int heads,
                         Tensor& prob, Tensor& output);
 void CausalAttentionGradCPU(const Tensor& q, const Tensor& k, const Tensor& v, int heads,
@@ -76,6 +78,12 @@ void RegisterCPUKernels(KernelTable& table) {
         +[](DeviceContext&, const Tensor& x, const Tensor& grad, Tensor& dx) {
             SiluBackwardCPU(x, grad, dx);
         });
+    table.softmax.register_fn(Device::kCPU,
+        +[](DeviceContext&, const Tensor& x, int dim, Tensor& prob) { SoftmaxCPU(x, dim, prob); });
+    table.softmax_backward.register_fn(Device::kCPU,
+        +[](DeviceContext&, const Tensor& prob, const Tensor& grad, int dim, Tensor& dx) {
+            SoftmaxBackwardCPU(prob, grad, dim, dx);
+        });
     table.matmul.register_fn(Device::kCPU,
         +[](DeviceContext&, const Tensor& a, const Tensor& b, Tensor& out) {
             MatmulCPU(a.data_ptr(), b.data_ptr(), out.data_ptr(), a.dtype(),
@@ -93,6 +101,15 @@ void RegisterCPUKernels(KernelTable& table) {
         +[](DeviceContext&, const Tensor& x, int head_width, float base,
             bool inverse, int pos_offset, Tensor& out) {
             RoPECPU(x, head_width, base, inverse, pos_offset, out);
+        });
+    table.cross_entropy.register_fn(Device::kCPU,
+        +[](DeviceContext&, const Tensor& logits, const Tensor& targets, Tensor& rows) {
+            CrossEntropyCPU(logits, targets, rows);
+        });
+    table.cross_entropy_backward.register_fn(Device::kCPU,
+        +[](DeviceContext&, const Tensor& logits, const Tensor& targets,
+            const Tensor& grad, Tensor& dx) {
+            CrossEntropyBackwardCPU(logits, targets, grad, dx);
         });
     table.causal_attention.register_fn(Device::kCPU,
         +[](DeviceContext&, const Tensor& q, const Tensor& k, const Tensor& v,
