@@ -8,21 +8,126 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: cpp-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+  HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
 jobs:
-  cpp-correctness:
+  lint:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
-
-      - name: Configure CPU tests
+        with:
+          ref: ${{ env.HEAD_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+      - run: sudo apt-get update -qq && sudo apt-get install -y clang-format-18 clang-tidy-18
+      - name: Validate Clang configuration even when no C++ lines changed
+        run: |
+          clang-format-18 --style=file --dump-config > /dev/null
+          clang-tidy-18 --verify-config --config-file=.clang-tidy
+      - run: python3 -m unittest discover -s ci -p 'test_*.py' -v
+      - name: Configure CPU compilation database
         run: >-
-          cmake -S . -B build/ci -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
-          -DCMAKE_DISABLE_FIND_PACKAGE_CUDAToolkit=ON
-          -DCMAKE_DISABLE_FIND_PACKAGE_Python3=ON
+          cmake -S . -B build/lint -G Ninja -DBUILD_TESTING=ON
+          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_DISABLE_FIND_PACKAGE_CUDAToolkit=ON
+      - name: Check changed C++ lines and CUDA formatting
+        run: python3 ci/quality.py lint "$BASE" build/lint
+      - name: Compile library, examples and C++ test sources
+        run: cmake --build build/lint --target all train_gpt chat_gpt --parallel 2
 
-      - name: Build C++ tests
-        run: cmake --build build/ci --parallel 2
+  coverage:
+    needs: lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      waiver: ${{ steps.policy.outputs.waiver }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.HEAD_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+      - run: pipx install gcovr==8.3
+      - name: Instrument CPU build with GCC
+        run: |
+          cmake -S . -B build/cov -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON \
+            -DCMAKE_CXX_FLAGS=--coverage -DCMAKE_DISABLE_FIND_PACKAGE_CUDAToolkit=ON \
+            -DCMAKE_DISABLE_FIND_PACKAGE_Python3=ON
+          cmake --build build/cov --target all train_gpt chat_gpt --parallel 2
+      - name: Collect coverage from native C++ unit tests
+        run: |
+          ctest --test-dir build/cov --no-tests=error --output-on-failure -E '^precision_cpu_test$'
+          gcovr --root . --filter 'src/' --filter 'include/' --filter 'examples/' \
+            --cobertura build/cov/coverage.xml --txt build/cov/coverage.txt build/cov
+      - id: policy
+        run: python3 ci/quality.py coverage "$BASE" build/cov/coverage.xml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cpu-line-coverage
+          path: |
+            build/cov/coverage.xml
+            build/cov/coverage.txt
+          if-no-files-found: error
 
-      - name: Run C++ correctness tests
-        run: ctest --test-dir build/ci --output-on-failure --parallel 2 --exclude-regex '^precision_cpu_test$'
+  coverage-waiver:
+    needs: coverage
+    if: github.event_name == 'pull_request' && needs.coverage.outputs.waiver == 'true'
+    environment: coverage-exception
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo "Coverage exception approved for $HEAD_SHA" >> "$GITHUB_STEP_SUMMARY"
+
+  correctness:
+    needs: [coverage, coverage-waiver]
+    if: >-
+      !cancelled() && needs.coverage.result == 'success' && (
+      (needs.coverage.outputs.waiver == 'false' && needs.coverage-waiver.result == 'skipped') ||
+      (needs.coverage.outputs.waiver == 'true' && needs.coverage-waiver.result == 'success'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      # Test the actual merge candidate in Release, including the Python precision oracles.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: tests/precision/requirements-torch.txt
+      - run: python -m pip install 'torch==2.8.0' --index-url https://download.pytorch.org/whl/cpu
+      - run: >-
+          cmake -S . -B build/ci -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+          -DCMAKE_DISABLE_FIND_PACKAGE_CUDAToolkit=ON -DPython3_EXECUTABLE="$(command -v python)"
+      - run: cmake --build build/ci --parallel 2
+      - name: Run all CPU tests and reject skipped cases
+        run: |
+          ctest --test-dir build/ci --no-tests=error --output-on-failure --parallel 2 --output-junit results.xml
+          python -c "import xml.etree.ElementTree as E; r=E.parse('build/ci/results.xml').getroot(); assert r.find(\"testcase[@name='precision_cpu_test']\") is not None and int(r.attrib['skipped']) == 0"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: cpu-test-diagnostics
+          path: |
+            build/ci/results.xml
+            build/ci/Testing/Temporary/LastTest.log
+            build/ci/tests/*/report.json
+          if-no-files-found: ignore
+
+  # main already requires this exact GitHub Actions check. A skipped job alone would count as green.
+  cpp-correctness:
+    needs: [lint, coverage, correctness]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - env:
+          LINT: ${{ needs.lint.result }}
+          COVERAGE: ${{ needs.coverage.result }}
+          TESTS: ${{ needs.correctness.result }}
+        run: test "$LINT/$COVERAGE/$TESTS" = success/success/success

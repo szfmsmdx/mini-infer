@@ -1,0 +1,10 @@
+Checks: >
+  -*,
+  bugprone-argument-comment,
+  bugprone-sizeof-expression,
+  bugprone-suspicious-memset-usage,
+  bugprone-use-after-move,
+  performance-for-range-copy,
+  readability-duplicate-include
+WarningsAsErrors: '*'
+HeaderFilterRegex: '(^|/)(include|src|tests|examples)/'
