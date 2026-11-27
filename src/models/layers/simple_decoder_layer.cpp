@@ -11,7 +11,8 @@ namespace mtensor {
 SimpleDecoderLayer::SimpleDecoderLayer(int channels, int heads, float norm_eps, Device device,
                                        const WeightInitializer& initializer,
                                        const WeightInitializer& residual_initializer)
-    : heads_(CheckedDecoderHeads(channels, heads,
+    : Module("SimpleDecoderLayer"),
+      heads_(CheckedDecoderHeads(channels, heads,
                                 "SimpleDecoderLayer expects positive dimensions and an even head width")) {
     attention_norm_ = register_module("attention_norm", std::make_shared<RMSNorm>(channels, norm_eps, device));
     q_ = register_module("q", std::make_shared<Linear>(channels, channels, false, device, initializer));

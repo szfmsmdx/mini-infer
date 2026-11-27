@@ -7,7 +7,7 @@
 | `tensor/` | Tensor、布局、标量和 dtype |
 | `tokenizer/` | 字节 tokenizer 和 BPE |
 | `ops/` | 逐元素、激活、归约、矩阵乘和 Transformer 算子 |
-| `modules/` | Linear 和 RMSNorm |
+| `modules/` | Module、Linear 和 RMSNorm |
 | `init/` | 参数初始化 |
 | `models/` | GPT checkpoint |
 | `autograd/` | CPU/CUDA 自动微分 |
@@ -34,7 +34,8 @@ ctest --test-dir build/tests -C Release --output-on-failure
 | `bpe_tokenizer_test` | 合并顺序、同频选对、片段边界和规则重建 |
 | `transformer_cpu_test` / `transformer_cuda_test` | 重复 token 梯度、索引上下界、RoPE 正逆旋转、Decoder 维度与前后向（输入及 8 份参数梯度）、极端 logits 的交叉熵和非连续输入 |
 | `attention_cpu_test` / `attention_cuda_test` | FP64 前向参考、Q/K/V 梯度的中心差分、非连续输入和上游梯度、因果遮罩及输入版本检查 |
-| `gpt_checkpoint_test` | 最终文件覆盖、词表恢复、参数和 logits 一致性、截断文件校验 |
+| `module_test` | 直接子模块、前序 DFS、从子树指定起始登记名和深度、按顺序收集原参数、结构化打印 |
+| `gpt_checkpoint_test` | 旧版参数顺序、加载后子模块与结构打印、最终文件覆盖、词表恢复、参数和 logits 一致性、截断文件校验 |
 | `sqrt_cpu_test` / `sqrt_cuda_test` | sqrt、rsqrt 的 8 种输入 dtype、整数提升、跨步视图、特殊值、浮点梯度和原地修改检测；rsqrt 低精度反向失败样本、不同 stride 的输入与上游梯度、跨 block 长度和零维标量 |
 | `exp_cpu_test` / `exp_cuda_test` | exp 的 8 种输入 dtype、转置视图、跨 block 长度，以及复用输出的反向和版本检查 |
 | `log_cpu_test` / `log_cuda_test` | log 的 8 种输入 dtype、转置视图、负值和零的行为、三种浮点 dtype 的非连续输入反向与版本检查 |

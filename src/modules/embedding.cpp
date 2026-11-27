@@ -11,7 +11,7 @@
 namespace mtensor {
 
 Embedding::Embedding(int vocab_size, int channels, Device device, WeightInitializer initializer)
-    : vocab_size_(vocab_size), channels_(channels), device_(device),
+    : Module("Embedding"), vocab_size_(vocab_size), channels_(channels), device_(device),
       initializer_(std::move(initializer)) {
     init();
 }

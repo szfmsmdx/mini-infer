@@ -23,7 +23,10 @@ auto weights = projection.parameters();  // 一份 [256, 128] 的权重
 模块用 `register_parameter("weight", weight_)` 登记自己的参数。`Linear` 按 weight、bias 的顺序登记。组合层在创建子模块时调用 `register_module("q", ...)`，前向和遍历使用同一个子模块对象。
 
 - `named_children()` 只返回直接子模块。走到 `Linear` 就没有下一层了；`weight` 是参数，不是子模块。
+- `visit_module_tree(visit_fn)` 先访问自身，再按登记顺序递归访问子模块。每次调用 `visit_fn(module, registered_name, depth)`；起点的登记名默认为空、深度默认为 0。
 - `parameters()` 先收集当前模块的参数，再按登记顺序递归收集子模块的参数，供优化器和 checkpoint 使用。返回的 Tensor 句柄共享原参数的数据和梯度，原地修改会影响下一次前向。
+
+`model.print(std::cout)` 按深度缩进，每个模块一行。根节点显示模块本身的名字（例如 `GPT`）；子节点同时显示登记名和模块名（例如 `q: Linear`）。打印逻辑由 `Module` 统一实现，不读取权重张量。
 
 ## RMSNorm
 

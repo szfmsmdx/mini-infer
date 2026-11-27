@@ -1,3 +1,4 @@
+#include <ostream>
 #include <stdexcept>
 #include <utility>
 
@@ -32,19 +33,29 @@ void Module::register_child(std::string name, std::shared_ptr<Module> child) {
     children_.emplace_back(std::move(name), std::move(child));
 }
 
-void Module::collect_parameters(std::vector<Tensor>& result) const {
-    // 先收集本模块的参数，再按登记顺序遍历子模块。
-    for (const auto& parameter : parameters_) {
-        result.push_back(parameter.second);
+void Module::visit_module_tree(const ModuleVisitor& visit_fn,
+                               std::string_view registered_name, std::size_t depth) const {
+    visit_fn(*this, registered_name, depth);
+    for (const auto& [child_name, child] : children_) {
+        child->visit_module_tree(visit_fn, child_name, depth + 1);
     }
-    for (const auto& child : children_) {
-        child.second->collect_parameters(result);
-    }
+}
+
+void Module::print(std::ostream& out) const {
+    visit_module_tree([&out](const Module& module, std::string_view registered_name, std::size_t depth) {
+        out << std::string(depth * 2, ' ');
+        if (!registered_name.empty()) out << registered_name << ": ";
+        out << module.name() << '\n';
+    });
 }
 
 std::vector<Tensor> Module::parameters() const {
     std::vector<Tensor> result;
-    collect_parameters(result);
+    visit_module_tree([&result](const Module& module, std::string_view, std::size_t) {
+        for (const auto& parameter : module.parameters_) {
+            result.push_back(parameter.second);
+        }
+    });
     return result;
 }
 

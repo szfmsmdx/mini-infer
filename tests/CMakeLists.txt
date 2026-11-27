@@ -22,6 +22,10 @@ add_executable(matmul_cpu_test ops/matmul_test.cpp)
 target_link_libraries(matmul_cpu_test PRIVATE mini_infer)
 add_test(NAME matmul_cpu_test COMMAND matmul_cpu_test)
 
+add_executable(module_test modules/module_test.cpp)
+target_link_libraries(module_test PRIVATE mini_infer)
+add_test(NAME module_test COMMAND module_test)
+
 add_executable(linear_cpu_test modules/linear_test.cpp)
 target_link_libraries(linear_cpu_test PRIVATE mini_infer)
 add_test(NAME linear_cpu_test COMMAND linear_cpu_test)

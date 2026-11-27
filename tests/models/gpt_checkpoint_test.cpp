@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <iostream>
 #include <random>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -88,6 +89,19 @@ void CheckModuleTraversal(const GPT& model) {
     Check(parameters.size() == 8u * model.config().layers + 2u, "GPT recursive parameter count");
     Check(parameters[2].data_ptr() == q_params.front().data_ptr(),
           "Recursive traversal must return the original child weight");
+
+    std::ostringstream linear_out;
+    q.print(linear_out);
+    Check(linear_out.str() == "Linear\n", "Standalone module print must use its own name");
+
+    std::ostringstream out;
+    model.print(out);
+    const auto description = out.str();
+    Check(description.find("GPT\n  token_embedding: Embedding\n") == 0 &&
+              description.find("\n  decoder_0: SimpleDecoderLayer\n") != std::string::npos &&
+              description.find("\n    q: Linear\n") != std::string::npos &&
+              description.find("weight") == std::string::npos,
+          "Model print must show the module tree without its weights");
 }
 
 void TestCheckpoint(const fs::path& path) {

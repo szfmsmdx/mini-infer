@@ -29,7 +29,7 @@ GPT::GPT(GPTConfig config, Device device, std::uint32_t seed)
     : GPT(config, device, std::mt19937(seed)) {}
 
 GPT::GPT(GPTConfig config, Device device, std::mt19937 rng)
-    : config_(config.validated()) {
+    : Module("GPT"), config_(config.validated()) {
     token_embedding_ = register_module("token_embedding", std::make_shared<Embedding>(
         config_.vocab_size, config_.channels, device,
         weight_init::make_normal_initializer(rng, kWeightStddev)));
