@@ -18,6 +18,10 @@ def git(*args):
     return subprocess.check_output(["git", "--literal-pathspecs", *args]).decode("utf-8")
 
 
+def documents_only(names):
+    return bool(names) and all(Path(name).suffix.lower() in {".md", ".rst", ".drawio"} for name in names)
+
+
 def changes(base):
     # Both line numbers and coverage refer to the checked-out head, even if main moved.
     base = git("merge-base", base, "HEAD").strip()
@@ -115,10 +119,15 @@ def main():
         lint(changed, args.input)
         return
     hits, total, ph, pn, missing, waiver = assess(coverage_lines(args.input), changed)
+    names = git("diff", "--name-only", "--no-renames", "-z", args.base + "...HEAD").split("\0")[:-1]
+    docs_waiver = os.environ.get("GITHUB_EVENT_NAME") == "pull_request" and documents_only(names)
     summary = (f"### CPU line coverage\n\n| Scope | Hits | Minimum |\n|---|---:|---:|\n"
                f"| Production | {ratio(hits, total)} | 60% |\n| PR additions | {ratio(ph, pn)} | 70% |\n")
     if missing:
         summary += "\nChanged production files without CPU measurement: " + ", ".join(f"`{p}`" for p in missing) + "\n"
+    if docs_waiver:
+        summary += "\nDocumentation-only PR: the owner can approve the N/A patch measurement in Review deployments.\n"
+        waiver = True
     print(summary)
     if "GITHUB_STEP_SUMMARY" in os.environ:
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as stream:

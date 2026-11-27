@@ -106,6 +106,15 @@ jobs:
         run: |
           ctest --test-dir build/ci --no-tests=error --output-on-failure --parallel 2 --output-junit results.xml
           python -c "import xml.etree.ElementTree as E; r=E.parse('build/ci/results.xml').getroot(); assert r.find(\"testcase[@name='precision_cpu_test']\") is not None and int(r.attrib['skipped']) == 0"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: cpu-test-diagnostics
+          path: |
+            build/ci/results.xml
+            build/ci/Testing/Temporary/LastTest.log
+            build/ci/tests/*/report.json
+          if-no-files-found: ignore
 
   # main already requires this exact GitHub Actions check. A skipped job alone would count as green.
   cpp-correctness:

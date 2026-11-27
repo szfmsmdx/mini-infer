@@ -18,6 +18,9 @@ class CoveragePolicy(unittest.TestCase):
         self.assertTrue(quality.assess({"src/a.cpp": lines}, changed)[-1])
 
     def test_docs_and_unmeasured_sources(self):
+        self.assertTrue(quality.documents_only(["README.md", "note/design.drawio"]))
+        self.assertFalse(quality.documents_only(["README.md", "src/module.cpp"]))
+        self.assertFalse(quality.documents_only([]))
         files = {"src/a.cpp": {5: True}}
         self.assertEqual(quality.assess(files, {}), (1, 1, 0, 0, [], False))
         for name in ("src/unused.cpp", "include/new.h", "src/backend/cuda/kernel.cu"):

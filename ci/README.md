@@ -10,7 +10,7 @@ GitHub 在 PR 打开或更新时运行 `C++ correctness`。分支保护沿用已
 
 **格式来源。** [llama.cpp](https://github.com/ggml-org/llama.cpp/blob/master/.clang-format) 同样用四空格、同一行左花括号、namespace 顶格。mini-infer 保留 `Tensor&` 写法和项目头文件的依赖顺序，formatter 不重排 include。[PyTorch](https://github.com/pytorch/pytorch/blob/main/.clang-tidy) 使用 bugprone、performance 和重复 include 检查。这里先选 sizeof、memset、移动后使用等具体规则，不强制改名或使用 C++20。旧代码随所在行的改动逐步检查。
 
-**覆盖范围。** 分母取自 `src/`、`include/`、`examples/` 的 CPU 编译报告，同一文件同一行只计一次；测试、第三方库和构建产物排除。增量使用 PR head 相对目标分支共同祖先的新增行，与该 head 的可执行行求交。删除行不计。纯文档 PR 的增量为 N/A，全量仍须达标。报告可在 run 的 Summary 和 `cpu-line-coverage` artifact 查看。
+**覆盖范围。** 分母取自 `src/`、`include/`、`examples/` 的 CPU 编译报告，同一文件同一行只计一次；测试、第三方库和构建产物排除。增量使用 PR head 相对目标分支共同祖先的新增行，与该 head 的可执行行求交。删除行不计。纯文档 PR（仅 Markdown、reStructuredText 或 draw.io）的增量为 N/A，需由所有者点击特批，全量覆盖率仍会计算。报告可在 run 的 Summary 和 `cpu-line-coverage` artifact 查看。
 
 GitHub 托管的 Ubuntu runner 无 GPU，CPU 行覆盖率不能代表 CUDA 设备代码。变更生产 `.cu/.cuh` 或缺少该文件的 CPU 测量时要求特批，请在 PR 附上 GPU 验证结果。基础设施错误、覆盖率采集测试失败、空报告直接阻断流程。
 
