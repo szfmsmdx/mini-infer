@@ -62,9 +62,39 @@ void RegisterCPUKernels(KernelTable& table) {
         +[](DeviceContext&, const Tensor& x, Tensor& out) { ExpCPU(x, out); });
     table.log.register_fn(Device::kCPU,
         +[](DeviceContext&, const Tensor& x, Tensor& out) { LogCPU(x, out); });
+    table.sub_backward.register_fn(Device::kCPU,
+        +[](DeviceContext&, const Tensor& grad, Tensor& db) {
+            SubBackwardCPU(grad, db);
+        });
+    table.mul_backward.register_fn(Device::kCPU,
+        +[](DeviceContext&, const Tensor& a, const Tensor& b, const Tensor& grad,
+            Tensor& da, Tensor& db) {
+            MulBackwardCPU(a, b, grad, da, db);
+        });
+    table.div_backward.register_fn(Device::kCPU,
+        +[](DeviceContext&, const Tensor& a, const Tensor& b, const Tensor& grad,
+            Tensor& da, Tensor& db) {
+            DivBackwardCPU(a, b, grad, da, db);
+        });
+    table.neg_backward.register_fn(Device::kCPU,
+        +[](DeviceContext&, const Tensor& grad, Tensor& dx) {
+            NegBackwardCPU(grad, dx);
+        });
+    table.sqrt_backward.register_fn(Device::kCPU,
+        +[](DeviceContext&, const Tensor& x, const Tensor& grad, Tensor& dx) {
+            SqrtBackwardCPU(x, grad, dx);
+        });
     table.rsqrt_backward.register_fn(Device::kCPU,
         +[](DeviceContext&, const Tensor& x, const Tensor& grad, Tensor& dx) {
             RsqrtBackwardCPU(x, grad, dx);
+        });
+    table.exp_backward.register_fn(Device::kCPU,
+        +[](DeviceContext&, const Tensor& y, const Tensor& grad, Tensor& dx) {
+            ExpBackwardCPU(y, grad, dx);
+        });
+    table.log_backward.register_fn(Device::kCPU,
+        +[](DeviceContext&, const Tensor& x, const Tensor& grad, Tensor& dx) {
+            LogBackwardCPU(x, grad, dx);
         });
     table.sigmoid.register_fn(Device::kCPU,
         +[](DeviceContext&, const Tensor& x, Tensor& out) { SigmoidCPU(x, out); });

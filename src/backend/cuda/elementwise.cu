@@ -9,7 +9,7 @@
 #include <cuda_runtime.h>
 
 #include "ops/elementwise/kernels.h"
-#include "mini_infer/tensor/tensor.h"
+#include "mini_infer/ops/elementwise.h"
 #include "backend/common/cuda_index.cuh"
 #include "backend/common/cuda_unary.cuh"
 #include "runtime/cuda_check.h"
@@ -274,6 +274,40 @@ void RsqrtBackwardCUDA(const Tensor& x, const Tensor& output_grad, Tensor& dx) {
         case Dtype::kBFloat16: LaunchRsqrtBackward<__nv_bfloat16>(x, output_grad, dx); break;
         default: throw std::invalid_argument("rsqrt backward: unsupported dtype");
     }
+}
+
+void SubBackwardCUDA(const Tensor& grad, Tensor& db) {
+    // 左侧梯度直接传回，这里只计算右侧。
+    neg_out(grad, db);
+}
+
+void MulBackwardCUDA(const Tensor& a, const Tensor& b, const Tensor& grad,
+                     Tensor& da, Tensor& db) {
+    mul_out(grad, b, da);
+    mul_out(grad, a, db);
+}
+
+void DivBackwardCUDA(const Tensor& a, const Tensor& b, const Tensor& grad,
+                     Tensor& da, Tensor& db) {
+    div_out(grad, b, da);
+    mul_out(neg(grad), (a / b) / b, db);
+}
+
+void NegBackwardCUDA(const Tensor& grad, Tensor& dx) {
+    neg_out(grad, dx);
+}
+
+void SqrtBackwardCUDA(const Tensor& x, const Tensor& grad, Tensor& dx) {
+    const Tensor root = sqrt(x);
+    div_out(grad, root + root, dx);
+}
+
+void ExpBackwardCUDA(const Tensor& y, const Tensor& grad, Tensor& dx) {
+    mul_out(grad, y, dx);
+}
+
+void LogBackwardCUDA(const Tensor& x, const Tensor& grad, Tensor& dx) {
+    div_out(grad, x, dx);
 }
 
 }  // namespace mtensor

@@ -42,7 +42,7 @@ struct KernelSlot {
 
 using UnaryKernel = void (*)(DeviceContext&, const Tensor&, Tensor&);
 using BinaryKernel = void (*)(DeviceContext&, const Tensor&, const Tensor&, Tensor&);
-using MatmulBackwardKernel = void (*)(DeviceContext&, const Tensor&, const Tensor&,
+using BinaryBackwardKernel = void (*)(DeviceContext&, const Tensor&, const Tensor&,
                                       const Tensor&, Tensor&, Tensor&);
 using UnaryBackwardKernel = void (*)(DeviceContext&, const Tensor&, const Tensor&, Tensor&);
 using SoftmaxKernel = void (*)(DeviceContext&, const Tensor&, int, Tensor&);
@@ -78,13 +78,20 @@ struct KernelTable {
     KernelSlot<UnaryKernel> rsqrt;
     KernelSlot<UnaryKernel> exp;
     KernelSlot<UnaryKernel> log;
+    KernelSlot<UnaryKernel> sub_backward;
+    KernelSlot<BinaryBackwardKernel> mul_backward;
+    KernelSlot<BinaryBackwardKernel> div_backward;
+    KernelSlot<UnaryKernel> neg_backward;
+    KernelSlot<UnaryBackwardKernel> sqrt_backward;
     KernelSlot<UnaryBackwardKernel> rsqrt_backward;
+    KernelSlot<UnaryBackwardKernel> exp_backward;
+    KernelSlot<UnaryBackwardKernel> log_backward;
     KernelSlot<UnaryKernel> sigmoid;
     KernelSlot<UnaryKernel> silu;
     KernelSlot<SoftmaxKernel> softmax;
     KernelSlot<SoftmaxBackwardKernel> softmax_backward;
     KernelSlot<BinaryKernel> matmul;
-    KernelSlot<MatmulBackwardKernel> matmul_backward;
+    KernelSlot<BinaryBackwardKernel> matmul_backward;
     KernelSlot<BinaryKernel> embedding;
     KernelSlot<BinaryKernel> embedding_backward;
     KernelSlot<RoPEKernel> rope;

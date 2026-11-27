@@ -61,9 +61,39 @@ void RegisterCUDAKernels(KernelTable& table) {
         +[](DeviceContext&, const Tensor& x, Tensor& out) { ExpCUDA(x, out); });
     table.log.register_fn(Device::kCUDA,
         +[](DeviceContext&, const Tensor& x, Tensor& out) { LogCUDA(x, out); });
+    table.sub_backward.register_fn(Device::kCUDA,
+        +[](DeviceContext&, const Tensor& grad, Tensor& db) {
+            SubBackwardCUDA(grad, db);
+        });
+    table.mul_backward.register_fn(Device::kCUDA,
+        +[](DeviceContext&, const Tensor& a, const Tensor& b, const Tensor& grad,
+            Tensor& da, Tensor& db) {
+            MulBackwardCUDA(a, b, grad, da, db);
+        });
+    table.div_backward.register_fn(Device::kCUDA,
+        +[](DeviceContext&, const Tensor& a, const Tensor& b, const Tensor& grad,
+            Tensor& da, Tensor& db) {
+            DivBackwardCUDA(a, b, grad, da, db);
+        });
+    table.neg_backward.register_fn(Device::kCUDA,
+        +[](DeviceContext&, const Tensor& grad, Tensor& dx) {
+            NegBackwardCUDA(grad, dx);
+        });
+    table.sqrt_backward.register_fn(Device::kCUDA,
+        +[](DeviceContext&, const Tensor& x, const Tensor& grad, Tensor& dx) {
+            SqrtBackwardCUDA(x, grad, dx);
+        });
     table.rsqrt_backward.register_fn(Device::kCUDA,
         +[](DeviceContext&, const Tensor& x, const Tensor& grad, Tensor& dx) {
             RsqrtBackwardCUDA(x, grad, dx);
+        });
+    table.exp_backward.register_fn(Device::kCUDA,
+        +[](DeviceContext&, const Tensor& y, const Tensor& grad, Tensor& dx) {
+            ExpBackwardCUDA(y, grad, dx);
+        });
+    table.log_backward.register_fn(Device::kCUDA,
+        +[](DeviceContext&, const Tensor& x, const Tensor& grad, Tensor& dx) {
+            LogBackwardCUDA(x, grad, dx);
         });
     table.sigmoid.register_fn(Device::kCUDA,
         +[](DeviceContext&, const Tensor& x, Tensor& out) { SigmoidCUDA(x, out); });

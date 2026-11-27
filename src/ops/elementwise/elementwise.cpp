@@ -3,16 +3,11 @@
 #include <stdexcept>
 #include <utility>
 #include <vector>
-#include <cmath>
-#include <cstring>
-#include <cstdint>
 
 #include "mini_infer/ops/elementwise.h"
 #include "backend/dispatch.h"
-#include "ops/elementwise/kernels.h"
-#include "backend/common/cpu_iteration.h"
-#include "tensor/check.h"
 #include "mini_infer/autograd.h"
+#include "tensor/check.h"
 
 namespace mtensor {
 
@@ -336,16 +331,25 @@ std::vector<Tensor> AddNode::backward(const Tensor& output_grad) {
 }
 
 std::vector<Tensor> SubNode::backward(const Tensor& output_grad) {
-    return {output_grad, neg(output_grad)};
+    Tensor db(output_grad.shape(), output_grad.dtype(), output_grad.device());
+    GetKernelTable().sub_backward.call(
+        output_grad.device(), "sub backward", output_grad, db);
+    return {output_grad, db};
 }
 
 std::vector<Tensor> NegNode::backward(const Tensor& output_grad) {
-    return {neg(output_grad)};
+    Tensor dx(output_grad.shape(), output_grad.dtype(), output_grad.device());
+    GetKernelTable().neg_backward.call(
+        output_grad.device(), "neg backward", output_grad, dx);
+    return {dx};
 }
 
 std::vector<Tensor> SqrtNode::backward(const Tensor& output_grad) {
-    const Tensor root = sqrt(saved_input.unpack("SqrtNode::backward"));
-    return {output_grad / (root + root)};
+    const Tensor x = saved_input.unpack("SqrtNode::backward");
+    Tensor dx(x.shape(), x.dtype(), x.device());
+    GetKernelTable().sqrt_backward.call(
+        x.device(), "sqrt backward", x, output_grad, dx);
+    return {dx};
 }
 
 std::vector<Tensor> RsqrtNode::backward(const Tensor& output_grad) {
@@ -358,23 +362,38 @@ std::vector<Tensor> RsqrtNode::backward(const Tensor& output_grad) {
 
 std::vector<Tensor> ExpNode::backward(const Tensor& output_grad) {
     const Tensor y = saved_output.unpack("ExpNode::backward");
-    return {output_grad * y};
+    Tensor dx(y.shape(), y.dtype(), y.device());
+    GetKernelTable().exp_backward.call(
+        y.device(), "exp backward", y, output_grad, dx);
+    return {dx};
 }
 
 std::vector<Tensor> LogNode::backward(const Tensor& output_grad) {
-    return {output_grad / saved_input.unpack("LogNode::backward")};
+    const Tensor x = saved_input.unpack("LogNode::backward");
+    Tensor dx(x.shape(), x.dtype(), x.device());
+    GetKernelTable().log_backward.call(
+        x.device(), "log backward", x, output_grad, dx);
+    return {dx};
 }
 
 std::vector<Tensor> MulNode::backward(const Tensor& output_grad) {
     const Tensor a = saved_inputs[0].unpack("MulNode::backward");
     const Tensor b = saved_inputs[1].unpack("MulNode::backward");
-    return {mul(output_grad, b), mul(output_grad, a)};
+    Tensor da(a.shape(), a.dtype(), a.device());
+    Tensor db(b.shape(), b.dtype(), b.device());
+    GetKernelTable().mul_backward.call(
+        a.device(), "mul backward", a, b, output_grad, da, db);
+    return {da, db};
 }
 
 std::vector<Tensor> DivNode::backward(const Tensor& output_grad) {
     const Tensor a = saved_inputs[0].unpack("DivNode::backward");
     const Tensor b = saved_inputs[1].unpack("DivNode::backward");
-    return {div(output_grad, b), -output_grad * ((a / b) / b)};
+    Tensor da(a.shape(), a.dtype(), a.device());
+    Tensor db(b.shape(), b.dtype(), b.device());
+    GetKernelTable().div_backward.call(
+        a.device(), "div backward", a, b, output_grad, da, db);
+    return {da, db};
 }
 
 }  // namespace mtensor
