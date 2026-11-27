@@ -42,6 +42,8 @@ struct KernelSlot {
 
 using UnaryKernel = void (*)(DeviceContext&, const Tensor&, Tensor&);
 using BinaryKernel = void (*)(DeviceContext&, const Tensor&, const Tensor&, Tensor&);
+using MatmulBackwardKernel = void (*)(DeviceContext&, const Tensor&, const Tensor&,
+                                      const Tensor&, Tensor&, Tensor&);
 using UnaryBackwardKernel = void (*)(DeviceContext&, const Tensor&, const Tensor&, Tensor&);
 using SoftmaxKernel = void (*)(DeviceContext&, const Tensor&, int, Tensor&);
 using SoftmaxBackwardKernel = void (*)(DeviceContext&, const Tensor&, const Tensor&, int, Tensor&);
@@ -82,6 +84,7 @@ struct KernelTable {
     KernelSlot<SoftmaxKernel> softmax;
     KernelSlot<SoftmaxBackwardKernel> softmax_backward;
     KernelSlot<BinaryKernel> matmul;
+    KernelSlot<MatmulBackwardKernel> matmul_backward;
     KernelSlot<BinaryKernel> embedding;
     KernelSlot<BinaryKernel> embedding_backward;
     KernelSlot<RoPEKernel> rope;

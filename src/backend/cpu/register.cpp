@@ -89,6 +89,11 @@ void RegisterCPUKernels(KernelTable& table) {
             MatmulCPU(a.data_ptr(), b.data_ptr(), out.data_ptr(), a.dtype(),
                       a.size(0), a.size(1), b.size(1), a.stride(), b.stride());
         });
+    table.matmul_backward.register_fn(Device::kCPU,
+        +[](DeviceContext&, const Tensor& a, const Tensor& b, const Tensor& grad,
+            Tensor& da, Tensor& db) {
+            MatmulBackwardCPU(a, b, grad, da, db);
+        });
     table.embedding.register_fn(Device::kCPU,
         +[](DeviceContext&, const Tensor& weight, const Tensor& indices, Tensor& out) {
             EmbeddingCPU(weight, indices, out);

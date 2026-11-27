@@ -139,7 +139,7 @@ FP16/BF16 使用 16 位编码，不能直接将编码作为整数参与浮点运
 - `sum()` 支持全元素和指定维度归约。浮点用 FP32 累加，结果保持输入 dtype。整数结果为 Int64，按 64 位回绕。
 - `mean()` 支持全元素和指定维度归约。前后向都通过 `KernelTable` 分发；后端前向复用 `sum()` 和乘法，反向缩放上游梯度后广播，不物化输入大小的梯度缓冲区。
 - `max()`、`min()` 支持 CPU/CUDA 的全元素和指定维度归约，沿用负维度和 `keepdim`。支持非连续输入，只返回极值，保留输入 dtype 和 device；浮点输入的并列极值平分上游梯度。归约组含 NaN 时返回 NaN，反向只在该组的 NaN 之间平分梯度。
-- 二维 `matmul()` 的 CPU/CUDA 前向支持 8 种 dtype。浮点反向计算 `dA = G @ Bᵀ` 和 `dB = Aᵀ @ G`。
+- 二维 `matmul()` 的 CPU/CUDA 前向支持 8 种 dtype。浮点反向通过 `KernelTable` 分发，后端复用 `matmul_out` 计算 `dA = G @ Bᵀ` 和 `dB = Aᵀ @ G`。
 - FP16/BF16 RMSNorm 在 CPU 上用 `to(Dtype::kFloat32)` 和 Tensor 操作，在 CUDA 上用专用 kernel。两条路径都在 FP32 中计算，最后才写回低精度输出和梯度。SiLU 前向用 double 处理 `x < -80` 的负尾，反向使用 FP32。[精度排查](../../note/code/算子精度问题.md)
 - 词嵌入、RoPE、因果注意力和交叉熵均接入 CPU/CUDA 前向及反向。[GPT 示例](../../examples/nanogpt/README.md)
 - 交叉熵在 [CPU](../backend/cpu/cross_entropy.cpp) 和 [CUDA](../backend/cuda/cross_entropy.cu) 各有一个前后向实现文件。CPU 反向复用后端 Softmax；调用层不区分设备，统一查表。
