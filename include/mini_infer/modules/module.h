@@ -6,6 +6,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -30,8 +31,8 @@ public:
     // 只返回直接子模块，不包含参数。
     const std::vector<NamedChild>& named_children() const noexcept { return children_; }
 
-    // 先访问自身，再按登记顺序深度优先遍历子模块。
-    void visit_module_tree(const ModuleVisitor& visit_fn,
+    // 每次遍历传入空集合；按登记顺序深度优先访问每个模块一次。
+    void visit_module_tree(const ModuleVisitor& visit_fn, std::unordered_set<const Module*>& visited,
                            std::string_view registered_name = {}, std::size_t depth = 0) const;
     void print(std::ostream& out) const;
 
@@ -46,6 +47,7 @@ protected:
 
     void register_parameter(std::string name, const Tensor& parameter);
 
+    // 可以共享子模块，调用方须保证登记关系无环。
     template <typename T>
     std::shared_ptr<T> register_module(std::string name, std::shared_ptr<T> child) {
         register_child(std::move(name), child);

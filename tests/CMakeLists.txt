@@ -129,6 +129,12 @@ endif()
 set_tests_properties(precision_cpu_test PROPERTIES SKIP_RETURN_CODE 77)
 
 if(ENABLE_CUDA)
+    add_executable(gpt_checkpoint_cuda_test models/gpt_checkpoint_test.cpp)
+    target_compile_definitions(gpt_checkpoint_cuda_test PRIVATE GPT_CHECKPOINT_TEST_CUDA)
+    target_link_libraries(gpt_checkpoint_cuda_test PRIVATE mini_infer)
+    add_test(NAME gpt_checkpoint_cuda_test COMMAND gpt_checkpoint_cuda_test)
+    set_tests_properties(gpt_checkpoint_cuda_test PROPERTIES SKIP_RETURN_CODE 77)
+
     add_executable(transformer_cuda_test ops/transformer_test.cpp)
     target_compile_definitions(transformer_cuda_test PRIVATE TRANSFORMER_TEST_CUDA)
     target_link_libraries(transformer_cuda_test PRIVATE mini_infer)

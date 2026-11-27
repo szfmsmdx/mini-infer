@@ -11,6 +11,9 @@
 #include <string>
 #include <system_error>
 #include <vector>
+#ifdef GPT_CHECKPOINT_TEST_CUDA
+#include <cuda_runtime.h>
+#endif
 
 #include "mini_infer/autograd.h"
 #include "mini_infer/models/gpt_checkpoint.h"
@@ -19,6 +22,12 @@ namespace {
 
 using namespace mtensor;
 namespace fs = std::filesystem;
+
+#ifdef GPT_CHECKPOINT_TEST_CUDA
+constexpr Device kLoadDevice = Device::kCUDA;
+#else
+constexpr Device kLoadDevice = Device::kCPU;
+#endif
 
 void Check(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
@@ -120,7 +129,7 @@ void TestCheckpoint(const fs::path& path) {
         Check(entry.path() == path, "Checkpoint save left a temporary file");
     }
 
-    GPTCheckpoint restored = LoadGPTCheckpoint(path, Device::kCPU);
+    GPTCheckpoint restored = LoadGPTCheckpoint(path, kLoadDevice);
     CheckModuleTraversal(restored.model);
     const GPTConfig& loaded = restored.model.config();
     Check(loaded.vocab_size == config.vocab_size &&
@@ -134,7 +143,8 @@ void TestCheckpoint(const fs::path& path) {
     const auto loaded_weights = restored.model.parameters();
     Check(loaded_weights.size() == weights.size(), "Checkpoint parameter count");
     for (std::size_t i = 0; i < weights.size(); ++i) {
-        CheckTensor(loaded_weights[i], weights[i], "Checkpoint parameter data or metadata");
+        Check(loaded_weights[i].device() == kLoadDevice, "Checkpoint parameter is on the wrong device");
+        CheckTensor(loaded_weights[i].to(Device::kCPU), weights[i], "Checkpoint parameter data or metadata");
     }
 
     const std::string text = "\nca";
@@ -142,12 +152,26 @@ void TestCheckpoint(const fs::path& path) {
     Check(restored.tokenizer.encode(text) == ids && restored.tokenizer.decode(ids) == text,
           "Checkpoint token IDs");
     const Tensor prompt(ids.data(), {static_cast<int>(ids.size())}, Dtype::kInt32);
-    CheckTensor(restored.model(prompt), model(prompt), "Checkpoint logits");
+    const Tensor logits = restored.model(prompt.to(kLoadDevice));
+    const Tensor reference = model(prompt);
+    Check(logits.device() == kLoadDevice, "Checkpoint logits are on the wrong device");
+    if (kLoadDevice == Device::kCPU) {
+        CheckTensor(logits, reference, "Checkpoint logits");
+    } else {
+        const Tensor host = logits.to(Device::kCPU);
+        Check(host.shape() == reference.shape() && host.dtype() == Dtype::kFloat32, "CUDA logits metadata");
+        const auto* actual = static_cast<const float*>(host.data_ptr());
+        const auto* expected = static_cast<const float*>(reference.data_ptr());
+        for (std::size_t i = 0; i < reference.numel(); ++i) {
+            Check(std::abs(actual[i] - expected[i]) <= 1e-5f + 1e-4f * std::abs(expected[i]),
+                  "CUDA checkpoint logits differ from CPU");
+        }
+    }
 
     fs::resize_file(path, fs::file_size(path) - 1);
     bool rejected = false;
     try {
-        (void)LoadGPTCheckpoint(path, Device::kCPU);
+        (void)LoadGPTCheckpoint(path, kLoadDevice);
     } catch (const std::runtime_error&) {
         rejected = true;
     }
@@ -163,8 +187,16 @@ int main() {
     bool owns_directory = false;
     int result = 0;
     try {
+#ifdef GPT_CHECKPOINT_TEST_CUDA
+        int count = 0;
+        const cudaError_t status = cudaGetDeviceCount(&count);
+        if (status == cudaErrorNoDevice || status == cudaErrorInsufficientDriver ||
+            (status == cudaSuccess && count == 0)) return 77;
+        if (status != cudaSuccess) throw std::runtime_error(cudaGetErrorString(status));
+#endif
         const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-        directory = fs::temp_directory_path() / ("mini-infer-gpt-test-" + std::to_string(stamp));
+        const char* prefix = kLoadDevice == Device::kCUDA ? "mini-infer-gpt-cuda-" : "mini-infer-gpt-cpu-";
+        directory = fs::temp_directory_path() / (prefix + std::to_string(stamp));
         owns_directory = fs::create_directory(directory);
         Check(owns_directory, "Checkpoint test directory already exists");
         TestCheckpoint(directory / "model.bin");

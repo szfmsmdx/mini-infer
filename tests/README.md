@@ -34,8 +34,8 @@ ctest --test-dir build/tests -C Release --output-on-failure
 | `bpe_tokenizer_test` | 合并顺序、同频选对、片段边界和规则重建 |
 | `transformer_cpu_test` / `transformer_cuda_test` | 重复 token 梯度、索引上下界、RoPE 正逆旋转、Decoder 维度与前后向（输入及 8 份参数梯度）、极端 logits 的交叉熵和非连续输入 |
 | `attention_cpu_test` / `attention_cuda_test` | FP64 前向参考、Q/K/V 梯度的中心差分、非连续输入和上游梯度、因果遮罩及输入版本检查 |
-| `module_test` | 直接子模块、前序 DFS、从子树指定起始登记名和深度、按顺序收集原参数、结构化打印 |
-| `gpt_checkpoint_test` | 旧版参数顺序、加载后子模块与结构打印、最终文件覆盖、词表恢复、参数和 logits 一致性、截断文件校验 |
+| `module_test` | 直接子模块、共享模块遍历去重、子树起始登记名和深度、参数顺序和打印；拒绝非法名、重名和空子模块后保留原登记 |
+| `gpt_checkpoint_test` / `gpt_checkpoint_cuda_test` | 旧版参数顺序、子模块和打印、文件覆盖、词表和截断校验；CPU 保存后分别加载到 CPU、CUDA，核对权重设备、内容和前向 logits |
 | `sqrt_cpu_test` / `sqrt_cuda_test` | sqrt、rsqrt 的 8 种输入 dtype、整数提升、跨步视图、特殊值、浮点梯度和原地修改检测；rsqrt 低精度反向失败样本、不同 stride 的输入与上游梯度、跨 block 长度和零维标量 |
 | `exp_cpu_test` / `exp_cuda_test` | exp 的 8 种输入 dtype、转置视图、跨 block 长度，以及复用输出的反向和版本检查 |
 | `log_cpu_test` / `log_cuda_test` | log 的 8 种输入 dtype、转置视图、负值和零的行为、三种浮点 dtype 的非连续输入反向与版本检查 |
@@ -60,6 +60,8 @@ ctest --test-dir build/tests -C Release --output-on-failure
 | `elementwise_cuda_test` | 8 种 dtype 的 add/sub/mul/div/neg 与 CPU 结果逐字节对照；覆盖 stride 视图、标量、线程块边界、整数回绕与除零、FP16/BF16 特殊值及错误输入 |
 
 `tensor_cpu_test` 和 `tensor_cuda_test` 还覆盖 `to(Dtype)` 的非连续视图、浮点双向转换、整数转 FP32 和零维标量。CPU 用例另检查半 ULP 舍入、反向、同 dtype 共享存储和不支持的转换。
+
+`tensor_cuda_test` 检查显存块归还、复用及清缓存后的字节数和命中次数，并确认在用 Tensor 的值仍有效。纯 CPU 构建下，`tensor_cpu_test` 检查清缓存后显存池统计均为零。
 
 ## 优化器测试
 

@@ -33,29 +33,32 @@ void Module::register_child(std::string name, std::shared_ptr<Module> child) {
     children_.emplace_back(std::move(name), std::move(child));
 }
 
-void Module::visit_module_tree(const ModuleVisitor& visit_fn,
+void Module::visit_module_tree(const ModuleVisitor& visit_fn, std::unordered_set<const Module*>& visited,
                                std::string_view registered_name, std::size_t depth) const {
+    if (!visited.insert(this).second) return;
     visit_fn(*this, registered_name, depth);
     for (const auto& [child_name, child] : children_) {
-        child->visit_module_tree(visit_fn, child_name, depth + 1);
+        child->visit_module_tree(visit_fn, visited, child_name, depth + 1);
     }
 }
 
 void Module::print(std::ostream& out) const {
+    std::unordered_set<const Module*> visited;
     visit_module_tree([&out](const Module& module, std::string_view registered_name, std::size_t depth) {
         out << std::string(depth * 2, ' ');
         if (!registered_name.empty()) out << registered_name << ": ";
         out << module.name() << '\n';
-    });
+    }, visited);
 }
 
 std::vector<Tensor> Module::parameters() const {
     std::vector<Tensor> result;
+    std::unordered_set<const Module*> visited;
     visit_module_tree([&result](const Module& module, std::string_view, std::size_t) {
         for (const auto& parameter : module.parameters_) {
             result.push_back(parameter.second);
         }
-    });
+    }, visited);
     return result;
 }
 
