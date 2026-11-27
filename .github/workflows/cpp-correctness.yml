@@ -27,6 +27,10 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - run: sudo apt-get update -qq && sudo apt-get install -y clang-format-18 clang-tidy-18
+      - name: Validate Clang configuration even when no C++ lines changed
+        run: |
+          clang-format-18 --style=file --dump-config > /dev/null
+          clang-tidy-18 --verify-config --config-file=.clang-tidy
       - run: python3 -m unittest discover -s ci -p 'test_*.py' -v
       - name: Configure CPU compilation database
         run: >-
@@ -73,7 +77,7 @@ jobs:
 
   coverage-waiver:
     needs: coverage
-    if: needs.coverage.outputs.waiver == 'true'
+    if: github.event_name == 'pull_request' && needs.coverage.outputs.waiver == 'true'
     environment: coverage-exception
     runs-on: ubuntu-24.04
     steps:

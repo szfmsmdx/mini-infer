@@ -24,11 +24,14 @@ jobs:
           REPO: ${{ github.repository }}
           SHA: ${{ github.event.workflow_run.head_sha }}
           BRANCH: ${{ github.event.workflow_run.head_branch }}
-          FORK: ${{ github.event.workflow_run.head_repository.full_name }}
         run: |
-          number=$(gh api "repos/$REPO/commits/$SHA/pulls" --paginate --slurp | jq -r \
-            --arg sha "$SHA" --arg branch "$BRANCH" --arg fork "$FORK" \
-            '[.[][] | select(.state == "open" and .draft and .base.ref == "main" and
-             .head.sha == $sha and .head.ref == $branch and .head.repo.full_name == $fork)]
-             | if length == 1 then .[0].number else empty end')
-          if [[ -n "$number" ]]; then gh pr ready "$number" --repo "$REPO"; fi
+          number=$(jq -r '.workflow_run as $run | $run.pull_requests |
+            select(length == 1) | .[0] |
+            select(.base.ref == "main" and .head.sha == $run.head_sha) | .number' "$GITHUB_EVENT_PATH")
+          if [[ -z "$number" ]]; then exit 0; fi
+          pr=$(gh api "repos/$REPO/pulls/$number")
+          if jq -e --arg sha "$SHA" --arg branch "$BRANCH" \
+              '.state == "open" and .draft and .base.ref == "main" and
+               .head.sha == $sha and .head.ref == $branch' <<< "$pr" > /dev/null; then
+            gh pr ready "$number" --repo "$REPO"
+          fi
