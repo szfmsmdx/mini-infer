@@ -31,7 +31,7 @@ void Embedding::init() {
     }
     weight_ = Tensor(values.data(), {vocab_size_, channels_}, Dtype::kFloat32, device_);
     weight_.requires_grad_(true);
-    register_parameter(weight_);
+    register_parameter("weight", weight_);
 }
 
 Tensor Embedding::forward(const Tensor& indices) {

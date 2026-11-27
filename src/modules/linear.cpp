@@ -55,8 +55,8 @@ void Linear::init() {
 }
 
 void Linear::register_parameters() {
-    register_parameter(weight_);
-    if (bias_) register_parameter(*bias_);
+    register_parameter("weight", weight_);
+    if (bias_) register_parameter("bias", *bias_);
 }
 
 Tensor Linear::forward(const Tensor& x) {

@@ -16,9 +16,14 @@ auto weights = projection.parameters();  // 一份 [256, 128] 的权重
 
 `Module` 声明 `init()`，由各层的构造函数决定何时调用。`Linear(weight, bias)` 和 `Linear(weight)` 只登记传入的 Tensor，不重跑初始化，也不改变 `requires_grad`。
 
-`Module::parameters()` 先收集当前层直接登记的参数，再按组合层指定的顺序遍历子层。`Linear` 按 weight、bias 的顺序登记。返回的 Tensor 句柄共享原参数的数据和梯度，原地修改会影响下一次前向。
-
 `Module::operator()` 调用虚函数 `forward`。[`Linear::forward`](linear.cpp) 计算 `x @ weight.T`，有偏置时再沿 batch 广播相加。CPU 和 CUDA 共用[同一组测试](../../tests/modules/linear_test.cpp)。
+
+## 参数与子模块
+
+模块用 `register_parameter("weight", weight_)` 登记自己的参数。`Linear` 按 weight、bias 的顺序登记。组合层在创建子模块时调用 `register_module("q", ...)`，前向和遍历使用同一个子模块对象。
+
+- `named_children()` 只返回直接子模块。走到 `Linear` 就没有下一层了；`weight` 是参数，不是子模块。
+- `parameters()` 先收集当前模块的参数，再按登记顺序递归收集子模块的参数，供优化器和 checkpoint 使用。返回的 Tensor 句柄共享原参数的数据和梯度，原地修改会影响下一次前向。
 
 ## RMSNorm
 

@@ -1,7 +1,9 @@
 #include <cmath>
 #include <cstddef>
+#include <memory>
 #include <random>
 #include <stdexcept>
+#include <string>
 
 #include "mini_infer/models/gpt.h"
 #include "mini_infer/init.h"
@@ -27,25 +29,22 @@ GPT::GPT(GPTConfig config, Device device, std::uint32_t seed)
     : GPT(config, device, std::mt19937(seed)) {}
 
 GPT::GPT(GPTConfig config, Device device, std::mt19937 rng)
-    : config_(config.validated()),
-      token_embedding_(config_.vocab_size, config_.channels, device,
-                       weight_init::make_normal_initializer(rng, kWeightStddev)),
-      final_norm_(config_.channels, kNormEps, device) {
+    : config_(config.validated()) {
+    token_embedding_ = register_module("token_embedding", std::make_shared<Embedding>(
+        config_.vocab_size, config_.channels, device,
+        weight_init::make_normal_initializer(rng, kWeightStddev)));
+    final_norm_ = std::make_shared<RMSNorm>(config_.channels, kNormEps, device);
     const auto initializer = weight_init::make_normal_initializer(rng, kWeightStddev);
     const auto residual_initializer =
         weight_init::make_normal_initializer(rng, kWeightStddev / std::sqrt(2.0f * config_.layers));
     decoder_layers_.reserve(static_cast<std::size_t>(config_.layers));
     for (int layer = 0; layer < config_.layers; ++layer) {
-        decoder_layers_.emplace_back(config_.channels, config_.heads, kNormEps, device,
-                                     initializer, residual_initializer);
+        auto decoder = std::make_shared<SimpleDecoderLayer>(
+            config_.channels, config_.heads, kNormEps, device, initializer, residual_initializer);
+        decoder_layers_.push_back(register_module("decoder_" + std::to_string(layer), decoder));
     }
-}
-
-void GPT::append_child_parameters(std::vector<Tensor>& result) const {
-    // checkpoint 按这个顺序存储参数，不存名字。
-    append_parameters(token_embedding_, result);
-    for (const SimpleDecoderLayer& layer : decoder_layers_) append_parameters(layer, result);
-    append_parameters(final_norm_, result);
+    // checkpoint 按顺序存权重，最终归一化必须在 Decoder 之后登记。
+    register_module("final_norm", final_norm_);
 }
 
 Tensor GPT::forward(const Tensor& tokens) {
@@ -53,12 +52,12 @@ Tensor GPT::forward(const Tensor& tokens) {
         throw std::invalid_argument("GPT expects one token sequence within context_length");
     }
 
-    Tensor x = token_embedding_(tokens);
-    for (SimpleDecoderLayer& layer : decoder_layers_) {
-        x = layer(x);
+    Tensor x = token_embedding_->forward(tokens);
+    for (const auto& layer : decoder_layers_) {
+        x = layer->forward(x);
     }
     // 输出投影与词嵌入共享参数，两路梯度累加到同一份权重。
-    return final_norm_(x).matmul(token_embedding_.weight().transpose(0, 1));
+    return final_norm_->forward(x).matmul(token_embedding_->weight().transpose(0, 1));
 }
 
 }  // namespace mtensor

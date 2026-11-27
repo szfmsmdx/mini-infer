@@ -43,6 +43,7 @@ add_library(mini_infer STATIC
     src/ops/reduction/reduction.cpp
     src/ops/layout/layout.cpp
     src/init/weight_init.cpp
+    src/modules/module.cpp
     src/modules/linear.cpp
     src/modules/rmsnorm.cpp
     src/modules/embedding.cpp

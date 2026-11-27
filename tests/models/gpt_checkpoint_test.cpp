@@ -68,6 +68,28 @@ void CheckV1Parameters(const GPT& model, std::uint32_t seed) {
     check({c}, 0.0f, "GPT v1 final norm");
 }
 
+void CheckModuleTraversal(const GPT& model) {
+    const auto& children = model.named_children();
+    Check(children.size() == static_cast<std::size_t>(model.config().layers) + 2,
+          "GPT must enumerate only its direct children");
+    Check(children.front().first == "token_embedding" && children[1].first == "decoder_0" &&
+              children.back().first == "final_norm",
+          "GPT child registration order");
+
+    const auto& decoder_children = children[1].second->named_children();
+    Check(decoder_children.size() == 8 && decoder_children[1].first == "q",
+          "Decoder child registration order");
+    const Module& q = *decoder_children[1].second;
+    Check(q.named_children().empty(), "Linear weight is a parameter, not a child module");
+    const auto q_params = q.parameters();
+    Check(q_params.size() == 1, "Linear without bias has only one parameter");
+
+    const auto parameters = model.parameters();
+    Check(parameters.size() == 8u * model.config().layers + 2u, "GPT recursive parameter count");
+    Check(parameters[2].data_ptr() == q_params.front().data_ptr(),
+          "Recursive traversal must return the original child weight");
+}
+
 void TestCheckpoint(const fs::path& path) {
     const GPTConfig config{4, 6, 8, 2, 2};
     constexpr std::uint32_t seed = 7;
@@ -85,6 +107,7 @@ void TestCheckpoint(const fs::path& path) {
     }
 
     GPTCheckpoint restored = LoadGPTCheckpoint(path, Device::kCPU);
+    CheckModuleTraversal(restored.model);
     const GPTConfig& loaded = restored.model.config();
     Check(loaded.vocab_size == config.vocab_size &&
               loaded.context_length == config.context_length &&

@@ -2,6 +2,9 @@
 
 #include <cstddef>
 #include <functional>
+#include <memory>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "mini_infer/tensor/tensor.h"
@@ -13,33 +16,38 @@ using WeightInitializer = std::function<void(float* values, std::size_t count)>;
 
 class Module {
 public:
+    using NamedChild = std::pair<std::string, std::shared_ptr<Module>>;
+
     virtual ~Module() = default;
     virtual Tensor forward(const Tensor& x) = 0;
 
     Tensor operator()(const Tensor& x) { return forward(x); }
 
-    // 按登记顺序返回参数句柄，和原参数共享数据及梯度。
-    std::vector<Tensor> parameters() const {
-        std::vector<Tensor> result;
-        append_parameters(*this, result);
-        return result;
-    }
+    // 只返回直接子模块，不包含参数。
+    const std::vector<NamedChild>& named_children() const noexcept { return children_; }
+
+    // 按登记顺序递归收集；返回的句柄与原参数共享数据和梯度。
+    std::vector<Tensor> parameters() const;
 
 protected:
     // 由派生类的构造函数调用；不需要初始化参数的层可以沿用空实现。
     virtual void init() {}
 
-    void register_parameter(const Tensor& parameter) { parameters_.push_back(parameter); }
-    virtual void append_child_parameters(std::vector<Tensor>&) const {}
+    void register_parameter(std::string name, const Tensor& parameter);
 
-    // 组合层在遍历时传入现有子层，不保存成员地址。
-    static void append_parameters(const Module& module, std::vector<Tensor>& result) {
-        result.insert(result.end(), module.parameters_.begin(), module.parameters_.end());
-        module.append_child_parameters(result);
+    template <typename T>
+    std::shared_ptr<T> register_module(std::string name, std::shared_ptr<T> child) {
+        register_child(std::move(name), child);
+        return child;
     }
 
 private:
-    std::vector<Tensor> parameters_;
+    void register_child(std::string name, std::shared_ptr<Module> child);
+    void check_registration_name(const std::string& name) const;
+    void collect_parameters(std::vector<Tensor>& result) const;
+
+    std::vector<std::pair<std::string, Tensor>> parameters_;
+    std::vector<NamedChild> children_;
 };
 
 }  // namespace mtensor

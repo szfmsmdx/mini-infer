@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <random>
 #include <vector>
 
@@ -30,12 +31,11 @@ public:
 
 private:
     GPT(GPTConfig config, Device device, std::mt19937 rng);
-    void append_child_parameters(std::vector<Tensor>& result) const override;
 
     GPTConfig config_;
-    Embedding token_embedding_;
-    std::vector<SimpleDecoderLayer> decoder_layers_;
-    RMSNorm final_norm_;
+    std::shared_ptr<Embedding> token_embedding_;
+    std::vector<std::shared_ptr<SimpleDecoderLayer>> decoder_layers_;
+    std::shared_ptr<RMSNorm> final_norm_;
 };
 
 }  // namespace mtensor

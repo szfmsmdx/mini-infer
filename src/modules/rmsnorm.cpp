@@ -17,7 +17,7 @@ RMSNorm::RMSNorm(Tensor weight, float eps)
         throw std::invalid_argument("RMSNorm: weight must be one-dimensional");
     }
     channels_ = weight_.size(0);
-    register_parameter(weight_);
+    register_parameter("weight", weight_);
 }
 
 void RMSNorm::init() {
@@ -26,7 +26,7 @@ void RMSNorm::init() {
     }
     weight_ = full({channels_}, 1.0f, Dtype::kFloat32, device_);
     weight_.requires_grad_(true);
-    register_parameter(weight_);
+    register_parameter("weight", weight_);
 }
 
 Tensor RMSNorm::forward(const Tensor& x) {
