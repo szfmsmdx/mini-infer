@@ -14,8 +14,9 @@ Tensor mul(const Tensor& a, const Tensor& b);
 Tensor div(const Tensor& a, const Tensor& b);
 Tensor neg(const Tensor& a);
 
-// 写入调用方预分配的连续输出。输入需已对齐 shape，输出不能与输入共享 Storage。
-// 这些写入入口不创建 AutogradNode，成功写入前递增输出版本。
+// 本文件的 *_out 写入调用方预分配的连续输出。输入需已对齐 shape，输出不能与输入共享 Storage。
+// 写入前递增输出版本；不创建反向节点，也不替换或清除已有节点。
+// 调用方须保证这次覆盖不会影响后续反向计算。
 Tensor& add_out(const Tensor& a, const Tensor& b, Tensor& out);
 Tensor& sub_out(const Tensor& a, const Tensor& b, Tensor& out);
 Tensor& mul_out(const Tensor& a, const Tensor& b, Tensor& out);

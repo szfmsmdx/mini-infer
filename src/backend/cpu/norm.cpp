@@ -64,14 +64,17 @@ void BackwardTyped(const Tensor& x, const Tensor& weight, const Tensor& grad,
         }
         const float inv = 1.0f / std::sqrt(sum_squares / features + eps);
         inv_rms[row] = inv;
-        const float correction = inv * inv * inv * (sum_grad_weight_x / features);
+        // 用归一化输入计算梯度，避免先算 RMS 倒数的三次方。
+        const float mean_grad_weight_x_hat = (sum_grad_weight_x / features) * inv;
         for (int col = 0; col < features; ++col) {
             const float value = static_cast<float>(values[OffsetAt(x, row * features + col)]);
             const float grad_value = static_cast<float>(
                 upstream[OffsetAt(grad, row * features + col)]);
             const float weight_value = static_cast<float>(scale[col * weight.stride()[0]]);
-            input_grad[row * features + col] =
-                static_cast<T>(grad_value * weight_value * inv - value * correction);
+            const float x_hat = value * inv;
+            const float weighted_grad = grad_value * weight_value;
+            const float dx_value = (weighted_grad - x_hat * mean_grad_weight_x_hat) * inv;
+            input_grad[row * features + col] = static_cast<T>(dx_value);
         }
     }
     for (int col = 0; col < features; ++col) {

@@ -13,7 +13,7 @@ struct TypeTag {
     using type = T;
 };
 
-// The callback receives a type tag; each backend chooses how to use that type.
+// 回调接收类型标签，具体如何使用该类型由后端决定。
 template <typename Fn>
 decltype(auto) DispatchFloatingDtypes(Dtype dtype, Fn&& fn) {
     switch (dtype) {

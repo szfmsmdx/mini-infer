@@ -83,7 +83,7 @@ __global__ void SumKernel(const void* input, void* output, Dtype dtype,
         }
     }
 
-    // reduce sum
+    // 把各线程的局部和归约成块内总和。
     T total = BlockReduceSum(value, shared);
     if (idx == 0) {
         if constexpr (std::is_same_v<T, float>) {

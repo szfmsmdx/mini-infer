@@ -100,14 +100,17 @@ __global__ void RMSNormInputBackwardKernel(
     const float mean_square = sum_squares / static_cast<float>(features);
     const float inv_rms = rsqrtf(mean_square + eps);
     row_inv_rms[row] = inv_rms;
-    const float correction = inv_rms * inv_rms * inv_rms *
-        (sum_grad_weight_x / static_cast<float>(features));
+    // 用归一化输入计算梯度，避免先算 RMS 倒数的三次方。
+    const float mean_grad_weight_x_hat =
+        (sum_grad_weight_x / static_cast<float>(features)) * inv_rms;
 
     for (int j = 0; j < features; ++j) {
         const float x_value = static_cast<float>(x_row[j * x_layout.stride[x_layout.dim - 1]]);
         const float grad_value = static_cast<float>(grad_row[j * grad_layout.stride[grad_layout.dim - 1]]);
         const float weight_value = static_cast<float>(weight[j * weight_stride]);
-        const float dx_value = grad_value * weight_value * inv_rms - x_value * correction;
+        const float x_hat = x_value * inv_rms;
+        const float weighted_grad = grad_value * weight_value;
+        const float dx_value = (weighted_grad - x_hat * mean_grad_weight_x_hat) * inv_rms;
         dx_row[j] = static_cast<T>(dx_value);
     }
 }

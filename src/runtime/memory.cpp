@@ -68,21 +68,27 @@ public:
     static std::atomic<bool>& alive_flag() noexcept { return alive_; }
 
     DataPtr allocate(std::size_t bytes, DataDeleter deleter) {
+        // 空请求不分配；其余请求按池的对齐粒度向上取整。
         if (bytes == 0) return {nullptr, Device::kCUDA, FreeCUDARaw};
         const std::size_t aligned = AlignBlockSize(bytes);
         void* ptr = nullptr;
+
+        // 持锁查缓存：从最小够用的容量开始，最多接受取整后需求的两倍。
         {
             std::lock_guard<std::mutex> lock(mutex_);
             ++stats_.allocations;
-            // A released pointer can be reused only after its last default-stream use completes.
             for (auto it = free_blocks_.lower_bound(aligned);
                  it != free_blocks_.end() && it->first - aligned <= aligned; ++it) {
                 auto& blocks = it->second;
-                for (std::size_t index = blocks.size(); index > 0; --index) {
+                // 同容量的块从后往前查，优先检查最近归还的块。
+                for (std::size_t index = blocks.size(); index; --index) {
                     const CachedBlock block = blocks[index - 1];
+                    // 默认流上最后一次使用结束后，才复用这块显存。
                     const cudaError_t ready = cudaEventQuery(block.ready);
                     if (ready == cudaErrorNotReady) continue;
                     CUDA_CHECK(ready);
+
+                    // 旧 event 销毁失败时，撤销在用登记，保留缓存条目。
                     active_blocks_.emplace(block.ptr, it->first);
                     try {
                         CUDA_CHECK(cudaEventDestroy(block.ready));
@@ -102,6 +108,7 @@ public:
             }
         }
 
+        // 未命中时在锁外申请显存；显存不足则清缓存并重试一次。
         cudaError_t status = cudaMalloc(&ptr, aligned);
         if (status == cudaErrorMemoryAllocation) {
             (void)cudaGetLastError();
@@ -113,6 +120,7 @@ public:
                 std::string("CUDA error at cudaMalloc: ") + cudaGetErrorString(status));
         }
 
+        // 登记成功后再交给 DataPtr；登记失败时直接释放新块。
         try {
             std::lock_guard<std::mutex> lock(mutex_);
             active_blocks_.emplace(ptr, aligned);
@@ -125,22 +133,29 @@ public:
     }
 
     void release(void* ptr) noexcept {
+        // 空指针无需处理；池开始析构后，直接释放显存。
         if (ptr == nullptr) return;
         if (!alive_.load(std::memory_order_acquire)) {
             FreeCUDARaw(ptr);
             return;
         }
+
         cudaEvent_t ready = nullptr;
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            // 按地址查块容量；未登记的块直接释放，不进缓存。
             const auto it = active_blocks_.find(ptr);
             if (it == active_blocks_.end()) {
                 FreeCUDARaw(ptr);
                 return;
             }
+
+            // 撤掉在用记录，并扣除整块容量。
             const std::size_t block_size = it->second;
             active_blocks_.erase(it);
             stats_.allocated_bytes -= block_size;
+
+            // 在默认流上记录 event，再把块和 event 一起放进对应容量的缓存桶。
             cudaError_t status = cudaEventCreateWithFlags(&ready, cudaEventDisableTiming);
             if (status == cudaSuccess) status = cudaEventRecord(ready, nullptr);
             if (status == cudaSuccess) {
@@ -149,21 +164,26 @@ public:
                     stats_.cached_bytes += block_size;
                     return;
                 } catch (...) {
-                    // Failed metadata allocation must not leak the device allocation.
+                    // 缓存登记失败，交给锁外的清理路径。
                 }
             }
         }
+
+        // 未能放入缓存：销毁已创建的 event，直接释放显存。
         if (ready) (void)cudaEventDestroy(ready);
         FreeCUDARaw(ptr);
     }
 
     void empty_cache() noexcept {
+        // 持锁取走当前的缓存块并清零缓存统计，不动在用块。
         std::map<std::size_t, std::vector<CachedBlock>> to_free;
         {
             std::lock_guard<std::mutex> lock(mutex_);
             to_free.swap(free_blocks_);
             stats_.cached_bytes = 0;
         }
+
+        // 在锁外逐块等待 event，再销毁 event、释放显存。
         for (auto& [size, ptrs] : to_free) {
             (void)size;
             for (const CachedBlock& block : ptrs) {

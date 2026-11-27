@@ -13,7 +13,7 @@ class DeviceContext;
 class Tensor;
 DeviceContext& GetDeviceContext(Device device);
 
-// Each slot has one function signature for every supported device.
+// 同一个算子槽位的 CPU 和 CUDA 实现使用相同的函数签名。
 template <typename FnPtr>
 struct KernelSlot {
     FnPtr cpu = nullptr;

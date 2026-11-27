@@ -12,9 +12,6 @@ void EmbeddingCPU(const Tensor& weight, const Tensor& indices, Tensor& output);
 void EmbeddingGradCPU(const Tensor& grad, const Tensor& indices, Tensor& weight_grad);
 void RoPECPU(const Tensor& x, int head_width, float base, bool inverse,
              int pos_offset, Tensor& output);
-void CrossEntropyRowsCPU(const Tensor& logits, const Tensor& targets, Tensor& row_losses);
-void CrossEntropyGradCPU(const Tensor& logits, const Tensor& targets,
-                         const Tensor& grad, Tensor& logits_grad);
 void CausalAttentionCPU(const Tensor& q, const Tensor& k, const Tensor& v, int heads,
                         Tensor& prob, Tensor& output);
 void CausalAttentionGradCPU(const Tensor& q, const Tensor& k, const Tensor& v, int heads,
@@ -96,15 +93,6 @@ void RegisterCPUKernels(KernelTable& table) {
         +[](DeviceContext&, const Tensor& x, int head_width, float base,
             bool inverse, int pos_offset, Tensor& out) {
             RoPECPU(x, head_width, base, inverse, pos_offset, out);
-        });
-    table.cross_entropy_rows.register_fn(Device::kCPU,
-        +[](DeviceContext&, const Tensor& logits, const Tensor& targets, Tensor& rows) {
-            CrossEntropyRowsCPU(logits, targets, rows);
-        });
-    table.cross_entropy_backward.register_fn(Device::kCPU,
-        +[](DeviceContext&, const Tensor& logits, const Tensor& targets,
-            const Tensor& grad, Tensor& dx) {
-            CrossEntropyGradCPU(logits, targets, grad, dx);
         });
     table.causal_attention.register_fn(Device::kCPU,
         +[](DeviceContext&, const Tensor& q, const Tensor& k, const Tensor& v,

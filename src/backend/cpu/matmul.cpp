@@ -32,7 +32,7 @@ template <typename U>
 void MatmulInteger(const void* a, const void* b, void* output, int m, int k, int n,
                    StrideView a_stride,
                    StrideView b_stride) {
-    // Corresponding unsigned types can access signed storage and give modular arithmetic.
+    // 用对应的无符号类型访问有符号整数的存储，实现按位宽回绕的运算。
     using Acc = std::conditional_t<(sizeof(U) < sizeof(std::uint32_t)), std::uint32_t, U>;
     const auto* a_data = static_cast<const U*>(a);
     const auto* b_data = static_cast<const U*>(b);

@@ -111,7 +111,7 @@ void RunBackward(const Tensor& root, const Tensor& gradient) {
         throw std::logic_error("RunBackward: root does not have a grad node");
     }
 
-    // TopoSort
+    // 对反向图做拓扑排序。
     std::unordered_set<AutogradNode*> visited;
     std::vector<Tensor> topo_order;
     TopoSort(visited, root, topo_order);
