@@ -4,11 +4,11 @@
 #include <random>
 #include <vector>
 
+#include "mini_infer/modules/embedding.h"
 #include "mini_infer/modules/module.h"
-#include "mini_infer/layers/embedding.h"
-#include "mini_infer/layers/SimpleDecoderLayer.h"
-#include "mini_infer/models/model_config.h"
 #include "mini_infer/modules/rmsnorm.h"
+#include "mini_infer/models/layers/simple_decoder_layer.h"
+#include "mini_infer/models/model_config.h"
 
 namespace mtensor {
 

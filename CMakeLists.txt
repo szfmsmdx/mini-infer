@@ -45,10 +45,10 @@ add_library(mini_infer STATIC
     src/init/weight_init.cpp
     src/modules/linear.cpp
     src/modules/rmsnorm.cpp
-    src/layers/embedding.cpp
-    src/layers/SimpleDecoderLayer.cpp
+    src/modules/embedding.cpp
     src/models/gpt.cpp
     src/models/gpt_checkpoint.cpp
+    src/models/layers/simple_decoder_layer.cpp
     src/ops/attention/causal_attention.cpp
     src/ops/embedding/embedding.cpp
     src/ops/loss_fn/cross_entropy.cpp

@@ -1,6 +1,6 @@
 # 训练和加载字符级 GPT
 
-`train_gpt` 用 Tiny Shakespeare 从零训练两层 GPT。模型用 RoPE、因果注意力、RMSNorm 和 SiLU，词嵌入与输出投影共享权重。[GPT](../../src/models/gpt.cpp) · [SimpleDecoderLayer](../../src/layers/SimpleDecoderLayer.cpp) · [RoPE](../../src/ops/position_embedding/rope.cpp)
+`train_gpt` 用 Tiny Shakespeare 从零训练两层 GPT。模型用 RoPE、因果注意力、RMSNorm 和 SiLU，词嵌入与输出投影共享权重。[GPT](../../src/models/gpt.cpp) · [SimpleDecoderLayer](../../src/models/layers/simple_decoder_layer.cpp) · [RoPE](../../src/ops/position_embedding/rope.cpp)
 
 ## 构建与运行
 

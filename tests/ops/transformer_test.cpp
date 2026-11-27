@@ -11,8 +11,8 @@
 #endif
 
 #include "mini_infer/autograd.h"
-#include "mini_infer/layers/embedding.h"
-#include "mini_infer/layers/SimpleDecoderLayer.h"
+#include "mini_infer/models/layers/simple_decoder_layer.h"
+#include "mini_infer/modules/embedding.h"
 #include "mini_infer/ops/transformer.h"
 
 namespace {

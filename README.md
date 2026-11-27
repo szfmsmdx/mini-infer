@@ -10,10 +10,10 @@ mini_infer/
 ├── src/
 │   ├── tensor/          # Tensor 存储所有权、元数据与内部校验
 │   ├── ops/             # 按算子类别组织入口、反向节点与 CPU/CUDA 实现
-│   ├── modules/         # Module、Linear 和 RMSNorm
-│   ├── layers/          # Embedding 和 SimpleDecoderLayer
+│   ├── modules/         # Module 和持有权重的组件：Linear、RMSNorm、Embedding
 │   ├── init/            # 参数初始化所用的随机采样
 │   ├── models/          # GPT 和 checkpoint
+│   │   └── layers/      # 组合模块实现模型层，如 SimpleDecoderLayer
 │   ├── tokenizer/       # 字节 tokenizer 和 BPE
 │   ├── optim/           # SGD、Adam 的参数更新与优化器状态
 │   ├── autograd/        # 建图开关与反向引擎

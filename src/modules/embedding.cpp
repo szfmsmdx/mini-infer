@@ -4,7 +4,7 @@
 #include <utility>
 #include <vector>
 
-#include "mini_infer/layers/embedding.h"
+#include "mini_infer/modules/embedding.h"
 #include "mini_infer/ops/embedding.h"
 #include "mini_infer/init.h"
 

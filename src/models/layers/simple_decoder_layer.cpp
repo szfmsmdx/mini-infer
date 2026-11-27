@@ -1,4 +1,4 @@
-#include "mini_infer/layers/SimpleDecoderLayer.h"
+#include "mini_infer/models/layers/simple_decoder_layer.h"
 #include "mini_infer/ops/activation.h"
 #include "mini_infer/ops/attention.h"
 #include "mini_infer/ops/position_embedding.h"
