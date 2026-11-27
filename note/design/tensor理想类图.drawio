@@ -1,257 +1,116 @@
 <mxfile host="65bd71144e">
     <diagram id="classes" name="类图与依赖">
-        <mxGraphModel grid="1" page="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" pageScale="1" pageWidth="1900" pageHeight="1450" math="0" shadow="0">
+        <mxGraphModel grid="1" page="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" pageScale="1" pageWidth="1920" pageHeight="1520" math="0" shadow="0">
             <root>
                 <mxCell id="0"/>
                 <mxCell id="1" parent="0"/>
-                <mxCell id="band1" value="① 使用者层：对外接口、建图、计算" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=2;fontSize=12;fontStyle=1;fontColor=#444444;fillColor=none;strokeColor=#999999;dashed=1;" vertex="1" parent="1">
-                    <mxGeometry x="100" y="40" width="1720" height="520" as="geometry"/>
+                <mxCell id="band1" value="① 算子门面与 Autograd 层：校验、推导、建图（纯 C++，无设备分支）" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=2;fontSize=12;fontStyle=1;fontColor=#444444;fillColor=none;strokeColor=#999999;dashed=1;" vertex="1" parent="1">
+                    <mxGeometry x="80" y="40" width="1760" height="440" as="geometry"/>
                 </mxCell>
-                <mxCell id="band2" value="② Tensor 内部层：布局与元数据（库内部，不公开）" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=2;fontSize=12;fontStyle=1;fontColor=#444444;fillColor=none;strokeColor=#999999;dashed=1;" vertex="1" parent="1">
-                    <mxGeometry x="100" y="580" width="1720" height="290" as="geometry"/>
+                <mxCell id="band2" value="② 后端分发层：KernelTable 与纯 CPU/CUDA 计算内核（不认识 Autograd）" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=2;fontSize=12;fontStyle=1;fontColor=#444444;fillColor=none;strokeColor=#999999;dashed=1;" vertex="1" parent="1">
+                    <mxGeometry x="80" y="500" width="1760" height="240" as="geometry"/>
                 </mxCell>
-                <mxCell id="band3" value="③ 内存层：分配与生命周期" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=2;fontSize=12;fontStyle=1;fontColor=#444444;fillColor=none;strokeColor=#999999;dashed=1;" vertex="1" parent="1">
-                    <mxGeometry x="100" y="890" width="1720" height="330" as="geometry"/>
+                <mxCell id="band3" value="③ Tensor 内部与元数据层：布局、版本与梯度槽位（库内部）" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=2;fontSize=12;fontStyle=1;fontColor=#444444;fillColor=none;strokeColor=#999999;dashed=1;" vertex="1" parent="1">
+                    <mxGeometry x="80" y="760" width="1760" height="270" as="geometry"/>
                 </mxCell>
-                <mxCell id="band4" value="④ 基础类型层：不依赖任何上层" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=2;fontSize=12;fontStyle=1;fontColor=#444444;fillColor=none;strokeColor=#999999;dashed=1;" vertex="1" parent="1">
-                    <mxGeometry x="100" y="1240" width="1720" height="170" as="geometry"/>
+                <mxCell id="band4" value="④ Runtime 内存与执行底座：Storage、显存池、DeviceContext 与基础类型" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=2;fontSize=12;fontStyle=1;fontColor=#444444;fillColor=none;strokeColor=#999999;dashed=1;" vertex="1" parent="1">
+                    <mxGeometry x="80" y="1050" width="1760" height="420" as="geometry"/>
                 </mxCell>
-                <mxCell id="tensor" value="&lt;b style=&quot;font-size:12px&quot;&gt;Tensor&lt;/b&gt;  &lt;font color=&quot;#666666&quot;&gt;句柄&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#666666&quot;&gt;include/tensor/tensor.h&lt;/font&gt;&lt;hr size=&quot;1&quot;/&gt;- impl_ : shared_ptr&lt;TensorImpl&gt;&lt;br&gt;+ shape() / stride() / size(dim) / dim()&lt;br&gt;+ numel() / dtype() / device() / data_ptr()&lt;br&gt;+ operator[] / narrow / transpose / permute&lt;br&gt;+ squeeze / unsqueeze / reshape / contiguous / broadcast&lt;br&gt;+ clone() / copy_() / fill_()&lt;br&gt;+ to(device) / to(dtype)&lt;br&gt;+ requires_grad_() / grad() / detach() / backward()&lt;br&gt;+ Tensor(shape, dtype, device)：唯一调 GetAllocator 处" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="1" vertex="1">
-                    <mxGeometry x="140" y="90" width="300" height="200" as="geometry"/>
+                <mxCell id="tensor" value="&lt;b style=&quot;font-size:12px&quot;&gt;Tensor&lt;/b&gt;  &lt;font color=&quot;#666666&quot;&gt;句柄&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#666666&quot;&gt;include/mini_infer/tensor/tensor.h&lt;/font&gt;&lt;hr size=&quot;1&quot;/&gt;- impl_ : shared_ptr&amp;lt;TensorImpl&amp;gt;&lt;br&gt;+ shape() / stride() / size(dim) / dim()&lt;br&gt;+ numel() / dtype() / device() / data_ptr()&lt;br&gt;+ 视图与张量方法均转发至 src/ops/&lt;br&gt;+ requires_grad_() / grad() / detach() / backward()&lt;br&gt;+ Tensor(shape, dtype, device)：唯一调 GetAllocator 处" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+                    <mxGeometry x="120" y="90" width="320" height="175" as="geometry"/>
                 </mxCell>
-                <mxCell id="impl" value="&lt;b style=&quot;font-size:12px&quot;&gt;TensorImpl&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#666666&quot;&gt;src/tensor/tensor_impl.h&lt;/font&gt;&lt;hr size=&quot;1&quot;/&gt;- storage_ : shared_ptr&lt;Storage&gt;&lt;br&gt;- version_ : VersionCounter&lt;br&gt;- shape_ / stride_ : int64_t[kMaxDim]&lt;br&gt;- storage_offset_ : int64_t，单位是元素&lt;br&gt;- dtype_ : Dtype&lt;br&gt;- autograd_meta_ : shared_ptr&lt;AutogradMetadata&gt;&lt;br&gt;&amp;nbsp;&amp;nbsp;懒创建，头文件里只有前置声明&lt;hr size=&quot;1&quot;/&gt;+ data()：基地址 + offset × itemsize&lt;br&gt;+ numel() / is_contiguous()，结果可缓存&lt;br&gt;+ set_layout(shape, stride, offset)：越界检查&lt;br&gt;+ device()：取自 storage_&lt;br&gt;+ bump_version()" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#d5e8d4;strokeColor=#82b366;" parent="1" vertex="1">
-                    <mxGeometry x="140" y="620" width="340" height="225" as="geometry"/>
+                <mxCell id="node" value="&lt;b style=&quot;font-size:12px&quot;&gt;AutogradNode&lt;/b&gt;  &lt;font color=&quot;#666666&quot;&gt;«abstract»&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#666666&quot;&gt;include/mini_infer/autograd.h&lt;/font&gt;&lt;hr size=&quot;1&quot;/&gt;+ inputs : vector&amp;lt;Tensor&amp;gt;&lt;br&gt;+ record_inputs(...) / needs_input_grad(i)&lt;br&gt;+ backward(output_grad) : vector&amp;lt;Tensor&amp;gt;" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+                    <mxGeometry x="520" y="90" width="290" height="105" as="geometry"/>
                 </mxCell>
-                <mxCell id="vcounter" value="&lt;b style=&quot;font-size:12px&quot;&gt;VersionCounter&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#666666&quot;&gt;src/tensor/tensor_impl.h&lt;/font&gt;&lt;hr size=&quot;1&quot;/&gt;- ref_ : shared_ptr&lt;uint64&gt;&lt;br&gt;+ current() / bump()&lt;br&gt;视图和 detach() 共享同一份" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#d5e8d4;strokeColor=#82b366;" parent="1" vertex="1">
-                    <mxGeometry x="520" y="640" width="180" height="105" as="geometry"/>
+                <mxCell id="meta" value="&lt;b style=&quot;font-size:12px&quot;&gt;AutogradMetadata&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#666666&quot;&gt;include/mini_infer/autograd.h&lt;/font&gt;&lt;hr size=&quot;1&quot;/&gt;+ requires_grad : bool&lt;br&gt;+ grad_node : shared_ptr&amp;lt;AutogradNode&amp;gt;&lt;br&gt;+ grad : optional&amp;lt;Tensor&amp;gt;" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+                    <mxGeometry x="520" y="220" width="290" height="100" as="geometry"/>
                 </mxCell>
-                <mxCell id="dtype" value="&lt;b style=&quot;font-size:12px&quot;&gt;Dtype&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#666666&quot;&gt;include/tensor/dtype.h&lt;/font&gt;&lt;hr size=&quot;1&quot;/&gt;+ dtype_size() / dtype_info()" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="1" vertex="1">
-                    <mxGeometry x="520" y="780" width="180" height="80" as="geometry"/>
+                <mxCell id="saved" value="&lt;b style=&quot;font-size:12px&quot;&gt;SavedTensor&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#666666&quot;&gt;include/mini_infer/autograd.h&lt;/font&gt;&lt;hr size=&quot;1&quot;/&gt;- tensor_ : Tensor (输出自动 detach)&lt;br&gt;- saved_version_ : uint64_t&lt;hr size=&quot;1&quot;/&gt;+ unpack(debug_name) : Tensor (自动版本核对)" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+                    <mxGeometry x="520" y="345" width="290" height="100" as="geometry"/>
                 </mxCell>
-                <mxCell id="storage" value="&lt;b style=&quot;font-size:12px&quot;&gt;Storage&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#666666&quot;&gt;include/tensor/storage.h&lt;/font&gt;&lt;hr size=&quot;1&quot;/&gt;- data_ptr_ : DataPtr&lt;br&gt;- nbytes_ : size_t&lt;hr size=&quot;1&quot;/&gt;+ data() / nbytes() / device()&lt;br&gt;+ 析构只交给 DataPtr 的删除器" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="1" vertex="1">
-                    <mxGeometry x="140" y="940" width="300" height="115" as="geometry"/>
+                <mxCell id="entry" value="&lt;b style=&quot;font-size:12px&quot;&gt;算子门面  ops::mul / ops::rms_norm&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#666666&quot;&gt;src/ops/*.cpp（设备无关，零 #ifdef ENABLE_CUDA）&lt;/font&gt;&lt;hr size=&quot;1&quot;/&gt;1 校验 shape / dtype / device&lt;br&gt;2 *_out 复用或分配输出 Tensor&lt;br&gt;3 GetKernelTable().slot.call(device, ...)&lt;br&gt;4 ShouldRecordGrad() 为真时挂载 Node" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+                    <mxGeometry x="960" y="90" width="380" height="130" as="geometry"/>
                 </mxCell>
-                <mxCell id="alloc" value="&lt;b style=&quot;font-size:12px&quot;&gt;Allocator&lt;/b&gt;  &lt;font color=&quot;#666666&quot;&gt;«interface»&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#666666&quot;&gt;include/tensor/allocator.h&lt;/font&gt;&lt;hr size=&quot;1&quot;/&gt;+ kAlignment : size_t&lt;br&gt;+ allocate(nbytes : size_t) : DataPtr" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="1" vertex="1">
-                    <mxGeometry x="580" y="940" width="300" height="80" as="geometry"/>
+                <mxCell id="opnode" value="&lt;b style=&quot;font-size:12px&quot;&gt;MulNode / RMSNormNode / SigmoidNode&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#666666&quot;&gt;src/ops/*.cpp&lt;/font&gt;&lt;hr size=&quot;1&quot;/&gt;- saved_ : SavedTensor&lt;br&gt;+ backward(output_grad) : vector&amp;lt;Tensor&amp;gt;&lt;br&gt;  只调 ops 或 GetKernelTable().*_backward" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+                    <mxGeometry x="960" y="255" width="380" height="105" as="geometry"/>
                 </mxCell>
-                <mxCell id="cpualloc" value="&lt;b style=&quot;font-size:12px&quot;&gt;CPUAllocator&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#666666&quot;&gt;src/memory/&lt;/font&gt;&lt;hr size=&quot;1&quot;/&gt;+ allocate()&lt;br&gt;&amp;nbsp;&amp;nbsp;带对齐的 malloc" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#fff2cc;strokeColor=#d6b656;" parent="1" vertex="1">
-                    <mxGeometry x="580" y="1060" width="145" height="85" as="geometry"/>
+                <mxCell id="ktable" value="&lt;b style=&quot;font-size:12px&quot;&gt;KernelTable / KernelSlot&amp;lt;FnPtr&amp;gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#666666&quot;&gt;src/backend/dispatch.h / .cpp&lt;/font&gt;&lt;hr size=&quot;1&quot;/&gt;- std::call_once / static 初始化调用 RegisterCPU / RegisterCUDA&lt;br&gt;+ add / mul / matmul / rms_norm / rms_norm_backward / causal_attention_backward ...&lt;br&gt;+ call(device, op_name, args...) 统一注入 DeviceContext&amp;amp;" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+                    <mxGeometry x="440" y="545" width="460" height="125" as="geometry"/>
                 </mxCell>
-                <mxCell id="cudaalloc" value="&lt;b style=&quot;font-size:12px&quot;&gt;CUDAAllocator&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#666666&quot;&gt;src/memory/&lt;/font&gt;&lt;hr size=&quot;1&quot;/&gt;+ allocate()&lt;br&gt;&amp;nbsp;&amp;nbsp;cudaMalloc&lt;br&gt;&amp;nbsp;&amp;nbsp;以后：显存池&lt;br&gt;&amp;nbsp;&amp;nbsp;删除器记录 stream" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#fff2cc;strokeColor=#d6b656;" parent="1" vertex="1">
-                    <mxGeometry x="735" y="1060" width="145" height="115" as="geometry"/>
+                <mxCell id="cpuback" value="&lt;b style=&quot;font-size:12px&quot;&gt;CPU Kernels&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#666666&quot;&gt;src/backend/cpu/*.cpp&lt;/font&gt;&lt;hr size=&quot;1&quot;/&gt;+ RegisterCPUKernels(KernelTable&amp;amp;)&lt;br&gt;+ DispatchAllDtypes&amp;lt;TypeTag&amp;gt;&lt;br&gt;- 不含 Autograd，前反向纯函数" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+                    <mxGeometry x="960" y="545" width="220" height="125" as="geometry"/>
                 </mxCell>
-                <mxCell id="runtime" value="&lt;b style=&quot;font-size:12px&quot;&gt;内存管理&lt;/b&gt;  &lt;font color=&quot;#666666&quot;&gt;一组函数，不是类&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#666666&quot;&gt;src/memory/memory.h&lt;/font&gt;&lt;hr size=&quot;1&quot;/&gt;+ GetAllocator(device) : Allocator*&lt;br&gt;+ CopyBytes(dst, src, nbytes)：主机 ↔ 设备&lt;br&gt;调用方：Tensor 构造、ops/copy&lt;br&gt;以后：显存池时分配器移到 src/cuda/，并记录 stream" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#fff2cc;strokeColor=#d6b656;" parent="1" vertex="1">
-                    <mxGeometry x="1100" y="940" width="340" height="125" as="geometry"/>
+                <mxCell id="cudaback" value="&lt;b style=&quot;font-size:12px&quot;&gt;CUDA Kernels&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#666666&quot;&gt;src/backend/cuda/*.cu&lt;/font&gt;&lt;hr size=&quot;1&quot;/&gt;+ RegisterCUDAKernels(KernelTable&amp;amp;)&lt;br&gt;+ CUDALayout 按值传参&lt;br&gt;- 不含 Autograd，接收 DeviceContext&amp;amp;" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+                    <mxGeometry x="1210" y="545" width="230" height="125" as="geometry"/>
                 </mxCell>
-                <mxCell id="dataptr" value="&lt;b style=&quot;font-size:12px&quot;&gt;DataPtr&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#666666&quot;&gt;include/tensor/allocator.h&lt;/font&gt;&lt;hr size=&quot;1&quot;/&gt;- data_ : void*&lt;br&gt;- device_ : Device&lt;br&gt;- deleter_：删除器 + 上下文&lt;hr size=&quot;1&quot;/&gt;+ get() / device()" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="1" vertex="1">
-                    <mxGeometry x="140" y="1290" width="300" height="115" as="geometry"/>
+                <mxCell id="impl" value="&lt;b style=&quot;font-size:12px&quot;&gt;TensorImpl&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#666666&quot;&gt;src/tensor/tensor_impl.h&lt;/font&gt;&lt;hr size=&quot;1&quot;/&gt;+ storage : shared_ptr&amp;lt;Storage&amp;gt;&lt;br&gt;+ storage_offset : size_t (元素单位)&lt;br&gt;+ shape[kMaxDim] / stride[kMaxDim] / rank / numel&lt;br&gt;+ dtype : Dtype&lt;br&gt;+ version : shared_ptr&amp;lt;uint64_t&amp;gt; (视图/detach 共享)&lt;br&gt;+ autograd_meta : shared_ptr&amp;lt;AutogradMetadata&amp;gt; (懒创建)" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+                    <mxGeometry x="120" y="800" width="360" height="190" as="geometry"/>
                 </mxCell>
-                <mxCell id="device" value="&lt;b style=&quot;font-size:12px&quot;&gt;Device&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#666666&quot;&gt;include/tensor/device.h&lt;/font&gt;&lt;hr size=&quot;1&quot;/&gt;- kCPU / kCUDA&lt;br&gt;由 DataPtr 记录" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="1" vertex="1">
-                    <mxGeometry x="740" y="1290" width="180" height="85" as="geometry"/>
+                <mxCell id="dtype" value="&lt;b style=&quot;font-size:12px&quot;&gt;Dtype / Scalar / LayoutView&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#666666&quot;&gt;include/mini_infer/tensor/&lt;/font&gt;&lt;hr size=&quot;1&quot;/&gt;+ 8 种定长 Dtype 与 FP16/BF16 编解码&lt;br&gt;+ ShapeView / StrideView / Scalar" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+                    <mxGeometry x="560" y="810" width="260" height="95" as="geometry"/>
                 </mxCell>
-                <mxCell id="scalar" value="&lt;b style=&quot;font-size:12px&quot;&gt;Scalar&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#666666&quot;&gt;include/tensor/scalar.h&lt;/font&gt;&lt;hr size=&quot;1&quot;/&gt;- 数值 + 类别&lt;br&gt;+ to&lt;T&gt;()" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="1" vertex="1">
-                    <mxGeometry x="940" y="1290" width="180" height="85" as="geometry"/>
+                <mxCell id="storage" value="&lt;b style=&quot;font-size:12px&quot;&gt;Storage&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#666666&quot;&gt;include/mini_infer/tensor/storage.h&lt;/font&gt;&lt;hr size=&quot;1&quot;/&gt;- data_ : DataPtr&lt;br&gt;- nbytes_ : size_t&lt;hr size=&quot;1&quot;/&gt;+ data() / nbytes() / device()" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+                    <mxGeometry x="120" y="1095" width="300" height="115" as="geometry"/>
                 </mxCell>
-                <mxCell id="node" value="&lt;b style=&quot;font-size:12px&quot;&gt;AutogradNode&lt;/b&gt;  &lt;font color=&quot;#666666&quot;&gt;«abstract»&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#666666&quot;&gt;include/autograd.h&lt;/font&gt;&lt;hr size=&quot;1&quot;/&gt;+ inputs : vector&lt;Tensor&gt;&lt;br&gt;+ backward(output_grad) : vector&lt;Tensor&gt;" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#ffe6cc;strokeColor=#d79b00;" parent="1" vertex="1">
-                    <mxGeometry x="560" y="90" width="300" height="90" as="geometry"/>
+                <mxCell id="alloc" value="&lt;b style=&quot;font-size:12px&quot;&gt;Allocator&lt;/b&gt;  &lt;font color=&quot;#666666&quot;&gt;«interface»&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#666666&quot;&gt;include/mini_infer/tensor/allocator.h&lt;/font&gt;&lt;hr size=&quot;1&quot;/&gt;+ allocate(nbytes : size_t) : DataPtr" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+                    <mxGeometry x="560" y="1095" width="320" height="75" as="geometry"/>
                 </mxCell>
-                <mxCell id="meta" value="&lt;b style=&quot;font-size:12px&quot;&gt;AutogradMetadata&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#666666&quot;&gt;include/autograd.h&lt;/font&gt;&lt;hr size=&quot;1&quot;/&gt;- requires_grad_ : bool&lt;br&gt;- grad_node_ : shared_ptr&lt;AutogradNode&gt;&lt;br&gt;- grad_ : optional&lt;Tensor&gt;" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#ffe6cc;strokeColor=#d79b00;" parent="1" vertex="1">
-                    <mxGeometry x="560" y="205" width="300" height="100" as="geometry"/>
+                <mxCell id="cpualloc" value="&lt;b style=&quot;font-size:12px&quot;&gt;CPUAllocator&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#666666&quot;&gt;src/runtime/memory.cpp&lt;/font&gt;&lt;hr size=&quot;1&quot;/&gt;+ malloc / free" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+                    <mxGeometry x="560" y="1210" width="145" height="75" as="geometry"/>
                 </mxCell>
-                <mxCell id="entry" value="&lt;b style=&quot;font-size:12px&quot;&gt;算子入口  mul(lhs, rhs)&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#666666&quot;&gt;src/ops/elementwise/elementwise.cpp&lt;/font&gt;&lt;hr size=&quot;1&quot;/&gt;1 校验 shape / dtype / device&lt;br&gt;2 建输出 Tensor，分配走 Allocator&lt;br&gt;3 按 device 调 CPU 或 CUDA 后端&lt;br&gt;4 建图时创建 MulNode，挂到输出" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#e1d5e7;strokeColor=#9673a6;" parent="1" vertex="1">
-                    <mxGeometry x="1100" y="90" width="340" height="120" as="geometry"/>
+                <mxCell id="cudaalloc" value="&lt;b style=&quot;font-size:12px&quot;&gt;CUDACachingAllocator&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#666666&quot;&gt;src/runtime/memory.cpp&lt;/font&gt;&lt;hr size=&quot;1&quot;/&gt;+ 显存分桶缓存池&lt;br&gt;+ EmptyCUDACache()" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+                    <mxGeometry x="720" y="1210" width="160" height="85" as="geometry"/>
                 </mxCell>
-                <mxCell id="kernels" value="&lt;b style=&quot;font-size:12px&quot;&gt;CUDALayout&lt;/b&gt;  &lt;font color=&quot;#666666&quot;&gt;src/ops/common/cuda_layout.h&lt;/font&gt;&lt;br&gt;+ dim : int&lt;br&gt;+ shape : int64_t[kMaxDim]&lt;br&gt;+ stride : int64_t[kMaxDim]&lt;hr size=&quot;1&quot;/&gt;&lt;b style=&quot;font-size:12px&quot;&gt;kernels.h&lt;/b&gt;  &lt;font color=&quot;#666666&quot;&gt;入口与后端的私有声明&lt;/font&gt;&lt;br&gt;+ MulCPU(a, b, out, shape, stride, dim, dtype)&lt;br&gt;+ MulCUDA(a, b, out, 3 个 CUDALayout, dtype)" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#e1d5e7;strokeColor=#9673a6;" parent="1" vertex="1">
-                    <mxGeometry x="1100" y="230" width="340" height="125" as="geometry"/>
+                <mxCell id="runtime" value="&lt;b style=&quot;font-size:12px&quot;&gt;Runtime 管理&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#666666&quot;&gt;src/runtime/memory.h &amp;amp; device_context.h&lt;/font&gt;&lt;hr size=&quot;1&quot;/&gt;+ GetAllocator(device) : Allocator&amp;amp;&lt;br&gt;+ CopyBytes(dst, src, nbytes)&lt;br&gt;+ DeviceContext (stream / synchronize)" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+                    <mxGeometry x="1010" y="1095" width="380" height="120" as="geometry"/>
                 </mxCell>
-                <mxCell id="backends" value="&lt;b style=&quot;font-size:12px&quot;&gt;cpu.cpp / cuda.cu&lt;/b&gt;  &lt;font color=&quot;#666666&quot;&gt;后端&lt;/font&gt;&lt;hr size=&quot;1&quot;/&gt;- 只收到首地址、布局、dtype&lt;br&gt;- 不 include Tensor，不碰 Storage" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#e1d5e7;strokeColor=#9673a6;" parent="1" vertex="1">
-                    <mxGeometry x="1100" y="380" width="340" height="75" as="geometry"/>
+                <mxCell id="dataptr" value="&lt;b style=&quot;font-size:12px&quot;&gt;DataPtr&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#666666&quot;&gt;include/mini_infer/tensor/allocator.h&lt;/font&gt;&lt;hr size=&quot;1&quot;/&gt;- data_ : unique_ptr&amp;lt;void, DataDeleter&amp;gt;&lt;br&gt;- device_ : Device&lt;hr size=&quot;1&quot;/&gt;+ get() / device()" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+                    <mxGeometry x="120" y="1325" width="300" height="110" as="geometry"/>
                 </mxCell>
-                <mxCell id="mulnode" value="&lt;b style=&quot;font-size:12px&quot;&gt;MulNode&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#666666&quot;&gt;src/ops/elementwise/nodes.h&lt;/font&gt;&lt;hr size=&quot;1&quot;/&gt;- input_versions_ : uint64[2]&lt;br&gt;+ backward(output_grad) : vector&lt;Tensor&gt;" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#e1d5e7;strokeColor=#9673a6;" parent="1" vertex="1">
-                    <mxGeometry x="1100" y="475" width="340" height="75" as="geometry"/>
+                <mxCell id="legend" value="&lt;b style=&quot;font-size:12px&quot;&gt;图例与设计规则&lt;/b&gt;&lt;hr size=&quot;1&quot;/&gt;◆ 实心菱形：值成员 / 独占&lt;br&gt;◇ 空心菱形：shared_ptr 共享持有&lt;br&gt;虚线箭头：调用 / 依赖&lt;br&gt;空心三角：继承&lt;hr size=&quot;1&quot;/&gt;&lt;font color=&quot;#6c8ebf&quot;&gt;■&lt;/font&gt; 蓝色：include/mini_infer/tensor&lt;br&gt;&lt;font color=&quot;#82b366&quot;&gt;■&lt;/font&gt; 绿色：src/tensor&lt;br&gt;&lt;font color=&quot;#d79b00&quot;&gt;■&lt;/font&gt; 橙色：autograd&lt;br&gt;&lt;font color=&quot;#9673a6&quot;&gt;■&lt;/font&gt; 紫色：src/ops (设备无关)&lt;br&gt;&lt;font color=&quot;#b85450&quot;&gt;■&lt;/font&gt; 红色：src/backend (纯内核)&lt;br&gt;&lt;font color=&quot;#d6b656&quot;&gt;■&lt;/font&gt; 黄色：src/runtime (显存池与流)&lt;hr size=&quot;1&quot;/&gt;&lt;b&gt;核心约束：&lt;/b&gt;&lt;br&gt;1. src/ops 与 AutogradNode 不含 #ifdef ENABLE_CUDA&lt;br&gt;2. src/backend 不引入 autograd.h&lt;br&gt;3. 前向与反向内核同级挂载在 KernelTable" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+                    <mxGeometry x="1500" y="90" width="310" height="350" as="geometry"/>
                 </mxCell>
-                <mxCell id="legend" value="&lt;b style=&quot;font-size:12px&quot;&gt;图例&lt;/b&gt;&lt;hr size=&quot;1&quot;/&gt;&lt;b&gt;箭头从使用方指向被使用方&lt;/b&gt;&lt;br&gt;&lt;br&gt;◆ 实心菱形：值成员，独占&lt;br&gt;◇ 空心菱形：shared_ptr 共享持有&lt;br&gt;虚线箭头：只使用，不持有&lt;br&gt;空心三角：继承&lt;hr size=&quot;1&quot;/&gt;&lt;b&gt;颜色 = 所在目录&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#6c8ebf&quot;&gt;■&lt;/font&gt; 蓝色：include/tensor&lt;br&gt;&lt;font color=&quot;#82b366&quot;&gt;■&lt;/font&gt; 绿色：src/tensor&lt;br&gt;&lt;font color=&quot;#d79b00&quot;&gt;■&lt;/font&gt; 橙色：autograd&lt;br&gt;&lt;font color=&quot;#9673a6&quot;&gt;■&lt;/font&gt; 紫色：src/ops&lt;br&gt;&lt;font color=&quot;#d6b656&quot;&gt;■&lt;/font&gt; 黄色：src/memory" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#f5f5f5;strokeColor=#666666;" parent="1" vertex="1">
-                    <mxGeometry x="1525" y="90" width="285" height="300" as="geometry"/>
-                </mxCell>
-                <mxCell id="rules" value="&lt;b style=&quot;font-size:12px&quot;&gt;读图要点&lt;/b&gt;&lt;hr size=&quot;1&quot;/&gt;&lt;b&gt;1 依赖只向下&lt;/b&gt;&lt;br&gt;下层不 include 上层。&lt;br&gt;&lt;br&gt;&lt;b&gt;2 分配只有一个入口&lt;/b&gt;&lt;br&gt;只有 Tensor(shape, dtype, device) 调 GetAllocator。TensorImpl 只接收现成的 Storage，不认识 Allocator。&lt;br&gt;&lt;br&gt;&lt;b&gt;3 Tensor 和 Autograd 互相依赖&lt;/b&gt;&lt;br&gt;AutogradNode 持有 inputs，TensorImpl 持有 autograd_meta_，靠前置声明解开。&lt;br&gt;&lt;br&gt;&lt;b&gt;4 后端不认识 Tensor&lt;/b&gt;&lt;br&gt;kernels.h 只传首地址、布局、dtype。布局按值传入，所以 TensorImpl 没有设备副本。&lt;br&gt;&lt;br&gt;&lt;b&gt;5 Tensor 不持有 stream&lt;/b&gt;&lt;br&gt;做显存池时，分配器要记录每块内存在哪些 stream 上用过，届时移到 src/cuda/。" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;fontSize=10;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
-                    <mxGeometry x="1525" y="620" width="285" height="785" as="geometry"/>
-                </mxCell>
-                <mxCell id="e1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=diamondThin;startFill=0;startSize=16;endArrow=open;endFill=0;endSize=10;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.441;entryY=0;entryDx=0;entryDy=0;" parent="1" source="tensor" target="impl" edge="1">
+                <mxCell id="e1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=diamondThin;startFill=0;startSize=16;endArrow=open;endFill=0;endSize=10;" edge="1" source="tensor" target="impl" parent="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="e1l" value="impl_ : shared_ptr" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=9;labelBackgroundColor=#ffffff;" parent="e1" vertex="1" connectable="0">
-                    <mxGeometry relative="1" as="geometry">
-                        <mxPoint x="44" as="offset"/>
-                    </mxGeometry>
-                </mxCell>
-                <mxCell id="e3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;endArrow=open;endFill=0;endSize=10;exitX=0.235;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" parent="1" source="entry" target="tensor" edge="1">
-                    <mxGeometry relative="1" as="geometry">
-                        <Array as="points">
-                            <mxPoint x="1180" y="74"/>
-                            <mxPoint x="290" y="74"/>
-                        </Array>
-                    </mxGeometry>
-                </mxCell>
-                <mxCell id="e3l" value="读布局、建输出" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=9;labelBackgroundColor=#ffffff;" parent="e3" vertex="1" connectable="0">
-                    <mxGeometry relative="1" as="geometry">
-                        <mxPoint y="-9" as="offset"/>
-                    </mxGeometry>
-                </mxCell>
-                <mxCell id="e11" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;endArrow=open;endFill=0;endSize=10;exitX=0;exitY=0.2;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="tensor" target="runtime" edge="1">
-                    <mxGeometry relative="1" as="geometry">
-                        <Array as="points">
-                            <mxPoint x="115" y="130"/>
-                            <mxPoint x="115" y="22"/>
-                            <mxPoint x="1487" y="22"/>
-                            <mxPoint x="1487" y="1002"/>
-                        </Array>
-                    </mxGeometry>
-                </mxCell>
-                <mxCell id="e11l" value="Tensor(shape, dtype, device) 调 GetAllocator" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=9;labelBackgroundColor=#ffffff;" parent="e11" vertex="1" connectable="0">
-                    <mxGeometry x="-0.5" relative="1" as="geometry">
-                        <mxPoint y="-10" as="offset"/>
-                    </mxGeometry>
-                </mxCell>
-                <mxCell id="e6" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=diamondThin;startFill=1;startSize=16;endArrow=open;endFill=0;endSize=10;exitX=0;exitY=0.467;exitDx=0;exitDy=0;entryX=1;entryY=0.21;entryDx=0;entryDy=0;" parent="1" source="node" target="tensor" edge="1">
+                <mxCell id="e2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=diamondThin;startFill=0;startSize=16;endArrow=open;endFill=0;endSize=10;" edge="1" source="impl" target="storage" parent="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="e6l" value="inputs : vector&lt;Tensor&gt;" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=9;labelBackgroundColor=#ffffff;" parent="e6" vertex="1" connectable="0">
-                    <mxGeometry relative="1" as="geometry">
-                        <mxPoint y="-10" as="offset"/>
-                    </mxGeometry>
-                </mxCell>
-                <mxCell id="e9" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=diamondThin;startFill=1;startSize=16;endArrow=open;endFill=0;endSize=10;exitX=0;exitY=0.47;exitDx=0;exitDy=0;entryX=1;entryY=0.81;entryDx=0;entryDy=0;" parent="1" source="meta" target="tensor" edge="1">
+                <mxCell id="e3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=diamondThin;startFill=1;startSize=16;endArrow=open;endFill=0;endSize=10;" edge="1" source="storage" target="dataptr" parent="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="e9l" value="grad_ : optional&lt;Tensor&gt;" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=9;labelBackgroundColor=#ffffff;" parent="e9" vertex="1" connectable="0">
-                    <mxGeometry relative="1" as="geometry">
-                        <mxPoint y="-10" as="offset"/>
-                    </mxGeometry>
-                </mxCell>
-                <mxCell id="e8" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=diamondThin;startFill=0;startSize=16;endArrow=open;endFill=0;endSize=10;exitX=0.6;exitY=0;exitDx=0;exitDy=0;entryX=0.6;entryY=1;entryDx=0;entryDy=0;" parent="1" source="meta" target="node" edge="1">
+                <mxCell id="e4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;endSize=14;" edge="1" source="cpualloc" target="alloc" parent="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="e8l" value="grad_node_" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=9;labelBackgroundColor=#ffffff;" parent="e8" vertex="1" connectable="0">
-                    <mxGeometry relative="1" as="geometry">
-                        <mxPoint x="34" as="offset"/>
-                    </mxGeometry>
-                </mxCell>
-                <mxCell id="e10" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=diamondThin;startFill=0;startSize=16;endArrow=open;endFill=0;endSize=10;exitX=0.971;exitY=0;exitDx=0;exitDy=0;entryX=0.8;entryY=1;entryDx=0;entryDy=0;" parent="1" source="impl" target="meta" edge="1">
-                    <mxGeometry relative="1" as="geometry">
-                        <Array as="points">
-                            <mxPoint x="470" y="600"/>
-                            <mxPoint x="800" y="600"/>
-                        </Array>
-                    </mxGeometry>
-                </mxCell>
-                <mxCell id="e10l" value="autograd_meta_：懒创建" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=9;labelBackgroundColor=#ffffff;" parent="e10" vertex="1" connectable="0">
-                    <mxGeometry x="-0.43" relative="1" as="geometry">
-                        <mxPoint y="-10" as="offset"/>
-                    </mxGeometry>
-                </mxCell>
-                <mxCell id="e5" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;endSize=14;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.467;entryDx=0;entryDy=0;" parent="1" source="mulnode" target="node" edge="1">
-                    <mxGeometry relative="1" as="geometry">
-                        <Array as="points">
-                            <mxPoint x="1080" y="512"/>
-                            <mxPoint x="1080" y="132"/>
-                        </Array>
-                    </mxGeometry>
-                </mxCell>
-                <mxCell id="e5l" value="继承" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=9;labelBackgroundColor=#ffffff;" parent="e5" vertex="1" connectable="0">
-                    <mxGeometry relative="1" as="geometry">
-                        <mxPoint x="16" as="offset"/>
-                    </mxGeometry>
-                </mxCell>
-                <mxCell id="e4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;endArrow=open;endFill=0;endSize=10;exitX=1;exitY=0.833;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="entry" target="mulnode" edge="1">
-                    <mxGeometry relative="1" as="geometry">
-                        <Array as="points">
-                            <mxPoint x="1470" y="190"/>
-                            <mxPoint x="1470" y="512"/>
-                        </Array>
-                    </mxGeometry>
-                </mxCell>
-                <mxCell id="e4l" value="创建" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=9;labelBackgroundColor=#ffffff;" parent="e4" vertex="1" connectable="0">
-                    <mxGeometry relative="1" as="geometry">
-                        <mxPoint x="14" as="offset"/>
-                    </mxGeometry>
-                </mxCell>
-                <mxCell id="e21" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;endArrow=open;endFill=0;endSize=10;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" parent="1" source="entry" target="kernels" edge="1">
+                <mxCell id="e5" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;endSize=14;" edge="1" source="cudaalloc" target="alloc" parent="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="e21l" value="按 device 调用" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=9;labelBackgroundColor=#ffffff;" parent="e21" vertex="1" connectable="0">
+                <mxCell id="e6" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;endArrow=open;endFill=0;endSize=10;" edge="1" source="entry" target="ktable" parent="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="e22" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;endArrow=open;endFill=0;endSize=10;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" parent="1" source="kernels" target="backends" edge="1">
+                <mxCell id="e7" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;endArrow=open;endFill=0;endSize=10;" edge="1" source="opnode" target="ktable" parent="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="e22l" value="实现" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=9;labelBackgroundColor=#ffffff;" parent="e22" vertex="1" connectable="0">
+                <mxCell id="e8" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;endSize=14;" edge="1" source="opnode" target="node" parent="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="e16" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=diamondThin;startFill=1;startSize=16;endArrow=open;endFill=0;endSize=10;exitX=1;exitY=0.289;exitDx=0;exitDy=0;entryX=0;entryY=0.476;entryDx=0;entryDy=0;" parent="1" source="impl" target="vcounter" edge="1">
+                <mxCell id="e9" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=diamondThin;startFill=1;startSize=16;endArrow=open;endFill=0;endSize=10;" edge="1" source="opnode" target="saved" parent="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="e16l" value="version_" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=9;labelBackgroundColor=#ffffff;" parent="e16" vertex="1" connectable="0">
+                <mxCell id="e10" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;endArrow=open;endFill=0;endSize=10;" edge="1" source="cpuback" target="ktable" parent="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="e14" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=diamondThin;startFill=1;startSize=16;endArrow=open;endFill=0;endSize=10;exitX=1;exitY=0.778;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="impl" target="dtype" edge="1">
+                <mxCell id="e11" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;endArrow=open;endFill=0;endSize=10;" edge="1" source="cudaback" target="ktable" parent="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="e14l" value="dtype_" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=9;labelBackgroundColor=#ffffff;" parent="e14" vertex="1" connectable="0">
+                <mxCell id="e12" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;endArrow=open;endFill=0;endSize=10;" edge="1" source="ktable" target="runtime" parent="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="e13" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=diamondThin;startFill=0;startSize=16;endArrow=open;endFill=0;endSize=10;exitX=0.441;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" parent="1" source="impl" target="storage" edge="1">
+                <mxCell id="e13" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=diamondThin;startFill=0;startSize=16;endArrow=open;endFill=0;endSize=10;" edge="1" source="meta" target="node" parent="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="e13l" value="storage_" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=9;labelBackgroundColor=#ffffff;" parent="e13" vertex="1" connectable="0">
+                <mxCell id="e14" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=diamondThin;startFill=0;startSize=16;endArrow=open;endFill=0;endSize=10;" edge="1" source="impl" target="meta" parent="1">
                     <mxGeometry relative="1" as="geometry"/>
-                </mxCell>
-                <mxCell id="e15" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;startArrow=diamondThin;startFill=1;startSize=16;endArrow=open;endFill=0;endSize=10;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" parent="1" source="storage" target="dataptr" edge="1">
-                    <mxGeometry relative="1" as="geometry"/>
-                </mxCell>
-                <mxCell id="e15l" value="data_ptr_" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=9;labelBackgroundColor=#ffffff;" parent="e15" vertex="1" connectable="0">
-                    <mxGeometry relative="1" as="geometry"/>
-                </mxCell>
-                <mxCell id="e17" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;endArrow=open;endFill=0;endSize=10;exitX=0;exitY=0.467;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="alloc" target="dataptr" edge="1">
-                    <mxGeometry relative="1" as="geometry">
-                        <Array as="points">
-                            <mxPoint x="510" y="977"/>
-                            <mxPoint x="510" y="1347"/>
-                        </Array>
-                    </mxGeometry>
-                </mxCell>
-                <mxCell id="e17l" value="allocate() 的返回值" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=9;labelBackgroundColor=#ffffff;" parent="e17" vertex="1" connectable="0">
-                    <mxGeometry x="0.86" relative="1" as="geometry">
-                        <mxPoint y="-11" as="offset"/>
-                    </mxGeometry>
-                </mxCell>
-                <mxCell id="e20a" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;endSize=14;exitX=0.24;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" parent="1" source="alloc" target="cpualloc" edge="1">
-                    <mxGeometry relative="1" as="geometry"/>
-                </mxCell>
-                <mxCell id="e20b" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=0;endSize=14;exitX=0.757;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" parent="1" source="alloc" target="cudaalloc" edge="1">
-                    <mxGeometry relative="1" as="geometry"/>
-                </mxCell>
-                <mxCell id="e18" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;endArrow=open;endFill=0;endSize=10;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="runtime" target="cudaalloc" edge="1">
-                    <mxGeometry relative="1" as="geometry">
-                        <Array as="points">
-                            <mxPoint x="1270" y="1117"/>
-                        </Array>
-                    </mxGeometry>
-                </mxCell>
-                <mxCell id="e18l" value="GetAllocator() 返回基类指针" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=9;labelBackgroundColor=#ffffff;" parent="e18" vertex="1" connectable="0">
-                    <mxGeometry x="0.3" relative="1" as="geometry">
-                        <mxPoint y="-10" as="offset"/>
-                    </mxGeometry>
-                </mxCell>
-            </root>
-        </mxGraphModel>
-    </diagram>
-    <diagram id="tree" name="文件结构树">
-        <mxGraphModel dx="400" dy="801" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="900" math="0" shadow="0">
-            <root>
-                <mxCell id="0"/>
-                <mxCell id="1" parent="0"/>
-                <mxCell id="files" value="&lt;b&gt;include/mini_infer/&lt;/b&gt;&lt;br&gt;├── tensor/&amp;nbsp;&amp;nbsp;Tensor 及其基础类型，不依赖上层&lt;br&gt;│&amp;nbsp;&amp;nbsp;├── device.h&amp;nbsp;&amp;nbsp;Device&lt;br&gt;│&amp;nbsp;&amp;nbsp;├── dtype.h&amp;nbsp;&amp;nbsp;Dtype、DtypeInfo、Float16 / BFloat16 编解码&lt;br&gt;│&amp;nbsp;&amp;nbsp;├── scalar.h&amp;nbsp;&amp;nbsp;Scalar&lt;br&gt;│&amp;nbsp;&amp;nbsp;├── allocator.h&amp;nbsp;&amp;nbsp;DataPtr、Allocator 接口&lt;br&gt;│&amp;nbsp;&amp;nbsp;├── storage.h&amp;nbsp;&amp;nbsp;Storage：容量 + DataPtr&lt;br&gt;│&amp;nbsp;&amp;nbsp;└── tensor.h&amp;nbsp;&amp;nbsp;Tensor 句柄、kMaxDim&lt;br&gt;├── autograd.h&amp;nbsp;&amp;nbsp;AutogradMetadata、AutogradNode、开关、RunBackward&lt;br&gt;└── ops/&amp;nbsp;&amp;nbsp;算子公开入口，保持现状&lt;br&gt;&lt;b&gt;src/&lt;/b&gt;&lt;br&gt;├── tensor/&amp;nbsp;&amp;nbsp;不含 CUDA&lt;br&gt;│&amp;nbsp;&amp;nbsp;├── tensor_impl.h&amp;nbsp;&amp;nbsp;TensorImpl、VersionCounter&lt;br&gt;│&amp;nbsp;&amp;nbsp;├── tensor.cpp&amp;nbsp;&amp;nbsp;构造、属性查询、data()&lt;br&gt;│&amp;nbsp;&amp;nbsp;├── layout.cpp&amp;nbsp;&amp;nbsp;视图的 shape / stride / offset 计算&lt;br&gt;│&amp;nbsp;&amp;nbsp;├── check.h / check.cpp&lt;br&gt;│&amp;nbsp;&amp;nbsp;└── print.cpp&lt;br&gt;├── memory/&lt;br&gt;│&amp;nbsp;&amp;nbsp;└── memory.h / memory.cpp&amp;nbsp;&amp;nbsp;GetAllocator、CopyBytes；只有这里出现 cudaMalloc / cudaFree&lt;br&gt;├── cuda/&lt;br&gt;│&amp;nbsp;&amp;nbsp;└── cuda_check.h&amp;nbsp;&amp;nbsp;CUDA_CHECK 宏；以后放设备切换和 stream&lt;br&gt;├── autograd/&lt;br&gt;│&amp;nbsp;&amp;nbsp;└── autograd.cpp&amp;nbsp;&amp;nbsp;拓扑排序、梯度累加&lt;br&gt;└── ops/&amp;nbsp;&amp;nbsp;每类算子一个目录，结构相同&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;├── common/&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;│&amp;nbsp;&amp;nbsp;└── cuda_layout.h&amp;nbsp;&amp;nbsp;CUDALayout：纯 POD，没有 CUDA 语法&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;├── layout/&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;│&amp;nbsp;&amp;nbsp;└── nodes.h / nodes.cpp&amp;nbsp;&amp;nbsp;TransposeNode 等视图的反向节点&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;└── elementwise/&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;├── elementwise.cpp&amp;nbsp;&amp;nbsp;校验、建输出、选后端、挂节点&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;├── nodes.h / nodes.cpp&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;├── kernels.h&amp;nbsp;&amp;nbsp;入口与后端的私有声明&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;├── cpu.cpp&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;└── cuda.cu" style="text;html=1;align=left;verticalAlign=top;whiteSpace=wrap;fontFamily=Courier New;fontSize=13;strokeColor=#666666;fillColor=#f5f5f5;spacingLeft=10;spacingTop=6;" parent="1" vertex="1">
-                    <mxGeometry x="40" y="40" width="1000" height="620" as="geometry"/>
                 </mxCell>
             </root>
         </mxGraphModel>

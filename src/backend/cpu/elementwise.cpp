@@ -8,7 +8,7 @@
 #include <type_traits>
 
 #include "ops/elementwise/kernels.h"
-#include "ops/common/cpu_iteration.h"
+#include "backend/common/cpu_iteration.h"
 #include "mini_infer/tensor/tensor.h"
 
 namespace mtensor {
@@ -516,6 +516,36 @@ void ExpCPU(const Tensor& x, Tensor& out) {
 
 void LogCPU(const Tensor& x, Tensor& out) {
     ExpLogCPU<true>(x, out);
+}
+
+namespace {
+
+template <typename T>
+void RsqrtBackwardTypedCPU(const Tensor& x, const Tensor& output_grad, Tensor& dx) {
+    const auto* input = static_cast<const std::byte*>(x.data_ptr());
+    const auto* grad = static_cast<const std::byte*>(output_grad.data_ptr());
+    auto* output = static_cast<std::byte*>(dx.data_ptr());
+    ForEachOffset(x.shape(), x.stride(), output_grad.stride(),
+        [&](std::size_t xi, std::size_t gi) {
+            T value(0), upstream(0);
+            std::memcpy(&value, input + xi * sizeof(T), sizeof(T));
+            std::memcpy(&upstream, grad + gi * sizeof(T), sizeof(T));
+            const float y = 1.0f / std::sqrt(static_cast<float>(value));
+            const T result(((-0.5f * y) * static_cast<float>(upstream)) * y * y);
+            std::memcpy(output, &result, sizeof(T));
+            output += sizeof(T);
+        });
+}
+
+}  // namespace
+
+void RsqrtBackwardCPU(const Tensor& x, const Tensor& output_grad, Tensor& dx) {
+    switch (x.dtype()) {
+        case Dtype::kFloat32: RsqrtBackwardTypedCPU<float>(x, output_grad, dx); break;
+        case Dtype::kFloat16: RsqrtBackwardTypedCPU<Float16>(x, output_grad, dx); break;
+        case Dtype::kBFloat16: RsqrtBackwardTypedCPU<BFloat16>(x, output_grad, dx); break;
+        default: throw std::invalid_argument("rsqrt backward: unsupported dtype");
+    }
 }
 
 }  // namespace mtensor

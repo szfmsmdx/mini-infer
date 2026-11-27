@@ -2,7 +2,7 @@
 
 #include <cstddef>
 
-#include "ops/common/cuda_layout.h"
+#include "backend/common/cuda_layout.h"
 
 namespace mtensor {
 

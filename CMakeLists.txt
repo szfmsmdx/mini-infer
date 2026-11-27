@@ -25,9 +25,16 @@ else()
 endif()
 
 add_library(mini_infer STATIC
+    src/backend/dispatch.cpp
+    src/backend/cpu/register.cpp
+    src/backend/cpu/embedding.cpp
+    src/backend/cpu/rope.cpp
+    src/backend/cpu/causal_attention.cpp
+    src/backend/cpu/norm.cpp
     src/autograd/autograd.cpp
+    src/autograd/tensor_autograd.cpp
     src/ops/activation/activation.cpp
-    src/ops/activation/cpu.cpp
+    src/backend/cpu/activation.cpp
     src/ops/activation/softmax.cpp
     src/ops/elementwise/elementwise.cpp
     src/ops/matmul/matmul.cpp
@@ -52,16 +59,17 @@ add_library(mini_infer STATIC
     src/optim/adam.cpp
     src/ops/fill/fill.cpp
     src/ops/copy/copy.cpp
-    src/ops/copy/cpu.cpp
-    src/ops/elementwise/cpu.cpp
-    src/ops/fill/cpu.cpp
-    src/ops/matmul/cpu.cpp
-    src/ops/reduction/cpu.cpp
+    src/backend/cpu/copy.cpp
+    src/backend/cpu/elementwise.cpp
+    src/backend/cpu/fill.cpp
+    src/backend/cpu/matmul.cpp
+    src/backend/cpu/reduction.cpp
     src/tensor/tensor.cpp
     src/tensor/check.cpp
     src/tensor/print.cpp
     src/utils/logger.cpp
-    src/memory/memory.cpp
+    src/runtime/memory.cpp
+    src/runtime/device_context.cpp
 )
 
 target_include_directories(mini_infer
@@ -71,18 +79,19 @@ target_include_directories(mini_infer
 
 if(ENABLE_CUDA)
     target_sources(mini_infer PRIVATE
-        src/ops/common/cuda_layout.cpp
-        src/ops/activation/cuda.cu
-        src/ops/elementwise/cuda.cu
-        src/ops/norm/cuda.cu
-        src/ops/copy/cuda.cu
-        src/ops/fill/cuda.cu
-        src/ops/matmul/cuda.cu
-        src/ops/reduction/cuda.cu
-        src/ops/position_embedding/rope.cu
-        src/ops/attention/causal_attention.cu
-        src/ops/loss_fn/cross_entropy.cu
-        src/ops/embedding/embedding.cu
+        src/backend/cuda/register.cu
+        src/backend/common/cuda_layout.cpp
+        src/backend/cuda/activation.cu
+        src/backend/cuda/elementwise.cu
+        src/backend/cuda/norm.cu
+        src/backend/cuda/copy.cu
+        src/backend/cuda/fill.cu
+        src/backend/cuda/matmul.cu
+        src/backend/cuda/reduction.cu
+        src/backend/cuda/rope.cu
+        src/backend/cuda/causal_attention.cu
+        src/backend/cuda/cross_entropy.cu
+        src/backend/cuda/embedding.cu
     )
     set_target_properties(mini_infer PROPERTIES CUDA_STANDARD 17 CUDA_STANDARD_REQUIRED ON)
     target_link_libraries(mini_infer PUBLIC CUDA::cudart)

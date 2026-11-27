@@ -39,8 +39,9 @@ template <auto Encode, auto Decode>
 void CheckHalf(Dtype dtype) {
     const std::uint16_t a[] = {Encode(256), Encode(0.0625f), Encode(-256)};
     const std::uint16_t b[] = {Encode(1), Encode(1), Encode(1)};
-    const Tensor lhs(a, {1, 3}, dtype, kDevice);
+    Tensor lhs(a, {1, 3}, dtype, kDevice);
     const Tensor rhs(b, {3, 1}, dtype, kDevice);
+    lhs.requires_grad_(true);
     const Tensor out = lhs.matmul(rhs);
     if (!out.grad_node()) throw std::runtime_error("half matmul missing grad node");
     const Tensor result = out.to(Device::kCPU);
@@ -151,6 +152,26 @@ void CheckLargerOutput() {
         if (values[i] != 30.0f) throw std::runtime_error("matmul result for 17 x 19 output");
     }
 }
+
+void CheckOutReuse() {
+    const float left[] = {1.0f, 2.0f};
+    const float right[] = {3.0f, 4.0f};
+    Tensor a(left, {1, 2}, Dtype::kFloat32, kDevice);
+    Tensor b(right, {2, 1}, Dtype::kFloat32, kDevice);
+    Tensor out({1, 1}, Dtype::kFloat32, kDevice);
+    void* address = out.data_ptr();
+    const auto version = out.version();
+    matmul_out(a, b, out);
+    const Tensor host = out.to(Device::kCPU);
+    if (out.data_ptr() != address || out.version() != version + 1 ||
+        *static_cast<const float*>(host.data_ptr()) != 11.0f) {
+        throw std::runtime_error("matmul_out must reuse storage and update its version");
+    }
+    bool rejected = false;
+    try { matmul_out(a, b, a); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    if (!rejected) throw std::runtime_error("matmul_out must reject aliased output");
+}
 }  // namespace
 
 int main() {
@@ -168,6 +189,7 @@ int main() {
         CheckLinearBackward<Float16>(Dtype::kFloat16);
         CheckLinearBackward<BFloat16>(Dtype::kBFloat16);
         CheckLargerOutput();
+        CheckOutReuse();
         CheckHalf<EncodeFloat16, DecodeFloat16>(Dtype::kFloat16);
         CheckHalf<EncodeBFloat16, DecodeBFloat16>(Dtype::kBFloat16);
         CheckInteger<std::int8_t>(Dtype::kInt8);

@@ -2,7 +2,7 @@
 
 #include <cstddef>
 
-#include "ops/common/cuda_layout.h"
+#include "backend/common/cuda_layout.h"
 #include "mini_infer/tensor/layout_view.h"
 #include "mini_infer/tensor/dtype.h"
 
@@ -70,5 +70,6 @@ void NegCUDA(const void* a, void* output, std::size_t numel, Dtype dtype,
 
 // 内部 CUDA 后端：按各自 stride 读取 x 和上游梯度，写入连续 dx。
 void RsqrtBackwardCUDA(const Tensor& x, const Tensor& output_grad, Tensor& dx);
+void RsqrtBackwardCPU(const Tensor& x, const Tensor& output_grad, Tensor& dx);
 
 }  // namespace mtensor

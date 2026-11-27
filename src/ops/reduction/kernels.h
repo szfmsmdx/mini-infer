@@ -2,7 +2,7 @@
 
 #include <cstddef>
 
-#include "ops/common/cuda_layout.h"
+#include "backend/common/cuda_layout.h"
 #include "mini_infer/tensor/layout_view.h"
 #include "mini_infer/tensor/dtype.h"
 

@@ -8,7 +8,7 @@
 
 #include "tensor/print.h"
 #include "mini_infer/tensor/tensor.h"
-#include "memory/memory.h"
+#include "runtime/memory.h"
 #include "tensor/check.h"
 
 namespace mtensor {
@@ -55,7 +55,7 @@ void PrintNested(std::ostream& out, Dtype dtype, const std::byte* data_bytes_ptr
             if (dimension + 1 == shape.size()) {
                 out << ' ';
             } else {
-                // Align the next slice under the opening '[' after "tensor(".
+                // 换行后，让下一个切片与 "tensor(" 后的左方括号对齐。
                 out << '\n' << std::string(8 + dimension, ' ');
             }
         }

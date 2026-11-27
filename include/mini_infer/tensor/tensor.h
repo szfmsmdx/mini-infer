@@ -54,6 +54,7 @@ public:
     std::size_t nbytes() const;
     Dtype dtype() const;
     Device device() const;
+    bool shares_storage(const Tensor& other) const;
 
     // 数据访问：data_ptr() 指向当前 Tensor 或视图的数据起点。
     void* data_ptr();

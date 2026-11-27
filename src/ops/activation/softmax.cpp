@@ -12,15 +12,14 @@ namespace {
 
 class SoftmaxNode : public AutogradNode {
 public:
-    Tensor probabilities;
-    std::uint64_t probabilities_version = 0;
+    SavedTensor saved_softmax_prob;
     int dim = -1;
 
     std::vector<Tensor> backward(const Tensor& output_grad) override {
-        CheckVersion(probabilities, probabilities_version, "softmax: probabilities modified after forward");
+        const Tensor prob = saved_softmax_prob.unpack("softmax prob");
         const Tensor grad = output_grad.to(Dtype::kFloat32);
-        const Tensor weighted = probabilities * grad;
-        const Tensor input_grad = weighted - probabilities * weighted.sum(dim, /*keepdim=*/true);
+        const Tensor weighted = prob * grad;
+        const Tensor input_grad = weighted - prob * weighted.sum(dim, /*keepdim=*/true);
         return {input_grad.to(inputs[0].dtype())};
     }
 };
@@ -33,20 +32,19 @@ Tensor softmax(const Tensor& x, int dim) {
     CheckDim(dim, x.shape().size(), "softmax: dim out of range");
 
     const bool floating = CheckGradDtype(x.dtype());
-    Tensor probabilities;
+    Tensor prob;
     Tensor output;
     {
         NogradNode guard;
         const Tensor input = x.to(Dtype::kFloat32);
         const Tensor weights = (input - input.max(dim, /*keepdim=*/true)).exp();
-        probabilities = weights / weights.sum(dim, /*keepdim=*/true);
-        output = floating ? probabilities.to(x.dtype()) : probabilities;
+        prob = weights / weights.sum(dim, /*keepdim=*/true);
+        output = floating ? prob.to(x.dtype()) : prob;
     }
-    if (EnableGrad() && floating) {
+    if (floating && ShouldRecordGrad({&x}, output.dtype())) {
         auto node = std::make_shared<SoftmaxNode>();
-        node->inputs = {x};
-        node->probabilities = probabilities.detach();
-        node->probabilities_version = probabilities.version();
+        node->record_inputs({x});
+        node->saved_softmax_prob = SavedTensor(prob, /*is_output=*/true);
         node->dim = dim;
         output.set_grad_node(node);
     }

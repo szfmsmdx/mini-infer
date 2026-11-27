@@ -1,0 +1,148 @@
+<mxfile host="65bd71144e">
+    <diagram id="layers" name="五层架构与依赖">
+        <mxGraphModel grid="1" page="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" pageScale="1" pageWidth="1680" pageHeight="1220" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="l4" value="L4 模型、训练与推理应用层（共享权重与算子，区分训练态 / KV Cache 推理态）" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=10;spacingTop=6;fontSize=13;fontStyle=1;fillColor=#f5f5f5;strokeColor=#666666;dashed=1;" vertex="1" parent="1">
+                    <mxGeometry x="60" y="40" width="1540" height="190" as="geometry"/>
+                </mxCell>
+                <mxCell id="l4_mod" value="&lt;b&gt;modules &amp;amp; layers&lt;/b&gt;&lt;br&gt;Module / Linear / RMSNorm&lt;br&gt;Embedding / SimpleDecoderLayer" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+                    <mxGeometry x="90" y="90" width="260" height="110" as="geometry"/>
+                </mxCell>
+                <mxCell id="l4_model" value="&lt;b&gt;models &amp;amp; init&lt;/b&gt;&lt;br&gt;GPT / ModelConfig / GPTCheckpoint&lt;br&gt;weight_init (Kaiming / Normal)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+                    <mxGeometry x="380" y="90" width="260" height="110" as="geometry"/>
+                </mxCell>
+                <mxCell id="l4_train" value="&lt;b&gt;optim (训练)&lt;/b&gt;&lt;br&gt;Optimizer / SGD / Adam&lt;br&gt;在 NoGradGuard 下原地更新参数" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+                    <mxGeometry x="670" y="90" width="260" height="110" as="geometry"/>
+                </mxCell>
+                <mxCell id="l4_infer" value="&lt;b&gt;infer (推理)&lt;/b&gt;&lt;br&gt;KVCache / AttentionMetadata&lt;br&gt;Sampler (Prefill + Decode 增量生成)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+                    <mxGeometry x="960" y="90" width="290" height="110" as="geometry"/>
+                </mxCell>
+                <mxCell id="l4_tok" value="&lt;b&gt;tokenizer &amp;amp; utils&lt;/b&gt;&lt;br&gt;Tokenizer / BPETokenizer&lt;br&gt;Logger" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+                    <mxGeometry x="1280" y="90" width="280" height="110" as="geometry"/>
+                </mxCell>
+
+                <mxCell id="l3" value="L3 算子门面层 src/ops/（纯 C++17，无 #ifdef ENABLE_CUDA，无手写设备分支）" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=10;spacingTop=6;fontSize=13;fontStyle=1;fillColor=#f3e8ff;strokeColor=#9673a6;dashed=1;" vertex="1" parent="1">
+                    <mxGeometry x="60" y="260" width="1020" height="180" as="geometry"/>
+                </mxCell>
+                <mxCell id="l3_ops" value="&lt;b&gt;算子入口与 *_out 分离&lt;/b&gt;&lt;br&gt;elementwise / activation / matmul / norm / reduction&lt;br&gt;embedding / rope(pos_offset) / attention(causal+cached) / cross_entropy&lt;br&gt;layout (视图) / tensor_ops (copy_, clone, to, fill_, zero_)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+                    <mxGeometry x="90" y="305" width="560" height="110" as="geometry"/>
+                </mxCell>
+                <mxCell id="l3_nodes" value="&lt;b&gt;设备无关 AutogradNode&lt;/b&gt;&lt;br&gt;持有 SavedTensor（自动版本核对 + detach）&lt;br&gt;backward() 只调用 ops 或纯反向 KernelSlot" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+                    <mxGeometry x="680" y="305" width="370" height="110" as="geometry"/>
+                </mxCell>
+
+                <mxCell id="l2" value="L2 自动微分层 src/autograd/" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=10;spacingTop=6;fontSize=13;fontStyle=1;fillColor=#fff0e0;strokeColor=#d79b00;dashed=1;" vertex="1" parent="1">
+                    <mxGeometry x="1110" y="260" width="490" height="180" as="geometry"/>
+                </mxCell>
+                <mxCell id="l2_eng" value="&lt;b&gt;Autograd Engine&lt;/b&gt;&lt;br&gt;NoGradGuard (兼容 NogradNode) / ShouldRecordGrad&lt;br&gt;DFS 拓扑排序、input_needs_grad 剪枝、梯度累加&lt;br&gt;SavedTensor 版本校验" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+                    <mxGeometry x="1135" y="305" width="440" height="110" as="geometry"/>
+                </mxCell>
+
+                <mxCell id="l1" value="L1 纯计算后端层 src/backend/（零 Autograd 依赖，前向/反向纯内核平级注册）" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=10;spacingTop=6;fontSize=13;fontStyle=1;fillColor=#fde8e8;strokeColor=#b85450;dashed=1;" vertex="1" parent="1">
+                    <mxGeometry x="60" y="470" width="1540" height="250" as="geometry"/>
+                </mxCell>
+                <mxCell id="l1_disp" value="&lt;b&gt;Dispatch &amp;amp; 公共模板&lt;/b&gt;&lt;br&gt;KernelTable / KernelSlot&amp;lt;FnPtr&amp;gt; / GetKernelTable()&lt;br&gt;dtype_dispatch.h (TypeTag 8-dtype 分发)&lt;br&gt;cuda_layout / cpu_iteration / cuda_index" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+                    <mxGeometry x="90" y="520" width="440" height="165" as="geometry"/>
+                </mxCell>
+                <mxCell id="l1_cpu" value="&lt;b&gt;CPU Backend (src/backend/cpu/)&lt;/b&gt;&lt;br&gt;RegisterCPUKernels()&lt;br&gt;elementwise / activation / matmul / norm / reduction&lt;br&gt;tensor_ops / transformer / cached_attention&lt;br&gt;含所有 *BackwardCPU 纯算子实现" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+                    <mxGeometry x="570" y="520" width="480" height="165" as="geometry"/>
+                </mxCell>
+                <mxCell id="l1_cuda" value="&lt;b&gt;CUDA Backend (src/backend/cuda/)&lt;/b&gt;&lt;br&gt;RegisterCUDAKernels() (#ifdef ENABLE_CUDA 唯一开关)&lt;br&gt;elementwise.cu / activation.cu / matmul.cu / norm.cu&lt;br&gt;reduction.cu / tensor_ops.cu / attention.cu / rope.cu ...&lt;br&gt;含所有 *BackwardCUDA 与 cached_attention CUDA" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+                    <mxGeometry x="1080" y="520" width="490" height="165" as="geometry"/>
+                </mxCell>
+
+                <mxCell id="l0" value="L0 核心底座与运行时层 src/tensor/ + src/runtime/" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=10;spacingTop=6;fontSize=13;fontStyle=1;fillColor=#e6f4ea;strokeColor=#82b366;dashed=1;" vertex="1" parent="1">
+                    <mxGeometry x="60" y="750" width="1540" height="210" as="geometry"/>
+                </mxCell>
+                <mxCell id="l0_tensor" value="&lt;b&gt;Tensor 核心对象 (src/tensor/)&lt;/b&gt;&lt;br&gt;Tensor / TensorImpl / Storage / DataPtr&lt;br&gt;Dtype / Device / Scalar / ShapeView / StrideView&lt;br&gt;Check / Print" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+                    <mxGeometry x="90" y="800" width="680" height="130" as="geometry"/>
+                </mxCell>
+                <mxCell id="l0_runtime" value="&lt;b&gt;Runtime 运行时底座 (src/runtime/)&lt;/b&gt;&lt;br&gt;CUDACachingAllocator (显存分桶缓存池) + CPUAllocator&lt;br&gt;DeviceContext (cudaStream_t / synchronize) + CopyBytes&lt;br&gt;cuda_check.h (CUDA_CHECK 宏)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+                    <mxGeometry x="810" y="800" width="760" height="130" as="geometry"/>
+                </mxCell>
+
+                <mxCell id="a1" value="" style="edgeStyle=orthogonalEdgeStyle;endArrow=open;html=1;strokeWidth=2;" edge="1" source="l4_mod" target="l3_ops" parent="1"/>
+                <mxCell id="a2" value="" style="edgeStyle=orthogonalEdgeStyle;endArrow=open;html=1;strokeWidth=2;" edge="1" source="l4_infer" target="l3_ops" parent="1"/>
+                <mxCell id="a3" value="" style="edgeStyle=orthogonalEdgeStyle;endArrow=open;html=1;strokeWidth=2;" edge="1" source="l4_train" target="l2_eng" parent="1"/>
+                <mxCell id="a4" value="" style="edgeStyle=orthogonalEdgeStyle;endArrow=open;html=1;strokeWidth=2;" edge="1" source="l3_ops" target="l1_disp" parent="1"/>
+                <mxCell id="a5" value="" style="edgeStyle=orthogonalEdgeStyle;endArrow=open;html=1;strokeWidth=2;" edge="1" source="l3_nodes" target="l2_eng" parent="1"/>
+                <mxCell id="a6" value="" style="edgeStyle=orthogonalEdgeStyle;endArrow=open;html=1;strokeWidth=2;" edge="1" source="l3_nodes" target="l1_disp" parent="1"/>
+                <mxCell id="a7" value="" style="edgeStyle=orthogonalEdgeStyle;endArrow=open;html=1;strokeWidth=2;" edge="1" source="l1_disp" target="l1_cpu" parent="1"/>
+                <mxCell id="a8" value="" style="edgeStyle=orthogonalEdgeStyle;endArrow=open;html=1;strokeWidth=2;" edge="1" source="l1_disp" target="l0_runtime" parent="1"/>
+                <mxCell id="a9" value="" style="edgeStyle=orthogonalEdgeStyle;endArrow=open;html=1;strokeWidth=2;" edge="1" source="l1_cpu" target="l0_tensor" parent="1"/>
+                <mxCell id="a10" value="" style="edgeStyle=orthogonalEdgeStyle;endArrow=open;html=1;strokeWidth=2;" edge="1" source="l1_cuda" target="l0_runtime" parent="1"/>
+            </root>
+        </mxGraphModel>
+    </diagram>
+
+    <diagram id="dataflow" name="训推一体数据流">
+        <mxGraphModel grid="1" page="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" pageScale="1" pageWidth="1680" pageHeight="960" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="train_box" value="训练数据流：Eager 前向建图 + 设备无关反向传播" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=10;spacingTop=6;fontSize=13;fontStyle=1;fillColor=#f5f5f5;strokeColor=#82b366;dashed=1;" vertex="1" parent="1">
+                    <mxGeometry x="60" y="40" width="1560" height="390" as="geometry"/>
+                </mxCell>
+                <mxCell id="t1" value="&lt;b&gt;GPT::forward(tokens)&lt;/b&gt;&lt;br&gt;Embedding → N × SimpleDecoderLayer&lt;br&gt;RoPE(pos_offset=0) + causal_attention" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+                    <mxGeometry x="90" y="95" width="260" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="t2" value="&lt;b&gt;ops 层统一门面&lt;/b&gt;&lt;br&gt;1. Check &amp;amp; 推导形状&lt;br&gt;2. 分配输出 (走 CachingAllocator)&lt;br&gt;3. GetKernelTable().call(device)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+                    <mxGeometry x="410" y="95" width="270" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="t3" value="&lt;b&gt;前向纯内核&lt;/b&gt;&lt;br&gt;CPU / CUDA Kernel&lt;br&gt;(接收 DeviceContext&amp;amp;)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+                    <mxGeometry x="740" y="95" width="220" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="t4" value="&lt;b&gt;ShouldRecordGrad 剪枝&lt;/b&gt;&lt;br&gt;EnableGrad &amp;amp;&amp;amp; Float &amp;amp;&amp;amp; AnyNeedsGrad&lt;br&gt;创建 Node + SavedTensor(记录版本)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+                    <mxGeometry x="1020" y="95" width="270" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="t5" value="&lt;b&gt;loss.backward()&lt;/b&gt;&lt;br&gt;TopoSort → NoGradGuard&lt;br&gt;Node::backward() 调纯反向算子&lt;br&gt;→ Adam::step() 更新权重" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+                    <mxGeometry x="1340" y="95" width="250" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="t6" value="&lt;b&gt;反向纯内核 (与前向对称)&lt;/b&gt;&lt;br&gt;SavedTensor::unpack() 校验版本 → GetKernelTable().*_backward.call(device) → 返回输入梯度" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+                    <mxGeometry x="740" y="270" width="850" height="90" as="geometry"/>
+                </mxCell>
+
+                <mxCell id="infer_box" value="推理数据流：NoGradGuard + KVCache + Prefill / Decode 分阶段增量生成" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=10;spacingTop=6;fontSize=13;fontStyle=1;fillColor=#f5f5f5;strokeColor=#d6b656;dashed=1;" vertex="1" parent="1">
+                    <mxGeometry x="60" y="470" width="1560" height="390" as="geometry"/>
+                </mxCell>
+                <mxCell id="i1" value="&lt;b&gt;推理初始化&lt;/b&gt;&lt;br&gt;NoGradGuard + KVCache(layers, max_seq, channels)&lt;br&gt;复用同一份 GPT 参数与权重" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+                    <mxGeometry x="90" y="535" width="310" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="i2" value="&lt;b&gt;Prefill 阶段&lt;/b&gt;&lt;br&gt;输入 prompt [T_p]&lt;br&gt;past_len = 0, RoPE(pos_offset=0)&lt;br&gt;写入 KVCache[0..T_p)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+                    <mxGeometry x="450" y="535" width="270" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="i3" value="&lt;b&gt;Decode 循环&lt;/b&gt;&lt;br&gt;输入单个新 token [1]&lt;br&gt;past_len = kv.length(), RoPE(pos_offset=past_len)&lt;br&gt;追加写入 KVCache[past_len]" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+                    <mxGeometry x="770" y="535" width="320" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="i4" value="&lt;b&gt;cached_attention&lt;/b&gt;&lt;br&gt;Q[T_new, C] 对齐 K/V_cache[0..total_len, C]&lt;br&gt;走 KernelTable.cached_attention (CPU/CUDA)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+                    <mxGeometry x="450" y="700" width="640" height="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="i5" value="&lt;b&gt;Sampler 采样与输出&lt;/b&gt;&lt;br&gt;取末位 logits → Temperature / Greedy / Categorical&lt;br&gt;生成下一 token，释放临时 Tensor 归还 CUDACachingAllocator" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+                    <mxGeometry x="1150" y="535" width="440" height="160" as="geometry"/>
+                </mxCell>
+
+                <mxCell id="ta1" value="" style="endArrow=open;html=1;strokeWidth=2;" edge="1" source="t1" target="t2" parent="1"/>
+                <mxCell id="ta2" value="" style="endArrow=open;html=1;strokeWidth=2;" edge="1" source="t2" target="t3" parent="1"/>
+                <mxCell id="ta3" value="" style="endArrow=open;html=1;strokeWidth=2;" edge="1" source="t3" target="t4" parent="1"/>
+                <mxCell id="ta4" value="" style="endArrow=open;html=1;strokeWidth=2;" edge="1" source="t4" target="t5" parent="1"/>
+                <mxCell id="ta5" value="" style="endArrow=open;html=1;strokeWidth=2;" edge="1" source="t5" target="t6" parent="1"/>
+
+                <mxCell id="ia1" value="" style="endArrow=open;html=1;strokeWidth=2;" edge="1" source="i1" target="i2" parent="1"/>
+                <mxCell id="ia2" value="" style="endArrow=open;html=1;strokeWidth=2;" edge="1" source="i2" target="i3" parent="1"/>
+                <mxCell id="ia3" value="" style="endArrow=open;html=1;strokeWidth=2;" edge="1" source="i2" target="i4" parent="1"/>
+                <mxCell id="ia4" value="" style="endArrow=open;html=1;strokeWidth=2;" edge="1" source="i3" target="i4" parent="1"/>
+                <mxCell id="ia5" value="" style="endArrow=open;html=1;strokeWidth=2;" edge="1" source="i3" target="i5" parent="1"/>
+                <mxCell id="ia6" value="自回归步进" style="edgeStyle=orthogonalEdgeStyle;endArrow=open;html=1;dashed=1;strokeWidth=2;" edge="1" source="i5" target="i3" parent="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="1370" y="810"/>
+                            <mxPoint x="930" y="810"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>

@@ -1,13 +1,15 @@
 #include <cstddef>
 #include <stdexcept>
+#include <type_traits>
 #include <cuda_bf16.h>
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
 
 #include "ops/norm/kernels.h"
+#include "backend/common/dtype_dispatch.h"
 #include "mini_infer/tensor/tensor.h"
-#include "ops/common/cuda_index.cuh"
-#include "cuda/cuda_check.h"
+#include "backend/common/cuda_index.cuh"
+#include "runtime/cuda_check.h"
 
 namespace mtensor {
 namespace {
@@ -60,11 +62,12 @@ void LaunchRMSNorm(const Tensor& x, const Tensor& weight, float eps, Tensor& out
 }  // namespace
 
 void RMSNormCUDA(const Tensor& x, const Tensor& weight, float eps, Tensor& output) {
-    switch (x.dtype()) {
-        case Dtype::kFloat16: LaunchRMSNorm<__half>(x, weight, eps, output); break;
-        case Dtype::kBFloat16: LaunchRMSNorm<__nv_bfloat16>(x, weight, eps, output); break;
-        default: throw std::invalid_argument("rms_norm CUDA: unsupported dtype");
-    }
+    DispatchFloatingDtypes(x.dtype(), [&](auto tag) {
+        using T = typename decltype(tag)::type;
+        if constexpr (std::is_same_v<T, float>) LaunchRMSNorm<float>(x, weight, eps, output);
+        else if constexpr (std::is_same_v<T, Float16>) LaunchRMSNorm<__half>(x, weight, eps, output);
+        else LaunchRMSNorm<__nv_bfloat16>(x, weight, eps, output);
+    });
 }
 
 namespace {
@@ -97,14 +100,17 @@ __global__ void RMSNormInputBackwardKernel(
     const float mean_square = sum_squares / static_cast<float>(features);
     const float inv_rms = rsqrtf(mean_square + eps);
     row_inv_rms[row] = inv_rms;
-    const float correction = inv_rms * inv_rms * inv_rms *
-        (sum_grad_weight_x / static_cast<float>(features));
+    // 用归一化输入计算梯度，避免先算 RMS 倒数的三次方。
+    const float mean_grad_weight_x_hat =
+        (sum_grad_weight_x / static_cast<float>(features)) * inv_rms;
 
     for (int j = 0; j < features; ++j) {
         const float x_value = static_cast<float>(x_row[j * x_layout.stride[x_layout.dim - 1]]);
         const float grad_value = static_cast<float>(grad_row[j * grad_layout.stride[grad_layout.dim - 1]]);
         const float weight_value = static_cast<float>(weight[j * weight_stride]);
-        const float dx_value = grad_value * weight_value * inv_rms - x_value * correction;
+        const float x_hat = x_value * inv_rms;
+        const float weighted_grad = grad_value * weight_value;
+        const float dx_value = (weighted_grad - x_hat * mean_grad_weight_x_hat) * inv_rms;
         dx_row[j] = static_cast<T>(dx_value);
     }
 }
@@ -167,11 +173,15 @@ void LaunchRMSNormBackward(const Tensor& x, const Tensor& weight, const Tensor& 
 
 void RMSNormBackwardCUDA(const Tensor& x, const Tensor& weight, const Tensor& output_grad,
                          float eps, Tensor& dx, Tensor& dw) {
-    switch (x.dtype()) {
-        case Dtype::kFloat16: LaunchRMSNormBackward<__half>(x, weight, output_grad, eps, dx, dw); break;
-        case Dtype::kBFloat16: LaunchRMSNormBackward<__nv_bfloat16>(x, weight, output_grad, eps, dx, dw); break;
-        default: throw std::invalid_argument("rms_norm CUDA backward: unsupported dtype");
-    }
+    DispatchFloatingDtypes(x.dtype(), [&](auto tag) {
+        using T = typename decltype(tag)::type;
+        if constexpr (std::is_same_v<T, float>)
+            LaunchRMSNormBackward<float>(x, weight, output_grad, eps, dx, dw);
+        else if constexpr (std::is_same_v<T, Float16>)
+            LaunchRMSNormBackward<__half>(x, weight, output_grad, eps, dx, dw);
+        else
+            LaunchRMSNormBackward<__nv_bfloat16>(x, weight, output_grad, eps, dx, dw);
+    });
 }
 
 }  // namespace mtensor

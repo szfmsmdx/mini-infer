@@ -1,6 +1,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <iostream>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -792,7 +793,7 @@ void TestReshapeBackward() {
             require(static_cast<const float*>(repeated.data_ptr())[i] == i % 3 + 1, "broadcast reshape logical order");
     }
 }
-int main() {
+int main() try {
     TestInplaceVersions();
     TestZeroGrad();
     TestExplicitBackwardGradient();
@@ -927,13 +928,15 @@ int main() {
         }
     }
 
-    // add: float dtypes build a graph, integer dtypes and no-grad mode do not
+    // 浮点输入需要梯度时建图；无梯度输入、整数和 no-grad 模式不建图。
     {
         float left[] = {1.0f, 2.0f};
         float right[] = {3.0f, 4.0f};
         float seed_values[] = {5.0f, 6.0f};
         Tensor a(left, {2}, Dtype::kFloat32);
         Tensor b(right, {2}, Dtype::kFloat32);
+        if (add(a, b).grad_node()) throw std::runtime_error("inputs without grad must not build a graph");
+        a.requires_grad_(true);
         Tensor out = add(a, b);
         auto node = out.grad_node();
         if (!node) throw std::runtime_error("float add must create a graph node");
@@ -950,6 +953,7 @@ int main() {
             Tensor y({1}, dtype);
             x.fill_(1);
             y.fill_(1);
+            x.requires_grad_(true);
             if (!add(x, y).grad_node()) throw std::runtime_error("16-bit float add must build a graph");
         }
     }
@@ -965,6 +969,7 @@ int main() {
         float right[] = {2.0f};
         Tensor a(left, {1}, Dtype::kFloat32);
         Tensor b(right, {1}, Dtype::kFloat32);
+        a.requires_grad_(true);
         NogradNode guard;
         if (add(a, b).grad_node()) throw std::runtime_error("NogradNode must disable graph construction");
     }
@@ -977,6 +982,8 @@ int main() {
         Tensor a(a_values, {2}, Dtype::kFloat32);
         Tensor b(b_values, {2}, Dtype::kFloat32);
         Tensor g(g_values, {2}, Dtype::kFloat32);
+        a.requires_grad_(true);
+        b.requires_grad_(true);
 
         Tensor sub_out = sub(a, b);
         Tensor neg_out = neg(a);
@@ -1011,6 +1018,7 @@ int main() {
         float b_values[] = {3.0f, 4.0f};
         Tensor a(a_values, {2}, Dtype::kFloat32);
         Tensor b(b_values, {2}, Dtype::kFloat32);
+        a.requires_grad_(true);
         Tensor out = add(a, b);
 
         Tensor indexed = out[0];
@@ -1047,4 +1055,7 @@ int main() {
             throw std::runtime_error("no-grad clone must copy storage");
         }
     }
+} catch (const std::exception& error) {
+    std::cerr << error.what() << '\n';
+    return 1;
 }

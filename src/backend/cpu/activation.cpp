@@ -6,7 +6,7 @@
 
 #include "ops/activation/kernels.h"
 #include "mini_infer/tensor/tensor.h"
-#include "ops/common/cpu_iteration.h"
+#include "backend/common/cpu_iteration.h"
 
 namespace mtensor {
 namespace {

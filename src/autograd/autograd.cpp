@@ -1,14 +1,15 @@
 #include <algorithm>
 #include <stdexcept>
-#include <unordered_set>
+#include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "mini_infer/autograd.h"
 #include "tensor/check.h"
 
 namespace mtensor{
 namespace {
-bool g_grad_enabled = true;
+thread_local bool g_grad_enabled = true;
 
 void TopoSort(
     std::unordered_set<AutogradNode*>& visited, 
@@ -40,11 +41,46 @@ bool EnableGrad() {
     return g_grad_enabled;
 }
 
-NogradNode::NogradNode() : previous_grad_enabled_(g_grad_enabled) {
+SavedTensor::SavedTensor(const Tensor& tensor, bool is_output)
+    : tensor_(is_output ? tensor.detach() : tensor),
+      saved_version_(tensor.version()), is_output_(is_output) {}
+
+Tensor SavedTensor::unpack(const char* debug_name) const {
+    if (!tensor_) throw std::logic_error(std::string(debug_name) + ": no saved tensor");
+    if (tensor_->version() != saved_version_) {
+        throw std::logic_error(std::string(debug_name) +
+            (is_output_ ? ": output modified after forward" : ": input modified after forward"));
+    }
+    return *tensor_;
+}
+
+void AutogradNode::record_inputs(std::initializer_list<Tensor> values) {
+    inputs.assign(values);
+    input_needs_grad_.clear();
+    input_needs_grad_.reserve(inputs.size());
+    for (const Tensor& input : inputs) {
+        input_needs_grad_.push_back(input.requires_grad() || input.grad_node() != nullptr);
+    }
+}
+
+bool AutogradNode::needs_input_grad(std::size_t index) const {
+    if (index >= inputs.size()) throw std::out_of_range("AutogradNode: input index out of range");
+    return input_needs_grad_.empty() || input_needs_grad_[index];
+}
+
+bool ShouldRecordGrad(std::initializer_list<const Tensor*> inputs, Dtype output_dtype) {
+    if (!EnableGrad() || !CheckGradDtype(output_dtype)) return false;
+    for (const Tensor* input : inputs) {
+        if (input && (input->requires_grad() || input->grad_node())) return true;
+    }
+    return false;
+}
+
+NoGradGuard::NoGradGuard() : previous_grad_enabled_(g_grad_enabled) {
     g_grad_enabled = false;
 }
 
-NogradNode::~NogradNode() {
+NoGradGuard::~NoGradGuard() {
     g_grad_enabled = previous_grad_enabled_;
 }
 
@@ -75,7 +111,7 @@ void RunBackward(const Tensor& root, const Tensor& gradient) {
         throw std::logic_error("RunBackward: root does not have a grad node");
     }
 
-    // TopoSort
+    // 对反向图做拓扑排序。
     std::unordered_set<AutogradNode*> visited;
     std::vector<Tensor> topo_order;
     TopoSort(visited, root, topo_order);
@@ -108,6 +144,7 @@ void RunBackward(const Tensor& root, const Tensor& gradient) {
         }
 
         for (auto i = 0; i < input_grads.size(); ++i){
+            if (!node->needs_input_grad(i)) continue;
             auto& input = node->inputs[i];
             const auto& input_grad = input_grads[i];
             auto input_node = input.grad_node();

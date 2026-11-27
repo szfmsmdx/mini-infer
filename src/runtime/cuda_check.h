@@ -6,7 +6,7 @@
 #include <cuda_runtime.h>
 #endif
 
-/* 定义CUDA错误检查宏 */
+// 统一检查 CUDA Runtime API 返回值。
 #define CUDA_CHECK(call) \
     do { \
         const cudaError_t error = (call); \

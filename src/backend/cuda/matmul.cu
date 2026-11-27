@@ -7,7 +7,7 @@
 #include <cuda_runtime.h>
 
 #include "ops/matmul/kernels.h"
-#include "cuda/cuda_check.h"
+#include "runtime/cuda_check.h"
 
 namespace mtensor {
 namespace {
@@ -105,7 +105,7 @@ void MatmulCUDA(const void* a, const void* b, void* output, Dtype dtype,
                                              static_cast<__nv_bfloat16*>(output),
                                              k, n, numel, lhs_stride, rhs_stride);
             break;
-        // Unsigned computation preserves the output dtype's modular arithmetic.
+        // 用无符号运算保留输出类型的回绕语义。
         case Dtype::kInt8:
         case Dtype::kUInt8:
             MatmulIntegerKernel<std::uint8_t><<<1, kThreads>>>(a, b, output, k, n, numel, lhs_stride, rhs_stride);
