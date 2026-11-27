@@ -165,15 +165,17 @@ void CheckSigmoidBackwardPrecision(Device device, Dtype dtype, float largest, fl
 }
 
 template <typename T>
-void CheckSiluBackwardPrecision(Device device, Dtype dtype, float rtol) {
+void CheckSiluBackwardPrecision(Device device, Dtype dtype, float largest, float rtol) {
     constexpr int count = 513;
-    const float inputs[] = {-1.267578125f, -2.84375f, -1.1953125f, -1.34375f, 0, 12};
-    const float grads[] = {1, -0.5f, 1, -0.5f, 2, 3};
+    const float x0 = -1.2784645557403564f;
+    const float inputs[] = {-1.267578125f, -2.84375f, -1.1953125f, -1.34375f, 0, 12,
+                            x0, std::nextafter(x0, 0.0f), x0};
+    const float grads[] = {1, -0.5f, 1, -0.5f, 2, 3, largest, largest, -largest};
     std::vector<T> values, upstream;
     std::vector<float> expected;
     for (int i = 0; i < count; ++i) {
-        values.emplace_back(inputs[i % 6]);
-        upstream.emplace_back(grads[i % 6]);
+        values.emplace_back(inputs[i % 9]);
+        upstream.emplace_back(grads[i % 9]);
         const double x = static_cast<float>(values.back());
         const double g = static_cast<float>(upstream.back());
         const double t = std::exp(-std::abs(x));
@@ -315,9 +317,9 @@ int main() {
     CheckSiluForward<Float16>(device, Dtype::kFloat16, 1e-3);
     CheckSiluForward<BFloat16>(device, Dtype::kBFloat16, 1.6e-2);
     CheckSiluBackwardLargeGradient(device);
-    CheckSiluBackwardPrecision<float>(device, Dtype::kFloat32, 1.3e-6f);
-    CheckSiluBackwardPrecision<Float16>(device, Dtype::kFloat16, 1e-3f);
-    CheckSiluBackwardPrecision<BFloat16>(device, Dtype::kBFloat16, 1.6e-2f);
+    CheckSiluBackwardPrecision<float>(device, Dtype::kFloat32, std::numeric_limits<float>::max(), 1.3e-6f);
+    CheckSiluBackwardPrecision<Float16>(device, Dtype::kFloat16, 65504.0f, 1e-3f);
+    CheckSiluBackwardPrecision<BFloat16>(device, Dtype::kBFloat16, 3.3895313892515355e38f, 1.6e-2f);
     CheckSigmoidBackwardPrecision<float>(device, Dtype::kFloat32,
                                         std::numeric_limits<float>::max(), 1.3e-6f);
     CheckSigmoidBackwardPrecision<Float16>(device, Dtype::kFloat16, 65504.0f, 1e-3f);

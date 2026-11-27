@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
+#include <type_traits>
 #include <cuda_bf16.h>
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
@@ -39,7 +40,7 @@ __global__ void SiluKernel(const In* x, Out* out, std::size_t count, CUDALayout 
     float y;
     if (v < -80.0f) {
         // 负尾部用 double，避免 exp(x) 在乘 x 前下溢。
-        const double t = exp(static_cast<double>(v));
+        const double t = ::exp(static_cast<double>(v));
         y = static_cast<float>(v * t / (1.0 + t));
     } else {
         const float t = expf(-fabsf(v));
@@ -81,8 +82,17 @@ __global__ void SiluBackwardKernel(const T* x, const T* grad, T* dx,
     const auto gi = GetNumelIndex(i, grad_layout);
     const float value = static_cast<float>(x[xi]);
     const float upstream = static_cast<float>(grad[gi]);
-    const float s = 1.0f / (1.0f + expf(-value));
-    dx[i] = static_cast<T>((upstream * s) * (1.0f + value * (1.0f - s)));
+    if constexpr (std::is_same_v<T, float>) {
+        const double v = value;
+        const double t = ::exp(-::fabs(v));
+        const double denom = (1.0 + t) * (1.0 + t);
+        const double derivative = v >= 0.0 ? (1.0 + t + v * t) / denom
+                                           : t * ((1.0 + v) + t) / denom;
+        dx[i] = static_cast<float>(upstream * derivative);
+    } else {
+        const float s = 1.0f / (1.0f + expf(-value));
+        dx[i] = static_cast<T>((upstream * s) * (1.0f + value * (1.0f - s)));
+    }
 }
 
 template <typename T>

@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
+#include <type_traits>
 
 #include "ops/activation/kernels.h"
 #include "mini_infer/tensor/tensor.h"
@@ -87,9 +88,19 @@ void SiluBackwardTypedCPU(const Tensor& x, const Tensor& output_grad, Tensor& dx
             std::memcpy(&upstream, grad + gi * sizeof(T), sizeof(T));
             const float x_value = static_cast<float>(value);
             const float g = static_cast<float>(upstream);
-            const float s = 1.0f / (1.0f + std::exp(-x_value));
-            // 与 Torch 相同的运算顺序，中间保持 FP32，最后写回原 dtype。
-            const T result((g * s) * (1.0f + x_value * (1.0f - s)));
+            T result(0);
+            if constexpr (std::is_same_v<T, float>) {
+                // 导数在 x ≈ -1.27846 处过零；保留相消后的差值，乘完上游梯度再舍入。
+                const double v = x_value;
+                const double t = std::exp(-std::abs(v));
+                const double denom = (1.0 + t) * (1.0 + t);
+                const double derivative = v >= 0.0 ? (1.0 + t + v * t) / denom
+                                                   : t * ((1.0 + v) + t) / denom;
+                result = static_cast<float>(g * derivative);
+            } else {
+                const float s = 1.0f / (1.0f + std::exp(-x_value));
+                result = T((g * s) * (1.0f + x_value * (1.0f - s)));
+            }
             std::memcpy(output, &result, sizeof(T));
             output += sizeof(T);
         });

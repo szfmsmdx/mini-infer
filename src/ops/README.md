@@ -71,7 +71,7 @@ CPU 和 CUDA 逐元素运算支持不同 stride 的非连续输入；CUDA 输出
 | `exp(x)` | `ExpNode` | `dX = G * y`，复用前向输出 `y = exp(x)`，按所在设备执行逐元素乘法 |
 | `log(x)` | `LogNode` | `dX = G / x`，使用前向输入并检查其版本 |
 | `sigmoid(x)` | `SigmoidNode` | 令 `t = exp(-abs(x))`，在 FP32 中计算 `dX = (G * t) / ((1 + t) * (1 + t))`，最后写回原 dtype |
-| `silu(x)` | `SiluNode` | FP32 计算 `s = 1 / (1 + exp(-x))`，再计算 `(G * s) * (1 + x * (1 - s))`，最后写回原 dtype |
+| `silu(x)` | `SiluNode` | CPU 和 CUDA 的 FP32 输入用 double 计算导数并乘上游梯度，避免导数过零时丢失精度。FP16/BF16 用 FP32 计算，最后写回原 dtype |
 | `rsqrt(x)` | `RsqrtNode` | 正数输入：令 `y = 1 / sqrt(x)`，逐元素计算 `dX = -0.5 * G * y³` |
 
 表中的 `G` 是引擎传入的上游梯度。反向在 `NogradNode` 下执行，不会继续建图。逐元素算子的梯度计算通过 `KernelTable` 分发给 [CPU](../backend/cpu/elementwise.cpp) 或 [CUDA](../backend/cuda/elementwise.cu)，只传递梯度的部分留在 Node（例如 `add` 的两个输入和 `sub` 的左侧）。
